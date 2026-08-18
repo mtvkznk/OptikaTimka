@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Оптика Timka: офтальмологія, дитяча офтальмологія, послуги оптики та запис на прийом."
+    />
+    <title>{{ app_name }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top">ОптикаTimka</a>
+      <button class="menu-button" type="button" aria-label="Відкрити меню" aria-expanded="false">
+        <span></span>
+        <span></span>
+      </button>
+      <nav class="main-nav" aria-label="Головна навігація">
+        <a href="#about">Про нас</a>
+        <a href="#services">Послуги</a>
+        <a href="#contacts">Контакти</a>
+      </nav>
+      <a class="header-cta" href="#booking">Запис на прийом</a>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-inner">
+          <h1>Офтальмологія Дитяча офтальмологія Оптика Timka</h1>
+
+          <div class="feature-row">
+            <article class="feature" id="about">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke="currentColor" stroke-width="1.8" />
+                  <path d="M4.5 21a7.5 7.5 0 0 1 15 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                </svg>
+              </span>
+              <h2>Про нас</h2>
+              <p>Сучасна оптика та офтальмологічна допомога для всієї родини.</p>
+            </article>
+
+            <article class="feature" id="services">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="1.8" />
+                  <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" stroke="currentColor" stroke-width="1.8" />
+                </svg>
+              </span>
+              <h2>Послуги</h2>
+              <p>Діагностика зору, підбір окулярів та контактних лінз, лікування.</p>
+            </article>
+
+            <article class="feature" id="contacts">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M19 10c0 5.25-7 11-7 11s-7-5.75-7-11a7 7 0 0 1 14 0Z" stroke="currentColor" stroke-width="1.8" />
+                  <path d="M12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" stroke="currentColor" stroke-width="1.8" />
+                </svg>
+              </span>
+              <h2>Контакти</h2>
+              <p>м. Львів, вул. Шевченка, 60<br />+38 (098) 123 45 67</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="service-band">
+        <div class="section-heading">
+          <p>Послуги</p>
+          <h2>Комплексна турбота про ваш зір</h2>
+        </div>
+
+        <div class="service-list">
+          {% for service in services %}
+          <article class="service-card">
+            <span>{{ "%02d"|format(loop.index) }}</span>
+            <h3>{{ service.title }}</h3>
+            <p>{{ service.description }}</p>
+            <strong>{% if service.price_uah == 900 %}від {% endif %}{{ service.price_uah }} грн</strong>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="clinic-band">
+        <div>
+          <p class="section-kicker">Оптика</p>
+          <h2>Окуляри, лінзи та діагностика в одному місці</h2>
+          <p>
+            Ми поєднуємо уважну консультацію, сучасне обладнання та якісні оптичні
+            рішення, щоб кожен візит був спокійним і зрозумілим.
+          </p>
+        </div>
+        <img
+          src="{{ url_for('static', path='/images/hero-optika-timka.png') }}"
+          alt="Окуляри у сучасному кабінеті офтальмолога"
+        />
+      </section>
+
+      <section class="booking-band" id="booking">
+        <div>
+          <p class="section-kicker">Запис</p>
+          <h2>Запис на прийом</h2>
+          <p>Залиште контакти, і адміністратор узгодить зручний час консультації.</p>
+        </div>
+
+        <form class="booking-form" data-appointment-form>
+          <label>
+            Ім'я
+            <input name="name" type="text" placeholder="Ваше ім'я" required minlength="2" />
+          </label>
+          <label>
+            Телефон
+            <input name="phone" type="tel" placeholder="+38 (0__) ___ __ __" required />
+          </label>
+          <label>
+            Послуга
+            <select name="service_id">
+              <option value="">Потрібна консультація</option>
+              {% for service in services %}
+              <option value="{{ service.id }}">{{ service.title }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Коментар
+            <textarea name="message" placeholder="Коротко опишіть запит"></textarea>
+          </label>
+          <button class="button button-primary" type="submit">Надіслати заявку</button>
+          <p class="form-status" role="status"></p>
+        </form>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', path='/js/main.js') }}"></script>
+  </body>
+</html>

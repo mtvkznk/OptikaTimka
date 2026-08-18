@@ -1,0 +1,1 @@
+"""Optika Timka application package."""

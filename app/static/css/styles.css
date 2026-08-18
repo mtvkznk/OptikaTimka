@@ -1,0 +1,473 @@
+:root {
+  --green-950: #012f22;
+  --green-900: #033c2d;
+  --green-800: #07523d;
+  --green-100: #edf4f1;
+  --ink: #10231f;
+  --muted: #4e5d58;
+  --line: #dde6e2;
+  --surface: #fbfcfb;
+  --white: #ffffff;
+  --shadow: 0 28px 70px rgba(1, 47, 34, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 82% 20%, rgba(4, 60, 45, 0.08), transparent 30rem),
+    var(--surface);
+  font-family: "Inter", Arial, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) auto minmax(14rem, 1fr);
+  align-items: center;
+  gap: 2rem;
+  padding: 1.35rem clamp(1.75rem, 3.5vw, 2.4rem);
+  color: var(--white);
+  background: linear-gradient(90deg, #033725, #064d38);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.15) inset;
+}
+
+.brand,
+h1,
+h2 {
+  margin: 0;
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.brand {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  min-height: 4.5rem;
+  padding: 0.65rem 1.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 8px;
+  font-size: 2.45rem;
+  line-height: 1;
+}
+
+.main-nav {
+  display: flex;
+  gap: clamp(2rem, 4vw, 5rem);
+  align-items: center;
+  font-size: 1.28rem;
+  font-weight: 700;
+}
+
+.main-nav a,
+.header-cta {
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.main-nav a:hover {
+  color: #d5eee6;
+}
+
+.header-cta {
+  justify-self: end;
+  display: inline-flex;
+  min-height: 4.2rem;
+  min-width: 17rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.8rem 1.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 8px;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.header-cta:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+}
+
+.menu-button {
+  display: none;
+}
+
+.hero {
+  min-height: calc(100vh - 7.2rem);
+  padding: clamp(5rem, 11vw, 9.4rem) clamp(1.75rem, 4.8vw, 4.7rem) clamp(3.5rem, 7vw, 6rem);
+}
+
+.hero-inner {
+  width: min(100%, 94rem);
+  margin: 0 auto;
+}
+
+h1 {
+  max-width: 13.2ch;
+  color: var(--green-950);
+  font-size: 7.25rem;
+  line-height: 0.95;
+  overflow-wrap: break-word;
+}
+
+.feature-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(2rem, 5vw, 5rem);
+  margin-top: clamp(5rem, 7vw, 7.5rem);
+}
+
+.feature {
+  min-height: 15rem;
+  padding-right: clamp(1.4rem, 4vw, 4.8rem);
+  border-right: 1px solid var(--line);
+}
+
+.feature:last-child {
+  border-right: 0;
+}
+
+.feature-icon {
+  display: grid;
+  width: 4.8rem;
+  height: 4.8rem;
+  place-items: center;
+  margin-bottom: 1.7rem;
+  border-radius: 50%;
+  color: var(--green-950);
+  background: var(--green-100);
+}
+
+.feature-icon svg {
+  width: 2.2rem;
+  height: 2.2rem;
+}
+
+.feature h2 {
+  margin-bottom: 1.3rem;
+  color: var(--green-950);
+  font-size: 2.45rem;
+  line-height: 1;
+}
+
+.feature p,
+.section-heading p,
+.clinic-band p,
+.booking-band p,
+.service-card p {
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+
+.service-band,
+.clinic-band,
+.booking-band {
+  padding: clamp(3.2rem, 6vw, 5.5rem) clamp(1.75rem, 4.8vw, 4.7rem);
+  border-top: 1px solid var(--line);
+}
+
+.service-band {
+  background: var(--white);
+}
+
+.section-heading,
+.clinic-band,
+.booking-band {
+  width: min(100%, 94rem);
+  margin: 0 auto;
+}
+
+.section-heading p,
+.section-kicker {
+  margin: 0 0 0.8rem;
+  color: var(--green-800);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.section-heading h2,
+.clinic-band h2,
+.booking-band h2 {
+  color: var(--green-950);
+  font-size: 3.7rem;
+  line-height: 1;
+}
+
+.service-list {
+  display: grid;
+  width: min(100%, 94rem);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 2.2rem auto 0;
+}
+
+.service-card {
+  min-height: 15rem;
+  padding: 0.3rem clamp(1.2rem, 3vw, 3rem) 0.3rem 0;
+  border-right: 1px solid var(--line);
+}
+
+.service-card + .service-card {
+  padding-left: clamp(1.2rem, 3vw, 3rem);
+}
+
+.service-card:last-child {
+  border-right: 0;
+}
+
+.service-card span {
+  color: var(--green-950);
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+
+.service-card h3 {
+  margin: 1rem 0 0.65rem;
+  color: var(--green-950);
+  font-size: 1.08rem;
+}
+
+.service-card strong {
+  display: block;
+  margin-top: 1.5rem;
+  color: var(--green-950);
+  font-size: 1.35rem;
+}
+
+.clinic-band {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.85fr) minmax(24rem, 1.15fr);
+  gap: clamp(2rem, 5vw, 5rem);
+  align-items: center;
+}
+
+.clinic-band img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.55;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: var(--shadow);
+}
+
+.booking-band {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.75fr) minmax(24rem, 1fr);
+  gap: clamp(2rem, 5vw, 5rem);
+  background: linear-gradient(180deg, rgba(237, 244, 241, 0.72), transparent);
+}
+
+.booking-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.booking-form label {
+  display: grid;
+  gap: 0.45rem;
+  color: var(--green-950);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.booking-form label:nth-child(3),
+.booking-form label:nth-child(4),
+.booking-form button,
+.form-status {
+  grid-column: 1 / -1;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 3.35rem;
+  border: 1px solid #b8c8c3;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  color: var(--ink);
+  background: var(--white);
+  font: inherit;
+}
+
+textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 3px solid rgba(7, 82, 61, 0.16);
+  border-color: var(--green-800);
+}
+
+.button {
+  display: inline-flex;
+  min-height: 3.7rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.95rem 1.7rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.button-primary {
+  color: var(--white);
+  background: linear-gradient(135deg, var(--green-950), var(--green-800));
+  box-shadow: 0 14px 28px rgba(1, 47, 34, 0.2);
+}
+
+.form-status {
+  min-height: 1.5rem;
+  margin: 0;
+  color: var(--green-800);
+  font-weight: 800;
+}
+
+@media (max-width: 1000px) {
+  .site-header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .menu-button {
+    display: inline-grid;
+    width: 3.1rem;
+    height: 3.1rem;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .menu-button span {
+    width: 1.35rem;
+    height: 2px;
+    background: var(--white);
+  }
+
+  .main-nav,
+  .header-cta {
+    display: none;
+  }
+
+  .site-header.menu-open .main-nav,
+  .site-header.menu-open .header-cta {
+    display: flex;
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .site-header.menu-open .main-nav {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .site-header.menu-open .header-cta {
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .feature-row,
+  .service-list {
+    grid-template-columns: 1fr;
+  }
+
+  .feature,
+  .service-card,
+  .service-card + .service-card {
+    min-height: auto;
+    padding: 1.6rem 0;
+    border-top: 1px solid var(--line);
+    border-right: 0;
+  }
+
+  .clinic-band,
+  .booking-band {
+    grid-template-columns: 1fr;
+  }
+
+  h1 {
+    font-size: 5.4rem;
+  }
+
+  .section-heading h2,
+  .clinic-band h2,
+  .booking-band h2 {
+    font-size: 3rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .site-header {
+    padding: 1rem;
+  }
+
+  .brand {
+    min-height: 3.6rem;
+    padding-inline: 1rem;
+    font-size: 1.9rem;
+  }
+
+  .hero {
+    min-height: auto;
+    padding-top: 4rem;
+  }
+
+  h1 {
+    font-size: 3.65rem;
+    max-width: 100%;
+  }
+
+  .feature-row {
+    margin-top: 3rem;
+  }
+
+  .booking-form {
+    grid-template-columns: 1fr;
+  }
+
+  .feature h2 {
+    font-size: 2.1rem;
+  }
+
+  .section-heading h2,
+  .clinic-band h2,
+  .booking-band h2 {
+    font-size: 2.45rem;
+  }
+}
+
+@media (max-width: 390px) {
+  h1 {
+    font-size: 3.1rem;
+  }
+}
