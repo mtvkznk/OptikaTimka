@@ -11,74 +11,102 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}" />
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="#top">ОптикаTimka</a>
+      <a class="brand" href="#home" data-tab-link="home">ОптикаTimka</a>
       <button class="menu-button" type="button" aria-label="Відкрити меню" aria-expanded="false">
         <span></span>
         <span></span>
       </button>
-      <nav class="main-nav" aria-label="Головна навігація">
-        <a href="#about">Про нас</a>
-        <a href="#services">Послуги</a>
-        <a href="#contacts">Контакти</a>
+      <nav class="main-nav" aria-label="Головна навігація" role="tablist">
+        <a href="#home" data-tab-link="home" role="tab" aria-selected="true">Головна</a>
+        <a href="#about" data-tab-link="about" role="tab" aria-selected="false">Про нас</a>
+        <a href="#services" data-tab-link="services" role="tab" aria-selected="false">Послуги</a>
+        <a href="#contacts" data-tab-link="contacts" role="tab" aria-selected="false">Контакти</a>
       </nav>
-      <a class="header-cta" href="#booking">Запис на прийом</a>
+      <a class="header-cta" href="#booking" data-tab-link="booking">Запис на прийом</a>
     </header>
 
-    <main id="top">
-      <section class="hero">
-        <div class="hero-inner">
-          <h1>Офтальмологія Дитяча офтальмологія Оптика Timka</h1>
+    <main>
+      <section class="tab-panel hero-panel is-active" id="home" data-tab-panel="home" role="tabpanel">
+        <div class="page-grid">
+          <div class="hero-copy">
+            <p class="section-kicker">Офтальмологія та оптика</p>
+            <h1>Оптика Timka</h1>
+            <p>
+              Діагностика зору, дитяча офтальмологія, підбір окулярів і контактних
+              лінз у спокійному форматі для всієї родини.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#booking" data-tab-link="booking">Записатися</a>
+              <a class="button button-secondary" href="#services" data-tab-link="services">Переглянути послуги</a>
+            </div>
+          </div>
+          <img
+            class="hero-image"
+            src="{{ url_for('static', path='/images/hero-optika-timka.png') }}"
+            alt="Окуляри у сучасному кабінеті офтальмолога"
+          />
+        </div>
 
-          <div class="feature-row">
-            <article class="feature" id="about">
-              <span class="feature-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke="currentColor" stroke-width="1.8" />
-                  <path d="M4.5 21a7.5 7.5 0 0 1 15 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                </svg>
-              </span>
-              <h2>Про нас</h2>
-              <p>Сучасна оптика та офтальмологічна допомога для всієї родини.</p>
-            </article>
+        <div class="feature-row" aria-label="Ключові напрямки">
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">01</span>
+            <h2>Дорослим</h2>
+            <p>Перевірка зору, консультація офтальмолога та комфортний підбір корекції.</p>
+          </article>
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">02</span>
+            <h2>Дітям</h2>
+            <p>Делікатна дитяча діагностика, зрозуміле пояснення батькам і план спостереження.</p>
+          </article>
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">03</span>
+            <h2>Оптика</h2>
+            <p>Оправи, лінзи та готові рішення після консультації в одному місці.</p>
+          </article>
+        </div>
+      </section>
 
-            <article class="feature" id="services">
-              <span class="feature-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="1.8" />
-                  <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" stroke="currentColor" stroke-width="1.8" />
-                </svg>
-              </span>
-              <h2>Послуги</h2>
-              <p>Діагностика зору, підбір окулярів та контактних лінз, лікування.</p>
-            </article>
-
-            <article class="feature" id="contacts">
-              <span class="feature-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path d="M19 10c0 5.25-7 11-7 11s-7-5.75-7-11a7 7 0 0 1 14 0Z" stroke="currentColor" stroke-width="1.8" />
-                  <path d="M12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" stroke="currentColor" stroke-width="1.8" />
-                </svg>
-              </span>
-              <h2>Контакти</h2>
-              <p>м. Львів, вул. Шевченка, 60<br />+38 (098) 123 45 67</p>
-            </article>
+      <section class="tab-panel content-panel" id="about" data-tab-panel="about" role="tabpanel" hidden>
+        <div class="panel-heading">
+          <p class="section-kicker">Про нас</p>
+          <h2>Кабінет, де зір пояснюють людською мовою</h2>
+        </div>
+        <div class="split-panel">
+          <div>
+            <p>
+              Optika Timka поєднує медичну консультацію, сучасну діагностику та оптичні
+              рішення без зайвої метушні. Пацієнт отримує зрозумілий маршрут: огляд,
+              рекомендації, підбір корекції та наступний крок.
+            </p>
+            <ul class="check-list">
+              <li>Окремий підхід для дітей і дорослих.</li>
+              <li>Підбір окулярів та лінз після діагностики.</li>
+              <li>Запис без черги через покрокову форму.</li>
+            </ul>
+          </div>
+          <div class="info-panel">
+            <span>Графік</span>
+            <strong>Пн-Сб 09:00-19:00</strong>
+            <span>Адреса</span>
+            <strong>м. Львів, вул. Шевченка, 60</strong>
+            <span>Телефон</span>
+            <strong>+38 (098) 123 45 67</strong>
           </div>
         </div>
       </section>
 
-      <section class="service-band">
-        <div class="section-heading">
-          <p>Послуги</p>
+      <section class="tab-panel content-panel" id="services" data-tab-panel="services" role="tabpanel" hidden>
+        <div class="panel-heading">
+          <p class="section-kicker">Послуги</p>
           <h2>Комплексна турбота про ваш зір</h2>
         </div>
-
         <div class="service-list">
           {% for service in services %}
           <article class="service-card">
@@ -91,53 +119,145 @@
         </div>
       </section>
 
-      <section class="clinic-band">
-        <div>
-          <p class="section-kicker">Оптика</p>
-          <h2>Окуляри, лінзи та діагностика в одному місці</h2>
-          <p>
-            Ми поєднуємо уважну консультацію, сучасне обладнання та якісні оптичні
-            рішення, щоб кожен візит був спокійним і зрозумілим.
-          </p>
+      <section class="tab-panel content-panel" id="contacts" data-tab-panel="contacts" role="tabpanel" hidden>
+        <div class="panel-heading">
+          <p class="section-kicker">Контакти</p>
+          <h2>Ми поруч, коли треба перевірити зір</h2>
         </div>
-        <img
-          src="{{ url_for('static', path='/images/hero-optika-timka.png') }}"
-          alt="Окуляри у сучасному кабінеті офтальмолога"
-        />
+        <div class="contact-grid">
+          <article>
+            <span>Адреса</span>
+            <strong>м. Львів, вул. Шевченка, 60</strong>
+          </article>
+          <article>
+            <span>Телефон</span>
+            <strong>+38 (098) 123 45 67</strong>
+          </article>
+          <article>
+            <span>Email</span>
+            <strong>hello@optika-timka.ua</strong>
+          </article>
+          <article>
+            <span>Години роботи</span>
+            <strong>Пн-Сб 09:00-19:00</strong>
+          </article>
+        </div>
       </section>
 
-      <section class="booking-band" id="booking">
-        <div>
-          <p class="section-kicker">Запис</p>
-          <h2>Запис на прийом</h2>
-          <p>Залиште контакти, і адміністратор узгодить зручний час консультації.</p>
-        </div>
+      <section class="tab-panel booking-panel" id="booking" data-tab-panel="booking" role="tabpanel" hidden>
+        <div class="booking-layout">
+          <aside class="booking-aside">
+            <p class="section-kicker">Е-запис</p>
+            <h2>Запис на прийом</h2>
+            <p>
+              Формат як в електронній черзі: контакти, послуга, місце, дата, час і
+              підтвердження талона.
+            </p>
+            <ol class="queue-rules">
+              <li>Оберіть послугу та філію.</li>
+              <li>Виберіть доступну дату й час.</li>
+              <li>Підтвердіть запис, щоб адміністратор отримав заявку.</li>
+            </ol>
+          </aside>
 
-        <form class="booking-form" data-appointment-form>
-          <label>
-            Ім'я
-            <input name="name" type="text" placeholder="Ваше ім'я" required minlength="2" />
-          </label>
-          <label>
-            Телефон
-            <input name="phone" type="tel" placeholder="+38 (0__) ___ __ __" required />
-          </label>
-          <label>
-            Послуга
-            <select name="service_id">
-              <option value="">Потрібна консультація</option>
-              {% for service in services %}
-              <option value="{{ service.id }}">{{ service.title }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <label>
-            Коментар
-            <textarea name="message" placeholder="Коротко опишіть запит"></textarea>
-          </label>
-          <button class="button button-primary" type="submit">Надіслати заявку</button>
-          <p class="form-status" role="status"></p>
-        </form>
+          <form class="booking-form" data-appointment-form>
+            <div class="stepper" aria-label="Кроки запису">
+              <span class="is-current" data-step-dot="1">1 Контакти</span>
+              <span data-step-dot="2">2 Послуга</span>
+              <span data-step-dot="3">3 Дата і час</span>
+              <span data-step-dot="4">4 Підтвердження</span>
+            </div>
+
+            <fieldset class="form-step is-active" data-form-step="1">
+              <legend>Ваші контакти</legend>
+              <div class="field-grid">
+                <label>
+                  Ім'я та прізвище
+                  <input name="name" type="text" placeholder="Наприклад, Іван Петренко" required minlength="2" />
+                </label>
+                <label>
+                  Телефон
+                  <input name="phone" type="tel" placeholder="+38 (0__) ___ __ __" required />
+                </label>
+                <label class="wide-field">
+                  Email для підтвердження
+                  <input name="email" type="email" placeholder="name@example.com" />
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-step" data-form-step="2" hidden>
+              <legend>Послуга та філія</legend>
+              <div class="field-grid">
+                <label>
+                  Послуга
+                  <select name="service_id" required>
+                    <option value="">Оберіть послугу</option>
+                    {% for service in services %}
+                    <option value="{{ service.id }}">{{ service.title }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  Філія
+                  <select name="branch" required>
+                    <option value="Оптика Timka, Львів, вул. Шевченка, 60">
+                      Оптика Timka, Львів, вул. Шевченка, 60
+                    </option>
+                    <option value="Дитячий кабінет Optika Timka">
+                      Дитячий кабінет Optika Timka
+                    </option>
+                  </select>
+                </label>
+                <label class="wide-field">
+                  Коментар
+                  <textarea name="message" placeholder="Коротко опишіть запит або побажання"></textarea>
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-step" data-form-step="3" hidden>
+              <legend>Дата та доступний час</legend>
+              <div class="field-grid">
+                <label>
+                  Дата
+                  <input name="visit_date" type="date" required />
+                </label>
+                <div class="time-field">
+                  <span>Час</span>
+                  <div class="time-slots">
+                    <label><input type="radio" name="visit_time" value="09:30" required />09:30</label>
+                    <label><input type="radio" name="visit_time" value="10:30" />10:30</label>
+                    <label><input type="radio" name="visit_time" value="12:00" />12:00</label>
+                    <label><input type="radio" name="visit_time" value="14:30" />14:30</label>
+                    <label><input type="radio" name="visit_time" value="16:00" />16:00</label>
+                    <label><input type="radio" name="visit_time" value="18:00" />18:00</label>
+                  </div>
+                </div>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-step" data-form-step="4" hidden>
+              <legend>Підтвердження запису</legend>
+              <div class="ticket-preview" data-ticket-preview>
+                <span>Талон е-запису</span>
+                <strong>Заповніть попередні кроки</strong>
+                <p>Після підтвердження адміністратор отримає заявку та зв'яжеться з вами.</p>
+              </div>
+              <label class="confirm-check">
+                <input name="confirm" type="checkbox" required />
+                Підтверджую коректність даних для запису.
+              </label>
+            </fieldset>
+
+            <div class="wizard-actions">
+              <button class="button button-secondary" type="button" data-prev-step disabled>Назад</button>
+              <button class="button button-primary" type="button" data-next-step>Далі</button>
+              <button class="button button-primary" type="submit" data-submit-step hidden>Підтвердити запис</button>
+            </div>
+            <p class="form-status" role="status"></p>
+          </form>
+        </div>
       </section>
     </main>
 
