@@ -214,7 +214,7 @@ svg {
 .admin-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1rem;
   margin-bottom: 1.9rem;
 }
@@ -485,6 +485,7 @@ svg {
   letter-spacing: 0;
   cursor: grab;
   touch-action: none;
+  user-select: none;
 }
 
 .drag-handle:hover {
@@ -536,6 +537,11 @@ svg {
   opacity: 0.72;
   background: #f6f9fe;
   box-shadow: 0 10px 24px rgba(30, 49, 86, 0.1);
+}
+
+.is-reordering {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .slot-row,

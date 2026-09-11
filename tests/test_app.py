@@ -55,6 +55,7 @@ def test_admin_dashboard_renders_controls() -> None:
     response = client.get("/admin")
 
     assert response.status_code == 200
+    assert "Optika Timka" not in response.text
     assert "Останні записи" in response.text
     assert "/admin/appointments" in response.text
     assert "Доступні години" in response.text
@@ -206,6 +207,7 @@ def test_admin_appointments_page_renders_all_appointments() -> None:
 
     response = client.get("/admin/appointments")
     assert response.status_code == 200
+    assert "Optika Timka" not in response.text
     assert "Всі записи" in response.text
     assert "All Records Client" in response.text
 

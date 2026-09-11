@@ -1,4 +1,5 @@
 const reorderLists = document.querySelectorAll("[data-reorder-list]");
+let activeDrag = null;
 
 function getDragAfterElement(list, pointerY) {
   const draggableItems = [
@@ -65,41 +66,101 @@ async function persistOrder(list) {
   }
 }
 
-reorderLists.forEach((list) => {
-  list.addEventListener("dragstart", (event) => {
-    const row = event.target.closest("[data-reorder-item]");
-    if (!row || !event.target.closest(".drag-handle")) {
-      event.preventDefault();
-      return;
-    }
+function moveRow(list, row, pointerY) {
+  const afterElement = getDragAfterElement(list, pointerY);
+  if (afterElement) {
+    list.insertBefore(row, afterElement);
+  } else {
+    list.appendChild(row);
+  }
+}
 
-    row.classList.add("is-dragging");
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", row.dataset.id);
-  });
+function startDrag(event) {
+  const handle = event.target.closest(".drag-handle");
+  const row = handle?.closest("[data-reorder-item]");
+  const list = row?.closest("[data-reorder-list]");
 
-  list.addEventListener("dragover", (event) => {
-    event.preventDefault();
-    const draggingRow = list.querySelector(".is-dragging");
-    if (!draggingRow) {
-      return;
-    }
+  if (!handle || !row || !list) {
+    return;
+  }
 
-    const afterElement = getDragAfterElement(list, event.clientY);
-    if (afterElement) {
-      list.insertBefore(draggingRow, afterElement);
-    } else {
-      list.appendChild(draggingRow);
-    }
-  });
+  event.preventDefault();
+  handle.setPointerCapture(event.pointerId);
+  activeDrag = {
+    handle,
+    list,
+    row,
+    pointerId: event.pointerId,
+    startY: event.clientY,
+    moved: false,
+  };
+  document.body.classList.add("is-reordering");
+  row.classList.add("is-dragging");
+}
 
-  list.addEventListener("dragend", (event) => {
-    const row = event.target.closest("[data-reorder-item]");
-    if (!row) {
-      return;
-    }
+function updateDrag(event) {
+  if (!activeDrag || event.pointerId !== activeDrag.pointerId) {
+    return;
+  }
 
-    row.classList.remove("is-dragging");
+  event.preventDefault();
+  if (Math.abs(event.clientY - activeDrag.startY) > 4) {
+    activeDrag.moved = true;
+  }
+
+  moveRow(activeDrag.list, activeDrag.row, event.clientY);
+}
+
+function finishDrag(event) {
+  if (!activeDrag || event.pointerId !== activeDrag.pointerId) {
+    return;
+  }
+
+  event.preventDefault();
+  const finishedDrag = activeDrag;
+  activeDrag = null;
+  finishedDrag.row.classList.remove("is-dragging");
+  document.body.classList.remove("is-reordering");
+
+  if (finishedDrag.handle.hasPointerCapture(event.pointerId)) {
+    finishedDrag.handle.releasePointerCapture(event.pointerId);
+  }
+
+  if (finishedDrag.moved) {
+    persistOrder(finishedDrag.list);
+  }
+}
+
+function moveWithKeyboard(event) {
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+    return;
+  }
+
+  const handle = event.target.closest(".drag-handle");
+  const row = handle?.closest("[data-reorder-item]");
+  const list = row?.closest("[data-reorder-list]");
+
+  if (!handle || !row || !list) {
+    return;
+  }
+
+  event.preventDefault();
+  if (event.key === "ArrowUp" && row.previousElementSibling) {
+    list.insertBefore(row, row.previousElementSibling);
     persistOrder(list);
-  });
+  }
+
+  if (event.key === "ArrowDown" && row.nextElementSibling) {
+    list.insertBefore(row.nextElementSibling, row);
+    persistOrder(list);
+  }
+}
+
+reorderLists.forEach((list) => {
+  list.addEventListener("pointerdown", startDrag);
+  list.addEventListener("keydown", moveWithKeyboard);
 });
+
+document.addEventListener("pointermove", updateDrag);
+document.addEventListener("pointerup", finishDrag);
+document.addEventListener("pointercancel", finishDrag);
