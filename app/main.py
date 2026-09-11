@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -82,6 +83,11 @@ STATUS_OPTIONS = [
 ]
 
 STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
+BOOKING_DATE_WINDOW_DAYS = 45
+
+
+class ReorderPayload(BaseModel):
+    ids: list[int]
 
 
 def ensure_seed_data(session: Session) -> None:
@@ -158,6 +164,66 @@ def current_date() -> date:
     return datetime.now(UTC).date()
 
 
+def build_appointment_rows(appointments: list[Appointment]) -> list[dict[str, Any]]:
+    return [
+        {
+            "appointment": appointment,
+            "status_value": status_value(appointment),
+            "status_label": status_label(appointment.status),
+        }
+        for appointment in appointments
+    ]
+
+
+def get_available_booking_dates(session: Session) -> list[dict[str, str]]:
+    today = current_date()
+    closed_dates = set(
+        session.exec(
+            select(ClosedDate.closed_on).where(ClosedDate.closed_on >= today)
+        ).all()
+    )
+    available_dates = []
+
+    for offset in range(BOOKING_DATE_WINDOW_DAYS):
+        day = today + timedelta(days=offset)
+        if day in closed_dates:
+            continue
+
+        available_dates.append(
+            {
+                "value": day.isoformat(),
+                "label": format_date(day),
+            }
+        )
+
+    return available_dates
+
+
+def admin_return_url(form_data: dict[str, str], fallback: str = "/admin#appointments") -> str:
+    return_to = form_data.get("return_to", fallback)
+    if not return_to.startswith("/admin"):
+        return fallback
+    return return_to
+
+
+def apply_sort_order(session: Session, model: type[Any], ids: list[int]) -> None:
+    seen_ids = set()
+    for sort_order, item_id in enumerate(ids, start=1):
+        if item_id in seen_ids:
+            continue
+
+        seen_ids.add(item_id)
+        item = session.get(model, item_id)
+        if item is None:
+            continue
+
+        item.sort_order = sort_order
+        item.updated_at = utc_now()
+        session.add(item)
+
+    session.commit()
+
+
 def admin_context(session: Session, request: Request) -> dict[str, Any]:
     ensure_seed_data(session)
     today = current_date()
@@ -199,14 +265,7 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         "time_slots": time_slots,
         "closed_dates": closed_dates,
         "status_options": STATUS_OPTIONS,
-        "appointment_rows": [
-            {
-                "appointment": appointment,
-                "status_value": status_value(appointment),
-                "status_label": status_label(appointment.status),
-            }
-            for appointment in latest_appointments
-        ],
+        "appointment_rows": build_appointment_rows(latest_appointments),
         "metrics": {
             "today_appointments": count_rows(
                 session,
@@ -222,6 +281,22 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
             "all_services": len(services),
             "available_hours": len(workdays) * len(active_time_slots),
         },
+        "format_date": format_date,
+        "format_time": format_time,
+    }
+
+
+def appointments_context(session: Session, request: Request) -> dict[str, Any]:
+    ensure_seed_data(session)
+    appointments = list(
+        session.exec(select(Appointment).order_by(Appointment.created_at.desc())).all()
+    )
+
+    return {
+        "request": request,
+        "app_name": settings.app_name,
+        "status_options": STATUS_OPTIONS,
+        "appointment_rows": build_appointment_rows(appointments),
         "format_date": format_date,
         "format_time": format_time,
     }
@@ -259,7 +334,6 @@ def form_time(form_data: dict[str, str], key: str) -> time:
 @app.get("/", response_class=HTMLResponse)
 def root(request: Request, session: SessionDep) -> HTMLResponse:
     ensure_seed_data(session)
-    closed_dates = session.exec(select(ClosedDate.closed_on)).all()
 
     return templates.TemplateResponse(
         request,
@@ -268,7 +342,7 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
             "app_name": settings.app_name,
             "services": get_active_services(session),
             "time_slots": get_active_time_slots(session),
-            "closed_dates": [item.isoformat() for item in closed_dates],
+            "available_dates": get_available_booking_dates(session),
             "format_time": format_time,
             "today": current_date().isoformat(),
         },
@@ -278,6 +352,15 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
 @app.get("/admin", response_class=HTMLResponse)
 def admin(request: Request, session: SessionDep) -> HTMLResponse:
     return templates.TemplateResponse(request, "admin.html", admin_context(session, request))
+
+
+@app.get("/admin/appointments", response_class=HTMLResponse)
+def admin_appointments(request: Request, session: SessionDep) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "admin_appointments.html",
+        appointments_context(session, request),
+    )
 
 
 @app.get("/api/status")
@@ -370,6 +453,12 @@ def create_appointment(payload: AppointmentCreate, session: SessionDep) -> Appoi
             )
 
     if payload.preferred_date is not None:
+        if payload.preferred_date < current_date():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Оберіть майбутню дату.",
+            )
+
         closed_date = session.exec(
             select(ClosedDate).where(ClosedDate.closed_on == payload.preferred_date)
         ).first()
@@ -424,7 +513,7 @@ async def update_appointment_status(
     appointment.updated_at = utc_now()
     session.add(appointment)
     session.commit()
-    return RedirectResponse(url="/admin#appointments", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=admin_return_url(form_data), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/services")
@@ -443,6 +532,12 @@ async def create_service(request: Request, session: SessionDep) -> RedirectRespo
     session.add(service)
     session.commit()
     return RedirectResponse(url="/admin#services", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/reorder/services")
+def reorder_services(payload: ReorderPayload, session: SessionDep) -> dict[str, str]:
+    apply_sort_order(session, BookingService, payload.ids)
+    return {"status": "ok"}
 
 
 @app.post("/admin/services/{service_id}")
@@ -479,6 +574,12 @@ async def create_time_slot(request: Request, session: SessionDep) -> RedirectRes
     session.add(slot)
     session.commit()
     return RedirectResponse(url="/admin#time-slots", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/reorder/time-slots")
+def reorder_time_slots(payload: ReorderPayload, session: SessionDep) -> dict[str, str]:
+    apply_sort_order(session, AvailableTimeSlot, payload.ids)
+    return {"status": "ok"}
 
 
 @app.post("/admin/time-slots/{slot_id}")

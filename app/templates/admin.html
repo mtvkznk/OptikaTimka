@@ -79,7 +79,7 @@
         <article class="admin-panel admin-panel-wide" id="appointments">
           <div class="panel-heading">
             <h1>Останні записи</h1>
-            <a class="ghost-link" href="#appointments">Перейти до всіх</a>
+            <a class="ghost-link" href="/admin/appointments">Перейти до всіх</a>
           </div>
 
           <div class="table-scroll">
@@ -115,6 +115,7 @@
                       action="/admin/appointments/{{ row.appointment.id }}/status"
                       method="post"
                     >
+                      <input type="hidden" name="return_to" value="/admin#appointments" />
                       <select name="status" aria-label="Статус запису">
                         {% for option in status_options %}
                         <option
@@ -146,9 +147,29 @@
             <h2>Доступні години</h2>
           </div>
 
-          <div class="slot-list">
+          <div
+            class="slot-list"
+            data-reorder-list
+            data-reorder-endpoint="/admin/reorder/time-slots"
+            data-reorder-status="time-slots"
+          >
             {% for slot in time_slots %}
-            <form class="slot-row" action="/admin/time-slots/{{ slot.id }}" method="post">
+            <form
+              class="slot-row drag-row"
+              action="/admin/time-slots/{{ slot.id }}"
+              method="post"
+              data-reorder-item
+              data-id="{{ slot.id }}"
+              draggable="true"
+            >
+              <button
+                class="drag-handle"
+                type="button"
+                aria-label="Перетягнути годину"
+                title="Перетягнути"
+              >
+                ⋮⋮
+              </button>
               <span class="row-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" focusable="false">
                   <path
@@ -159,13 +180,7 @@
               <input type="time" name="start_time" value="{{ format_time(slot.start_time) }}" />
               <span class="time-dash">-</span>
               <input type="time" name="end_time" value="{{ format_time(slot.end_time) }}" />
-              <input
-                class="order-input"
-                type="number"
-                name="sort_order"
-                value="{{ slot.sort_order }}"
-                aria-label="Порядок"
-              />
+              <input type="hidden" name="sort_order" value="{{ slot.sort_order }}" data-order-input />
               <label class="compact-check">
                 <input
                   type="checkbox"
@@ -178,15 +193,15 @@
             </form>
             {% endfor %}
           </div>
+          <p class="reorder-status" role="status" data-reorder-status-for="time-slots"></p>
 
           <form class="add-form" action="/admin/time-slots" method="post">
             <input type="time" name="start_time" required aria-label="Початок" />
             <input type="time" name="end_time" required aria-label="Кінець" />
             <input
-              type="number"
+              type="hidden"
               name="sort_order"
               value="{{ time_slots|length + 1 }}"
-              aria-label="Порядок"
             />
             <input type="hidden" name="is_active" value="on" />
             <button type="submit">Додати</button>
@@ -198,9 +213,29 @@
             <h2>Послуги</h2>
           </div>
 
-          <div class="service-list">
+          <div
+            class="service-list"
+            data-reorder-list
+            data-reorder-endpoint="/admin/reorder/services"
+            data-reorder-status="services"
+          >
             {% for service in services %}
-            <form class="service-row" action="/admin/services/{{ service.id }}" method="post">
+            <form
+              class="service-row drag-row"
+              action="/admin/services/{{ service.id }}"
+              method="post"
+              data-reorder-item
+              data-id="{{ service.id }}"
+              draggable="true"
+            >
+              <button
+                class="drag-handle"
+                type="button"
+                aria-label="Перетягнути послугу"
+                title="Перетягнути"
+              >
+                ⋮⋮
+              </button>
               <input name="name" value="{{ service.name }}" aria-label="Назва послуги" />
               <input
                 type="number"
@@ -219,11 +254,10 @@
                 aria-label="Ціна"
               />
               <input
-                class="order-input"
-                type="number"
+                type="hidden"
                 name="sort_order"
                 value="{{ service.sort_order }}"
-                aria-label="Порядок"
+                data-order-input
               />
               <label class="compact-check">
                 <input
@@ -237,12 +271,13 @@
             </form>
             {% endfor %}
           </div>
+          <p class="reorder-status" role="status" data-reorder-status-for="services"></p>
 
           <form class="add-form add-form-service" action="/admin/services" method="post">
             <input name="name" placeholder="Нова послуга" required />
             <input type="number" name="duration_minutes" min="5" step="5" value="30" />
             <input type="number" name="price_uah" min="0" step="10" placeholder="Ціна" />
-            <input type="number" name="sort_order" value="{{ services|length + 1 }}" />
+            <input type="hidden" name="sort_order" value="{{ services|length + 1 }}" />
             <input type="hidden" name="is_active" value="on" />
             <button type="submit">Додати</button>
           </form>
@@ -285,5 +320,6 @@
         </article>
       </section>
     </main>
+    <script src="{{ url_for('static', path='/js/admin.js') }}"></script>
   </body>
 </html>

@@ -33,7 +33,12 @@
           <div class="field-row">
             <label class="field">
               <span>Дата</span>
-              <input name="preferred_date" type="date" min="{{ today }}" required />
+              <select name="preferred_date" required>
+                <option value="">Оберіть дату</option>
+                {% for option in available_dates %}
+                <option value="{{ option.value }}">{{ option.label }}</option>
+                {% endfor %}
+              </select>
             </label>
 
             <label class="field">
@@ -65,9 +70,6 @@
       </section>
     </main>
 
-    <script id="booking-config" type="application/json">
-      {{ {"closedDates": closed_dates}|tojson }}
-    </script>
     <script src="{{ url_for('static', path='/js/booking.js') }}"></script>
   </body>
 </html>

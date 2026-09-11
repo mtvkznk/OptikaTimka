@@ -466,13 +466,34 @@ svg {
 
 .icon-save,
 .icon-delete,
-.add-form button {
+.add-form button,
+.drag-handle {
   display: inline-flex;
   min-height: 2.6rem;
   align-items: center;
   justify-content: center;
   border-radius: 8px;
   font-weight: 850;
+}
+
+.drag-handle {
+  width: 2.45rem;
+  border: 1px solid transparent;
+  color: #58709c;
+  background: #f1f5fb;
+  font-size: 1.1rem;
+  letter-spacing: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.drag-handle:hover {
+  border-color: var(--line-strong);
+  color: var(--ink-strong);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .icon-save {
@@ -504,6 +525,19 @@ svg {
   padding: 0.55rem 0;
 }
 
+.drag-row {
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+.drag-row.is-dragging {
+  opacity: 0.72;
+  background: #f6f9fe;
+  box-shadow: 0 10px 24px rgba(30, 49, 86, 0.1);
+}
+
 .slot-row,
 .service-row,
 .closed-row,
@@ -515,11 +549,11 @@ svg {
 }
 
 .slot-row {
-  grid-template-columns: 2rem minmax(5.5rem, 1fr) auto minmax(5.5rem, 1fr) 4.5rem 5.7rem 2.6rem;
+  grid-template-columns: 2.45rem 2rem minmax(5.5rem, 1fr) auto minmax(5.5rem, 1fr) 5.7rem 2.6rem;
 }
 
 .service-row {
-  grid-template-columns: minmax(11rem, 1.4fr) 5.4rem 5.8rem 4.5rem 5.7rem 2.6rem;
+  grid-template-columns: 2.45rem minmax(11rem, 1.4fr) 5.4rem 5.8rem 5.7rem 2.6rem;
 }
 
 .closed-row {
@@ -548,10 +582,6 @@ svg {
   font-weight: 800;
 }
 
-.order-input {
-  min-width: 0;
-}
-
 .compact-check {
   display: inline-flex;
   align-items: center;
@@ -570,11 +600,11 @@ svg {
 
 .add-form {
   margin-top: 1rem;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 4.5rem 5.8rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 5.8rem;
 }
 
 .add-form-service {
-  grid-template-columns: minmax(11rem, 1.4fr) 5.5rem 5.8rem 4.5rem 5.8rem;
+  grid-template-columns: minmax(11rem, 1.4fr) 5.5rem 5.8rem 5.8rem;
 }
 
 .add-form-closed {
@@ -585,6 +615,53 @@ svg {
   border: 1px solid var(--green);
   color: var(--green);
   background: #ffffff;
+}
+
+.reorder-status {
+  min-height: 1.25rem;
+  margin: 0.65rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.reorder-status.is-success {
+  color: var(--green-dark);
+}
+
+.reorder-status.is-error {
+  color: var(--error);
+}
+
+.appointments-page-panel {
+  padding: 1.45rem;
+}
+
+.appointments-page-heading {
+  align-items: flex-end;
+}
+
+.appointments-page-heading h1 {
+  margin-top: 0.35rem;
+}
+
+.back-link {
+  color: var(--green);
+  font-size: 0.96rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.records-count {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  color: #38507d;
+  background: #f6f9fe;
+  font-size: 0.92rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .empty-cell,

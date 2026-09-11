@@ -1,11 +1,12 @@
 from collections.abc import Generator
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.database import get_session
-from app.main import app
+from app.main import app, current_date
 
 engine = create_engine(
     "sqlite://",
@@ -40,6 +41,7 @@ def test_homepage_renders_booking_form() -> None:
     assert "/api/appointments" in response.text
     assert "Перевірка зору" in response.text
     assert "10:00 - 11:00" in response.text
+    assert "Оберіть дату" in response.text
 
 
 def test_api_status_describes_backend_stack() -> None:
@@ -54,6 +56,7 @@ def test_admin_dashboard_renders_controls() -> None:
 
     assert response.status_code == 200
     assert "Останні записи" in response.text
+    assert "/admin/appointments" in response.text
     assert "Доступні години" in response.text
     assert "Послуги" in response.text
     assert "Закриті дати" in response.text
@@ -138,6 +141,24 @@ def test_admin_can_add_time_slot_that_homepage_uses() -> None:
     assert "17:00 - 18:00" in homepage.text
 
 
+def test_closed_date_is_not_available_on_booking_form() -> None:
+    closed_on = current_date() + timedelta(days=3)
+    close_response = client.post(
+        "/admin/closed-dates",
+        data={
+            "closed_on": closed_on.isoformat(),
+            "reason": "Санітарний день",
+        },
+        follow_redirects=False,
+    )
+
+    assert close_response.status_code == 303
+
+    homepage = client.get("/")
+    assert homepage.status_code == 200
+    assert f'value="{closed_on.isoformat()}"' not in homepage.text
+
+
 def test_closed_date_blocks_appointment_booking() -> None:
     close_response = client.post(
         "/admin/closed-dates",
@@ -167,6 +188,28 @@ def test_closed_date_blocks_appointment_booking() -> None:
     assert response.json()["detail"] == "На цю дату запис закритий."
 
 
+def test_admin_appointments_page_renders_all_appointments() -> None:
+    create_response = client.post(
+        "/api/appointments",
+        json={
+            "name": "All Records Client",
+            "phone": "+380500000000",
+            "email": None,
+            "service": "Перевірка зору",
+            "preferred_date": "2031-05-17",
+            "preferred_time": "09:00:00",
+            "message": "",
+        },
+    )
+
+    assert create_response.status_code == 201
+
+    response = client.get("/admin/appointments")
+    assert response.status_code == 200
+    assert "Всі записи" in response.text
+    assert "All Records Client" in response.text
+
+
 def test_admin_can_update_appointment_status() -> None:
     appointment_response = client.post(
         "/api/appointments",
@@ -193,3 +236,27 @@ def test_admin_can_update_appointment_status() -> None:
     admin_page = client.get("/admin")
     assert admin_page.status_code == 200
     assert "Підтверджено" in admin_page.text
+
+
+def test_admin_can_reorder_services() -> None:
+    services = client.get("/api/booking-services").json()
+    reversed_ids = [item["id"] for item in reversed(services)]
+
+    response = client.post("/admin/reorder/services", json={"ids": reversed_ids})
+
+    assert response.status_code == 200
+
+    reordered_services = client.get("/api/booking-services").json()
+    assert [item["id"] for item in reordered_services] == reversed_ids
+
+
+def test_admin_can_reorder_time_slots() -> None:
+    slots = client.get("/api/time-slots").json()
+    reversed_ids = [item["id"] for item in reversed(slots)]
+
+    response = client.post("/admin/reorder/time-slots", json={"ids": reversed_ids})
+
+    assert response.status_code == 200
+
+    reordered_slots = client.get("/api/time-slots").json()
+    assert [item["id"] for item in reordered_slots] == reversed_ids

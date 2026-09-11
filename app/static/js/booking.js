@@ -1,9 +1,5 @@
 const form = document.querySelector("[data-appointment-form]");
 const statusNode = document.querySelector("[data-form-status]");
-const configNode = document.querySelector("#booking-config");
-const bookingConfig = configNode ? JSON.parse(configNode.textContent || "{}") : {};
-const closedDates = new Set(bookingConfig.closedDates || []);
-const dateInput = form?.querySelector("input[name='preferred_date']");
 
 function setStatus(message, type = "") {
   if (!statusNode) {
@@ -14,27 +10,9 @@ function setStatus(message, type = "") {
   statusNode.className = `form-status ${type}`.trim();
 }
 
-function validateDate() {
-  if (!dateInput || !dateInput.value) {
-    return true;
-  }
-
-  if (closedDates.has(dateInput.value)) {
-    dateInput.setCustomValidity("На цю дату запис закритий.");
-    setStatus("На цю дату запис закритий. Оберіть інший день.", "is-error");
-    return false;
-  }
-
-  dateInput.setCustomValidity("");
-  return true;
-}
-
-dateInput?.addEventListener("change", validateDate);
-
 form?.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  validateDate();
   if (!form.reportValidity()) {
     return;
   }

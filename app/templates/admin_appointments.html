@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Список всіх записів Optika Timka." />
+    <title>Всі записи | {{ app_name }}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}" />
+  </head>
+  <body class="admin-body">
+    <main class="admin-page">
+      <header class="admin-header">
+        <a class="admin-brand" href="/">Optika Timka</a>
+        <div class="admin-user" aria-label="Поточний користувач">
+          <span class="user-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path
+                d="M12 12.6c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4Zm0 2c-3.1 0-6.2 1.7-6.2 4.1 0 .6.5 1.1 1.1 1.1h10.2c.6 0 1.1-.5 1.1-1.1 0-2.4-3.1-4.1-6.2-4.1Z"
+              />
+            </svg>
+          </span>
+          <span>Адміністратор</span>
+          <span class="chevron" aria-hidden="true">⌄</span>
+        </div>
+      </header>
+
+      <section class="admin-panel appointments-page-panel">
+        <div class="panel-heading appointments-page-heading">
+          <div>
+            <a class="back-link" href="/admin">← Назад</a>
+            <h1>Всі записи</h1>
+          </div>
+          <span class="records-count">{{ appointment_rows|length }} записів</span>
+        </div>
+
+        <div class="table-scroll">
+          <table class="appointments-table">
+            <thead>
+              <tr>
+                <th>Пацієнт</th>
+                <th>Послуга</th>
+                <th>Дата</th>
+                <th>Час</th>
+                <th>Статус</th>
+                <th>Дії</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in appointment_rows %}
+              <tr>
+                <td>
+                  <strong>{{ row.appointment.name }}</strong>
+                  <span>{{ row.appointment.phone }}</span>
+                </td>
+                <td>{{ row.appointment.service }}</td>
+                <td>{{ format_date(row.appointment.preferred_date) }}</td>
+                <td>{{ format_time(row.appointment.preferred_time) }}</td>
+                <td>
+                  <span class="status-pill status-{{ row.status_value }}">
+                    {{ row.status_label }}
+                  </span>
+                </td>
+                <td>
+                  <form
+                    class="inline-action"
+                    action="/admin/appointments/{{ row.appointment.id }}/status"
+                    method="post"
+                  >
+                    <input type="hidden" name="return_to" value="/admin/appointments" />
+                    <select name="status" aria-label="Статус запису">
+                      {% for option in status_options %}
+                      <option
+                        value="{{ option.value }}"
+                        {% if option.value == row.status_value %}selected{% endif %}
+                      >
+                        {{ option.label }}
+                      </option>
+                      {% endfor %}
+                    </select>
+                    <button class="icon-save" type="submit" aria-label="Зберегти статус">
+                      ✓
+                    </button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="6" class="empty-cell">Поки що немає записів.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
