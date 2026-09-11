@@ -1,6 +1,9 @@
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, status
+from fastapi import Depends, FastAPI, Request, status
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -20,11 +23,35 @@ from app.models import (
 )
 
 app = FastAPI(title=settings.app_name)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
 SessionDep = Annotated[Session, Depends(get_session)]
 
+SERVICES = [
+    "Перевірка зору",
+    "Підбір окулярів",
+    "Підбір контактних лінз",
+    "Консультація офтальмолога",
+]
 
-@app.get("/")
-def root() -> dict[str, object]:
+TIME_SLOTS = ["09:30", "10:30", "12:00", "14:30", "16:00", "18:00"]
+
+
+@app.get("/", response_class=HTMLResponse)
+def root(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "app_name": settings.app_name,
+            "services": SERVICES,
+            "time_slots": TIME_SLOTS,
+        },
+    )
+
+
+@app.get("/api/status")
+def api_status() -> dict[str, object]:
     return {
         "app": settings.app_name,
         "status": "backend-ready",

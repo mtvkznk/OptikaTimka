@@ -27,10 +27,11 @@ docker compose up -d db
 .\.venv\Scripts\uvicorn.exe app.main:app --reload
 ```
 
+Open `http://127.0.0.1:8000/` to view the appointment form. Backend stack status is available at `http://127.0.0.1:8000/api/status`.
+
 ## Development Checks
 
 ```powershell
 .\.venv\Scripts\pytest.exe
 .\.venv\Scripts\ruff.exe check .
 ```
-

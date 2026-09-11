@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Запис на прийом в Optika Timka: оберіть послугу, дату та час."
+    />
+    <title>Запис на прийом | {{ app_name }}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}" />
+  </head>
+  <body>
+    <main class="booking-page">
+      <section class="booking-shell" aria-labelledby="booking-title">
+        <div class="booking-heading">
+          <h1 id="booking-title">Запис на прийом</h1>
+          <p>Оберіть послугу, зручну дату та час</p>
+        </div>
+
+        <form class="booking-card" data-appointment-form data-endpoint="/api/appointments">
+          <label class="field field-wide">
+            <span>Послуга</span>
+            <select name="service" required>
+              <option value="">Оберіть послугу</option>
+              {% for service in services %}
+              <option value="{{ service }}">{{ service }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <div class="field-row">
+            <label class="field">
+              <span>Дата</span>
+              <input name="preferred_date" type="date" required />
+            </label>
+
+            <label class="field">
+              <span>Час</span>
+              <select name="preferred_time" required>
+                <option value="">Оберіть час</option>
+                {% for slot in time_slots %}
+                <option value="{{ slot }}:00">{{ slot }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+
+          <label class="field field-wide">
+            <span>Ім'я та прізвище</span>
+            <input name="name" type="text" placeholder="Наприклад, Іван Петренко" required />
+          </label>
+
+          <label class="field field-wide">
+            <span>Телефон</span>
+            <input name="phone" type="tel" placeholder="+380 (___) ___-__-__" required />
+          </label>
+
+          <button class="submit-button" type="submit">Підтвердити запис</button>
+          <p class="form-status" role="status" data-form-status></p>
+        </form>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', path='/js/booking.js') }}"></script>
+  </body>
+</html>

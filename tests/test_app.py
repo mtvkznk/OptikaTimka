@@ -31,8 +31,17 @@ def test_health() -> None:
     assert response.json()["status"] == "ok"
 
 
-def test_root_describes_backend_stack() -> None:
+def test_homepage_renders_booking_form() -> None:
     response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Запис на прийом" in response.text
+    assert "data-appointment-form" in response.text
+    assert "/api/appointments" in response.text
+
+
+def test_api_status_describes_backend_stack() -> None:
+    response = client.get("/api/status")
 
     assert response.status_code == 200
     assert response.json()["stack"] == ["FastAPI", "SQLModel", "Alembic", "PostgreSQL"]
@@ -76,4 +85,3 @@ def test_create_appointment() -> None:
 
     assert response.status_code == 201
     assert response.json()["status"] == "new"
-
