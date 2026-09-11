@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: optika_timka_db
+    environment:
+      POSTGRES_DB: optika_timka
+      POSTGRES_USER: optika_timka
+      POSTGRES_PASSWORD: optika_timka
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U optika_timka -d optika_timka"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+
