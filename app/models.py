@@ -69,6 +69,80 @@ class ProductRead(ProductBase):
     updated_at: datetime
 
 
+class BookingServiceBase(SQLModel):
+    name: str = Field(max_length=160)
+    duration_minutes: int = Field(default=30, ge=5)
+    price_uah: int = Field(default=0, ge=0)
+    is_active: bool = Field(default=True, index=True)
+    sort_order: int = Field(default=0, index=True)
+
+
+class BookingService(BookingServiceBase, table=True):
+    __table_args__ = (UniqueConstraint("name"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class BookingServiceCreate(BookingServiceBase):
+    pass
+
+
+class BookingServiceRead(BookingServiceBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AvailableTimeSlotBase(SQLModel):
+    start_time: time
+    end_time: time
+    is_active: bool = Field(default=True, index=True)
+    sort_order: int = Field(default=0, index=True)
+
+
+class AvailableTimeSlot(AvailableTimeSlotBase, table=True):
+    __table_args__ = (UniqueConstraint("start_time"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class AvailableTimeSlotCreate(AvailableTimeSlotBase):
+    pass
+
+
+class AvailableTimeSlotRead(AvailableTimeSlotBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ClosedDateBase(SQLModel):
+    closed_on: date = Field(index=True)
+    reason: str = Field(default="", max_length=160)
+
+
+class ClosedDate(ClosedDateBase, table=True):
+    __table_args__ = (UniqueConstraint("closed_on"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ClosedDateCreate(ClosedDateBase):
+    pass
+
+
+class ClosedDateRead(ClosedDateBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class AppointmentBase(SQLModel):
     name: str = Field(max_length=120)
     phone: str = Field(max_length=40)
@@ -114,4 +188,3 @@ class AnalyticsEventCreate(AnalyticsEventBase):
 class AnalyticsEventRead(AnalyticsEventBase):
     id: int
     created_at: datetime
-

@@ -25,7 +25,7 @@
             <select name="service" required>
               <option value="">Оберіть послугу</option>
               {% for service in services %}
-              <option value="{{ service }}">{{ service }}</option>
+              <option value="{{ service.name }}">{{ service.name }}</option>
               {% endfor %}
             </select>
           </label>
@@ -33,7 +33,7 @@
           <div class="field-row">
             <label class="field">
               <span>Дата</span>
-              <input name="preferred_date" type="date" required />
+              <input name="preferred_date" type="date" min="{{ today }}" required />
             </label>
 
             <label class="field">
@@ -41,7 +41,9 @@
               <select name="preferred_time" required>
                 <option value="">Оберіть час</option>
                 {% for slot in time_slots %}
-                <option value="{{ slot }}:00">{{ slot }}</option>
+                <option value="{{ slot.start_time.isoformat() }}">
+                  {{ format_time(slot.start_time) }} - {{ format_time(slot.end_time) }}
+                </option>
                 {% endfor %}
               </select>
             </label>
@@ -63,6 +65,9 @@
       </section>
     </main>
 
+    <script id="booking-config" type="application/json">
+      {{ {"closedDates": closed_dates}|tojson }}
+    </script>
     <script src="{{ url_for('static', path='/js/booking.js') }}"></script>
   </body>
 </html>

@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Адмін-панель Optika Timka для керування записами, послугами та робочими годинами."
+    />
+    <title>Адмінка | {{ app_name }}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}" />
+  </head>
+  <body class="admin-body">
+    <main class="admin-page">
+      <header class="admin-header">
+        <a class="admin-brand" href="/">Optika Timka</a>
+        <div class="admin-user" aria-label="Поточний користувач">
+          <span class="user-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path
+                d="M12 12.6c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4Zm0 2c-3.1 0-6.2 1.7-6.2 4.1 0 .6.5 1.1 1.1 1.1h10.2c.6 0 1.1-.5 1.1-1.1 0-2.4-3.1-4.1-6.2-4.1Z"
+              />
+            </svg>
+          </span>
+          <span>Адміністратор</span>
+          <span class="chevron" aria-hidden="true">⌄</span>
+        </div>
+      </header>
+
+      <section class="metric-grid" aria-label="Коротка статистика">
+        <article class="metric-card">
+          <span class="metric-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path
+                d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1.5A2.5 2.5 0 0 1 22 6.5v12A2.5 2.5 0 0 1 19.5 21h-15A2.5 2.5 0 0 1 2 18.5v-12A2.5 2.5 0 0 1 4.5 4H6V3a1 1 0 0 1 1-1Zm12.5 8h-15v8.5c0 .3.2.5.5.5h14c.3 0 .5-.2.5-.5V10ZM5 6c-.3 0-.5.2-.5.5V8h15V6.5c0-.3-.2-.5-.5-.5H18v1a1 1 0 1 1-2 0V6H8v1a1 1 0 1 1-2 0V6H5Z"
+              />
+            </svg>
+          </span>
+          <div>
+            <p>Сьогоднішні записи</p>
+            <strong>{{ metrics.today_appointments }}</strong>
+            <span>з {{ metrics.planned_appointments }} запланованих</span>
+          </div>
+        </article>
+
+        <article class="metric-card">
+          <span class="metric-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path
+                d="M6 2.8h12A2.2 2.2 0 0 1 20.2 5v14a2.2 2.2 0 0 1-2.2 2.2H6A2.2 2.2 0 0 1 3.8 19V5A2.2 2.2 0 0 1 6 2.8Zm0 2V19h12V4.8H6Zm3.5 3.4h5a1 1 0 1 1 0 2h-5a1 1 0 0 1 0-2Zm0 4h5a1 1 0 1 1 0 2h-5a1 1 0 0 1 0-2Zm0 4h3a1 1 0 1 1 0 2h-3a1 1 0 1 1 0-2Z"
+              />
+            </svg>
+          </span>
+          <div>
+            <p>Активні послуги</p>
+            <strong>{{ metrics.active_services }}</strong>
+            <span>з {{ metrics.all_services }} загалом</span>
+          </div>
+        </article>
+
+        <article class="metric-card">
+          <span class="metric-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path
+                d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 3a1 1 0 0 1 1 1v3.6l2.2 2.2a1 1 0 0 1-1.4 1.4l-2.5-2.5A1 1 0 0 1 11 12V8a1 1 0 0 1 1-1Z"
+              />
+            </svg>
+          </span>
+          <div>
+            <p>Доступні години</p>
+            <strong>{{ metrics.available_hours }}</strong>
+            <span>на найближчі 7 днів</span>
+          </div>
+        </article>
+      </section>
+
+      <section class="admin-grid">
+        <article class="admin-panel admin-panel-wide" id="appointments">
+          <div class="panel-heading">
+            <h1>Останні записи</h1>
+            <a class="ghost-link" href="#appointments">Перейти до всіх</a>
+          </div>
+
+          <div class="table-scroll">
+            <table class="appointments-table">
+              <thead>
+                <tr>
+                  <th>Пацієнт</th>
+                  <th>Послуга</th>
+                  <th>Дата</th>
+                  <th>Час</th>
+                  <th>Статус</th>
+                  <th>Дії</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in appointment_rows %}
+                <tr>
+                  <td>
+                    <strong>{{ row.appointment.name }}</strong>
+                    <span>{{ row.appointment.phone }}</span>
+                  </td>
+                  <td>{{ row.appointment.service }}</td>
+                  <td>{{ format_date(row.appointment.preferred_date) }}</td>
+                  <td>{{ format_time(row.appointment.preferred_time) }}</td>
+                  <td>
+                    <span class="status-pill status-{{ row.status_value }}">
+                      {{ row.status_label }}
+                    </span>
+                  </td>
+                  <td>
+                    <form
+                      class="inline-action"
+                      action="/admin/appointments/{{ row.appointment.id }}/status"
+                      method="post"
+                    >
+                      <select name="status" aria-label="Статус запису">
+                        {% for option in status_options %}
+                        <option
+                          value="{{ option.value }}"
+                          {% if option.value == row.status_value %}selected{% endif %}
+                        >
+                          {{ option.label }}
+                        </option>
+                        {% endfor %}
+                      </select>
+                      <button class="icon-save" type="submit" aria-label="Зберегти статус">
+                        ✓
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+                {% else %}
+                <tr>
+                  <td colspan="6" class="empty-cell">Поки що немає записів.</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="admin-panel" id="time-slots">
+          <div class="panel-heading">
+            <h2>Доступні години</h2>
+          </div>
+
+          <div class="slot-list">
+            {% for slot in time_slots %}
+            <form class="slot-row" action="/admin/time-slots/{{ slot.id }}" method="post">
+              <span class="row-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path
+                    d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 3a1 1 0 0 1 1 1v3.6l2.2 2.2a1 1 0 0 1-1.4 1.4l-2.5-2.5A1 1 0 0 1 11 12V8a1 1 0 0 1 1-1Z"
+                  />
+                </svg>
+              </span>
+              <input type="time" name="start_time" value="{{ format_time(slot.start_time) }}" />
+              <span class="time-dash">-</span>
+              <input type="time" name="end_time" value="{{ format_time(slot.end_time) }}" />
+              <input
+                class="order-input"
+                type="number"
+                name="sort_order"
+                value="{{ slot.sort_order }}"
+                aria-label="Порядок"
+              />
+              <label class="compact-check">
+                <input
+                  type="checkbox"
+                  name="is_active"
+                  {% if slot.is_active %}checked{% endif %}
+                />
+                <span>Активна</span>
+              </label>
+              <button class="icon-save" type="submit" aria-label="Зберегти годину">✓</button>
+            </form>
+            {% endfor %}
+          </div>
+
+          <form class="add-form" action="/admin/time-slots" method="post">
+            <input type="time" name="start_time" required aria-label="Початок" />
+            <input type="time" name="end_time" required aria-label="Кінець" />
+            <input
+              type="number"
+              name="sort_order"
+              value="{{ time_slots|length + 1 }}"
+              aria-label="Порядок"
+            />
+            <input type="hidden" name="is_active" value="on" />
+            <button type="submit">Додати</button>
+          </form>
+        </article>
+
+        <article class="admin-panel" id="services">
+          <div class="panel-heading">
+            <h2>Послуги</h2>
+          </div>
+
+          <div class="service-list">
+            {% for service in services %}
+            <form class="service-row" action="/admin/services/{{ service.id }}" method="post">
+              <input name="name" value="{{ service.name }}" aria-label="Назва послуги" />
+              <input
+                type="number"
+                name="duration_minutes"
+                min="5"
+                step="5"
+                value="{{ service.duration_minutes }}"
+                aria-label="Тривалість у хвилинах"
+              />
+              <input
+                type="number"
+                name="price_uah"
+                min="0"
+                step="10"
+                value="{{ service.price_uah }}"
+                aria-label="Ціна"
+              />
+              <input
+                class="order-input"
+                type="number"
+                name="sort_order"
+                value="{{ service.sort_order }}"
+                aria-label="Порядок"
+              />
+              <label class="compact-check">
+                <input
+                  type="checkbox"
+                  name="is_active"
+                  {% if service.is_active %}checked{% endif %}
+                />
+                <span>Активна</span>
+              </label>
+              <button class="icon-save" type="submit" aria-label="Зберегти послугу">✓</button>
+            </form>
+            {% endfor %}
+          </div>
+
+          <form class="add-form add-form-service" action="/admin/services" method="post">
+            <input name="name" placeholder="Нова послуга" required />
+            <input type="number" name="duration_minutes" min="5" step="5" value="30" />
+            <input type="number" name="price_uah" min="0" step="10" placeholder="Ціна" />
+            <input type="number" name="sort_order" value="{{ services|length + 1 }}" />
+            <input type="hidden" name="is_active" value="on" />
+            <button type="submit">Додати</button>
+          </form>
+        </article>
+
+        <article class="admin-panel" id="closed-dates">
+          <div class="panel-heading">
+            <h2>Закриті дати</h2>
+          </div>
+
+          <div class="closed-list">
+            {% for item in closed_dates %}
+            <div class="closed-row">
+              <form action="/admin/closed-dates/{{ item.id }}" method="post">
+                <span class="row-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path
+                      d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1.5A2.5 2.5 0 0 1 22 6.5v12A2.5 2.5 0 0 1 19.5 21h-15A2.5 2.5 0 0 1 2 18.5v-12A2.5 2.5 0 0 1 4.5 4H6V3a1 1 0 0 1 1-1Zm12.5 8h-15v8.5c0 .3.2.5.5.5h14c.3 0 .5-.2.5-.5V10ZM5 6c-.3 0-.5.2-.5.5V8h15V6.5c0-.3-.2-.5-.5-.5H18v1a1 1 0 1 1-2 0V6H8v1a1 1 0 1 1-2 0V6H5Z"
+                    />
+                  </svg>
+                </span>
+                <input type="date" name="closed_on" value="{{ item.closed_on }}" required />
+                <input name="reason" value="{{ item.reason }}" placeholder="Причина" />
+                <button class="icon-save" type="submit" aria-label="Зберегти дату">✓</button>
+              </form>
+              <form action="/admin/closed-dates/{{ item.id }}/delete" method="post">
+                <button class="icon-delete" type="submit" aria-label="Видалити дату">×</button>
+              </form>
+            </div>
+            {% else %}
+            <p class="empty-note">Закритих дат ще немає.</p>
+            {% endfor %}
+          </div>
+
+          <form class="add-form add-form-closed" action="/admin/closed-dates" method="post">
+            <input type="date" name="closed_on" required />
+            <input name="reason" placeholder="Причина" />
+            <button type="submit">Додати</button>
+          </form>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

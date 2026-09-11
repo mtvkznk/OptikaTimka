@@ -38,6 +38,8 @@ def test_homepage_renders_booking_form() -> None:
     assert "Запис на прийом" in response.text
     assert "data-appointment-form" in response.text
     assert "/api/appointments" in response.text
+    assert "Перевірка зору" in response.text
+    assert "10:00 - 11:00" in response.text
 
 
 def test_api_status_describes_backend_stack() -> None:
@@ -45,6 +47,16 @@ def test_api_status_describes_backend_stack() -> None:
 
     assert response.status_code == 200
     assert response.json()["stack"] == ["FastAPI", "SQLModel", "Alembic", "PostgreSQL"]
+
+
+def test_admin_dashboard_renders_controls() -> None:
+    response = client.get("/admin")
+
+    assert response.status_code == 200
+    assert "Останні записи" in response.text
+    assert "Доступні години" in response.text
+    assert "Послуги" in response.text
+    assert "Закриті дати" in response.text
 
 
 def test_create_and_list_product() -> None:
@@ -76,12 +88,108 @@ def test_create_appointment() -> None:
             "name": "Ivan Petrenko",
             "phone": "+380980000000",
             "email": "ivan@example.com",
-            "service": "Vision check",
-            "preferred_date": "2026-09-12",
-            "preferred_time": "10:30:00",
+            "service": "Перевірка зору",
+            "preferred_date": "2031-05-14",
+            "preferred_time": "10:00:00",
             "message": "Need a consultation.",
         },
     )
 
     assert response.status_code == 201
     assert response.json()["status"] == "new"
+
+
+def test_admin_can_add_service_that_homepage_uses() -> None:
+    response = client.post(
+        "/admin/services",
+        data={
+            "name": "Ремонт окулярів",
+            "duration_minutes": "20",
+            "price_uah": "300",
+            "sort_order": "10",
+            "is_active": "on",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+
+    homepage = client.get("/")
+    assert homepage.status_code == 200
+    assert "Ремонт окулярів" in homepage.text
+
+
+def test_admin_can_add_time_slot_that_homepage_uses() -> None:
+    response = client.post(
+        "/admin/time-slots",
+        data={
+            "start_time": "17:00",
+            "end_time": "18:00",
+            "sort_order": "20",
+            "is_active": "on",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+
+    homepage = client.get("/")
+    assert homepage.status_code == 200
+    assert "17:00 - 18:00" in homepage.text
+
+
+def test_closed_date_blocks_appointment_booking() -> None:
+    close_response = client.post(
+        "/admin/closed-dates",
+        data={
+            "closed_on": "2031-05-15",
+            "reason": "Санітарний день",
+        },
+        follow_redirects=False,
+    )
+
+    assert close_response.status_code == 303
+
+    response = client.post(
+        "/api/appointments",
+        json={
+            "name": "Olena Kovalenko",
+            "phone": "+380970000000",
+            "email": None,
+            "service": "Перевірка зору",
+            "preferred_date": "2031-05-15",
+            "preferred_time": "09:00:00",
+            "message": "",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "На цю дату запис закритий."
+
+
+def test_admin_can_update_appointment_status() -> None:
+    appointment_response = client.post(
+        "/api/appointments",
+        json={
+            "name": "Serhii Melnyk",
+            "phone": "+380630000000",
+            "email": None,
+            "service": "Перевірка зору",
+            "preferred_date": "2031-05-16",
+            "preferred_time": "09:00:00",
+            "message": "",
+        },
+    )
+    appointment_id = appointment_response.json()["id"]
+
+    update_response = client.post(
+        f"/admin/appointments/{appointment_id}/status",
+        data={"status": "confirmed"},
+        follow_redirects=False,
+    )
+
+    assert update_response.status_code == 303
+
+    admin_page = client.get("/admin")
+    assert admin_page.status_code == 200
+    assert "Підтверджено" in admin_page.text

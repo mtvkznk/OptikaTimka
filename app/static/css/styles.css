@@ -1,12 +1,18 @@
 :root {
-  --ink: #172338;
-  --muted: #69758a;
-  --line: #cbd5e1;
-  --green: #34a853;
-  --green-dark: #26843f;
+  --ink: #14213a;
+  --ink-strong: #07164a;
+  --muted: #66799f;
+  --soft: #edf3fb;
+  --line: #d6dfec;
+  --line-strong: #c8d4e5;
+  --green: #11a84f;
+  --green-dark: #07883d;
+  --green-soft: #dcf8e8;
+  --blue-soft: #e8f1ff;
   --surface: #ffffff;
-  --page: #f8fafc;
+  --page: #f7faff;
   --error: #b42318;
+  --shadow: 0 22px 55px rgba(19, 33, 58, 0.08);
 }
 
 * {
@@ -21,7 +27,7 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    radial-gradient(circle at 50% 0%, rgba(226, 232, 240, 0.65), transparent 32rem),
+    radial-gradient(circle at 50% 0%, rgba(232, 241, 255, 0.95), transparent 34rem),
     var(--page);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -31,6 +37,17 @@ button,
 input,
 select {
   font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+svg {
+  display: block;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
 }
 
 .booking-page {
@@ -68,11 +85,11 @@ select {
 .booking-card {
   display: grid;
   gap: 1.45rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   padding: clamp(1.45rem, 3vw, 2.55rem);
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 26px 70px rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow);
 }
 
 .field-row {
@@ -95,32 +112,43 @@ select {
 }
 
 .field input,
-.field select {
+.field select,
+.admin-panel input,
+.admin-panel select,
+.add-form input {
   width: 100%;
-  min-height: 4rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
-  padding: 0 1.25rem;
   color: var(--ink);
   background-color: var(--surface);
-  font-size: 1.2rem;
   font-weight: 400;
-  line-height: 1.25;
   outline: none;
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease;
 }
 
+.field input,
+.field select {
+  min-height: 4rem;
+  padding: 0 1.25rem;
+  font-size: 1.2rem;
+  line-height: 1.25;
+}
+
 .field input::placeholder,
-.field select:invalid {
+.field select:invalid,
+.admin-panel input::placeholder {
   color: var(--muted);
 }
 
 .field input:focus,
-.field select:focus {
-  border-color: #94a3b8;
-  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.2);
+.field select:focus,
+.admin-panel input:focus,
+.admin-panel select:focus,
+.add-form input:focus {
+  border-color: #8ea8d4;
+  box-shadow: 0 0 0 4px rgba(73, 112, 177, 0.14);
 }
 
 .submit-button {
@@ -133,10 +161,9 @@ select {
   padding: 1rem 1.25rem;
   color: #ffffff;
   background: linear-gradient(180deg, var(--green), var(--green-dark));
-  box-shadow: 0 12px 24px rgba(52, 168, 83, 0.24);
+  box-shadow: 0 12px 24px rgba(17, 168, 79, 0.24);
   font-size: 1.25rem;
   font-weight: 800;
-  cursor: pointer;
   transition:
     filter 160ms ease,
     transform 160ms ease;
@@ -171,6 +198,416 @@ select {
   color: var(--error);
 }
 
+.admin-body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(231, 240, 255, 0.9), transparent 28rem),
+    linear-gradient(180deg, #ffffff 0%, #f6f9fe 100%);
+}
+
+.admin-page {
+  width: min(100%, 90rem);
+  margin: 0 auto;
+  padding: 1.6rem clamp(1rem, 3vw, 2.8rem) 3.5rem;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.9rem;
+}
+
+.admin-brand {
+  color: var(--ink-strong);
+  font-size: 1.15rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-decoration: none;
+}
+
+.admin-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.85rem;
+  color: #0d1d52;
+  font-size: 1rem;
+  font-weight: 750;
+}
+
+.user-avatar {
+  display: grid;
+  width: 2.9rem;
+  height: 2.9rem;
+  place-items: center;
+  border-radius: 50%;
+  color: #43547b;
+  background: var(--soft);
+}
+
+.user-avatar svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.chevron {
+  color: #21469b;
+  font-size: 1.2rem;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.15rem;
+  margin-bottom: 1.5rem;
+}
+
+.metric-card,
+.admin-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 48px rgba(30, 49, 86, 0.06);
+}
+
+.metric-card {
+  display: flex;
+  align-items: center;
+  gap: 1.45rem;
+  min-height: 9.1rem;
+  padding: 1.2rem 1.7rem;
+}
+
+.metric-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 4rem;
+  height: 4rem;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--green);
+  background: #f1f5f9;
+}
+
+.metric-icon svg {
+  width: 1.85rem;
+  height: 1.85rem;
+}
+
+.metric-card p,
+.metric-card strong,
+.metric-card span {
+  display: block;
+  margin: 0;
+}
+
+.metric-card p {
+  color: #183b8f;
+  font-size: 1.08rem;
+  font-weight: 750;
+}
+
+.metric-card strong {
+  margin-top: 0.3rem;
+  color: var(--ink-strong);
+  font-size: 2.55rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.metric-card span {
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(20rem, 1fr);
+  gap: 1.5rem 1.15rem;
+}
+
+.admin-grid > * {
+  min-width: 0;
+}
+
+.admin-panel {
+  padding: 1.35rem 1.35rem 1.15rem;
+}
+
+.admin-panel-wide {
+  grid-column: span 1;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.panel-heading h1,
+.panel-heading h2 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: clamp(1.45rem, 2vw, 1.65rem);
+  font-weight: 850;
+  line-height: 1.12;
+}
+
+.ghost-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--green);
+  font-size: 0.98rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.ghost-link::after {
+  content: "→";
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.appointments-table {
+  width: 100%;
+  min-width: 46rem;
+  border-collapse: collapse;
+  color: #253b70;
+  font-size: 0.98rem;
+}
+
+.appointments-table th {
+  padding: 0.9rem 0.55rem;
+  color: #344875;
+  background: #f3f6fb;
+  font-weight: 700;
+  text-align: left;
+}
+
+.appointments-table th:first-child {
+  border-radius: 8px 0 0 0;
+}
+
+.appointments-table th:last-child {
+  border-radius: 0 8px 0 0;
+}
+
+.appointments-table td {
+  border-bottom: 1px solid #e4ebf5;
+  padding: 0.78rem 0.55rem;
+  vertical-align: middle;
+}
+
+.appointments-table td strong,
+.appointments-table td span {
+  display: block;
+}
+
+.appointments-table td strong {
+  color: #0f265c;
+  font-weight: 750;
+}
+
+.appointments-table td span {
+  margin-top: 0.18rem;
+  color: var(--muted);
+}
+
+.status-pill {
+  display: inline-flex;
+  min-width: 7rem;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.status-new {
+  color: #1761ce;
+  background: var(--blue-soft);
+}
+
+.status-confirmed {
+  color: var(--green-dark);
+  background: var(--green-soft);
+}
+
+.status-canceled {
+  color: #ad2f2f;
+  background: #ffe7e7;
+}
+
+.inline-action {
+  display: grid;
+  grid-template-columns: minmax(7.2rem, 1fr) 2.35rem;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.inline-action select,
+.admin-panel input,
+.admin-panel select {
+  min-height: 2.6rem;
+  padding: 0 0.75rem;
+  font-size: 0.95rem;
+}
+
+.icon-save,
+.icon-delete,
+.add-form button {
+  display: inline-flex;
+  min-height: 2.6rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-weight: 850;
+}
+
+.icon-save {
+  border: 0;
+  color: #ffffff;
+  background: var(--green);
+}
+
+.icon-delete {
+  width: 2.6rem;
+  border: 1px solid #ffd0d0;
+  color: #b42318;
+  background: #fff5f5;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.slot-list,
+.service-list,
+.closed-list {
+  display: grid;
+  gap: 0;
+}
+
+.slot-row,
+.service-row,
+.closed-row {
+  border-bottom: 1px solid #e4ebf5;
+  padding: 0.55rem 0;
+}
+
+.slot-row,
+.service-row,
+.closed-row,
+.closed-row form,
+.add-form {
+  display: grid;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.slot-row {
+  grid-template-columns: 2rem minmax(5.5rem, 1fr) auto minmax(5.5rem, 1fr) 4.5rem 5.7rem 2.6rem;
+}
+
+.service-row {
+  grid-template-columns: minmax(11rem, 1.4fr) 5.4rem 5.8rem 4.5rem 5.7rem 2.6rem;
+}
+
+.closed-row {
+  grid-template-columns: minmax(0, 1fr) 2.6rem;
+}
+
+.closed-row form:first-child {
+  grid-template-columns: 2rem minmax(8.5rem, 0.7fr) minmax(9rem, 1fr) 2.6rem;
+}
+
+.row-icon {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  place-items: center;
+  color: #34527f;
+}
+
+.row-icon svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.time-dash {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.order-input {
+  min-width: 0;
+}
+
+.compact-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #38507d;
+  font-size: 0.9rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.compact-check input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--green);
+}
+
+.add-form {
+  margin-top: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 4.5rem 5.8rem;
+}
+
+.add-form-service {
+  grid-template-columns: minmax(11rem, 1.4fr) 5.5rem 5.8rem 4.5rem 5.8rem;
+}
+
+.add-form-closed {
+  grid-template-columns: minmax(8.5rem, 0.7fr) minmax(10rem, 1fr) 5.8rem;
+}
+
+.add-form button {
+  border: 1px solid var(--green);
+  color: var(--green);
+  background: #ffffff;
+}
+
+.empty-cell,
+.empty-note {
+  color: var(--muted);
+  font-weight: 700;
+  text-align: center;
+}
+
+.empty-note {
+  margin: 1rem 0;
+}
+
+@media (max-width: 1080px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .booking-page {
     padding: 2.4rem 1rem;
@@ -199,5 +636,48 @@ select {
     min-height: 3.6rem;
     font-size: 1rem;
   }
-}
 
+  .admin-page {
+    padding: 1rem 0.8rem 2.25rem;
+  }
+
+  .admin-header {
+    align-items: flex-start;
+  }
+
+  .admin-user span:not(.user-avatar):not(.chevron) {
+    display: none;
+  }
+
+  .metric-card {
+    min-height: auto;
+    padding: 1rem;
+  }
+
+  .metric-card strong {
+    font-size: 2rem;
+  }
+
+  .admin-panel {
+    padding: 1rem;
+  }
+
+  .slot-row,
+  .service-row,
+  .closed-row,
+  .closed-row form:first-child,
+  .add-form,
+  .add-form-service,
+  .add-form-closed {
+    grid-template-columns: 1fr;
+  }
+
+  .row-icon,
+  .time-dash {
+    display: none;
+  }
+
+  .compact-check {
+    justify-content: flex-start;
+  }
+}
