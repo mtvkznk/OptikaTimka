@@ -42,6 +42,8 @@ def test_homepage_renders_booking_form() -> None:
     assert "Перевірка зору" in response.text
     assert "10:00 - 11:00" in response.text
     assert "Оберіть дату" in response.text
+    assert "data-calendar-carousel" in response.text
+    assert "data-calendar-next" in response.text
     assert "calendar-board" in response.text
     assert "calendar-grid" in response.text
     assert "ГОДИНИ / TIME" in response.text
@@ -49,6 +51,8 @@ def test_homepage_renders_booking_form() -> None:
     assert 'name="preferred_date"' in response.text
     assert 'name="preferred_time"' in response.text
     assert 'inputmode="tel"' in response.text
+    assert "booking.js" in response.text
+    assert "20260916-booking-carousel" in response.text
     assert "Наприклад" not in response.text
 
 

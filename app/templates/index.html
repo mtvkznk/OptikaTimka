@@ -33,41 +33,69 @@
           <div class="booking-picker">
             <fieldset class="picker-field date-picker">
               <legend>Оберіть дату</legend>
-              <div class="calendar-stack" aria-label="Календар доступних дат">
-                {% for month in booking_months %}
-                <section class="calendar-board" aria-label="{{ month.title }}">
-                  <h2>{{ month.title }}</h2>
-                  <div class="calendar-grid">
-                    {% for weekday in weekday_labels %}
-                    <span class="calendar-weekday{% if weekday.weekend %} is-weekend{% endif %}">
-                      <strong>{{ weekday.uk }}</strong>
-                      <small>{{ weekday.en }}</small>
-                    </span>
-                    {% endfor %}
-
-                    {% for week in month.weeks %}
-                      {% for day in week %}
-                        {% if day.is_available %}
-                        <label
-                          class="calendar-day{% if day.is_weekend %} is-weekend{% endif %}{% if day.is_today %} is-today{% endif %}"
-                          title="{{ day.label }}"
-                        >
-                          <input type="radio" name="preferred_date" value="{{ day.value }}" required />
-                          <span>{{ day.day }}</span>
-                        </label>
-                        {% else %}
-                        <span
-                          class="calendar-day is-muted{% if day.is_weekend %} is-weekend{% endif %}{% if day.is_outside_month %} is-outside-month{% endif %}"
-                          aria-hidden="true"
-                        >
-                          {{ day.day }}
-                        </span>
-                        {% endif %}
+              <div class="calendar-carousel" data-calendar-carousel aria-label="Календар доступних дат">
+                <div class="calendar-nav" aria-label="Перемикання місяців">
+                  <button
+                    class="calendar-nav-button"
+                    type="button"
+                    data-calendar-prev
+                    aria-label="Попередній місяць"
+                    title="Попередній місяць"
+                  >
+                    ‹
+                  </button>
+                  <span class="calendar-counter" data-calendar-counter aria-live="polite"></span>
+                  <button
+                    class="calendar-nav-button"
+                    type="button"
+                    data-calendar-next
+                    aria-label="Наступний місяць"
+                    title="Наступний місяць"
+                  >
+                    ›
+                  </button>
+                </div>
+                <div class="calendar-stack">
+                  {% for month in booking_months %}
+                  <section
+                    class="calendar-board"
+                    data-calendar-month
+                    aria-label="{{ month.title }}"
+                    {% if not loop.first %}hidden{% endif %}
+                  >
+                    <h2>{{ month.title }}</h2>
+                    <div class="calendar-grid">
+                      {% for weekday in weekday_labels %}
+                      <span class="calendar-weekday{% if weekday.weekend %} is-weekend{% endif %}">
+                        <strong>{{ weekday.uk }}</strong>
+                        <small>{{ weekday.en }}</small>
+                      </span>
                       {% endfor %}
-                    {% endfor %}
-                  </div>
-                </section>
-                {% endfor %}
+
+                      {% for week in month.weeks %}
+                        {% for day in week %}
+                          {% if day.is_available %}
+                          <label
+                            class="calendar-day{% if day.is_weekend %} is-weekend{% endif %}{% if day.is_today %} is-today{% endif %}"
+                            title="{{ day.label }}"
+                          >
+                            <input type="radio" name="preferred_date" value="{{ day.value }}" required />
+                            <span>{{ day.day }}</span>
+                          </label>
+                          {% else %}
+                          <span
+                            class="calendar-day is-muted{% if day.is_weekend %} is-weekend{% endif %}{% if day.is_outside_month %} is-outside-month{% endif %}"
+                            aria-hidden="true"
+                          >
+                            {{ day.day }}
+                          </span>
+                          {% endif %}
+                        {% endfor %}
+                      {% endfor %}
+                    </div>
+                  </section>
+                  {% endfor %}
+                </div>
               </div>
             </fieldset>
 
@@ -113,6 +141,6 @@
       </section>
     </main>
 
-    <script src="{{ url_for('static', path='/js/booking.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/booking.js') }}?v={{ asset_version }}"></script>
   </body>
 </html>

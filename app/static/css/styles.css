@@ -178,6 +178,58 @@ svg {
   gap: 1rem;
 }
 
+.calendar-carousel {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.calendar-nav-button {
+  display: grid;
+  width: 2.35rem;
+  height: 2.35rem;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: #253d6d;
+  background: #ffffff;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.calendar-nav-button:hover:not(:disabled) {
+  border-color: #8ea8d4;
+  background: var(--blue-soft);
+  color: var(--ink-strong);
+  transform: translateY(-1px);
+}
+
+.calendar-nav-button:disabled {
+  cursor: default;
+  color: #b0b8c5;
+  background: #f6f8fb;
+}
+
+.calendar-counter {
+  min-width: 3.2rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 .calendar-board,
 .time-board {
   position: relative;
