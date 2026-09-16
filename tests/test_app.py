@@ -328,6 +328,7 @@ def test_cabinet_renders_passwordless_login_options() -> None:
     assert "Особистий кабінет" in response.text
     assert "Вхід телефоном" in response.text
     assert "Google тимчасово недоступний" in response.text
+    assert "Вхід через Google" not in response.text
     assert 'action="/auth/phone/request"' in response.text
     assert 'action="/auth/phone/verify"' in response.text
 

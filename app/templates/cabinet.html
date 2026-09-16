@@ -126,16 +126,11 @@
               {% endif %}
             </article>
 
-            <article class="cabinet-login-panel">
-              <h2>Вхід через Google</h2>
-              <p>Після входу покажемо записи, пов'язані з вашим email або кабінетом.</p>
+            <article class="cabinet-login-panel cabinet-google-panel">
               {% if google_enabled %}
               <a class="google-button" href="/auth/google">Продовжити з Google</a>
               {% else %}
               <span class="google-button is-disabled">Google тимчасово недоступний</span>
-              <p class="setup-note">
-                Після підключення Google-входу тут буде швидкий доступ до кабінету.
-              </p>
               {% endif %}
             </article>
           </div>
