@@ -151,6 +151,121 @@ svg {
   box-shadow: 0 0 0 4px rgba(73, 112, 177, 0.14);
 }
 
+.service-field {
+  position: relative;
+}
+
+.service-trigger {
+  display: grid;
+  width: 100%;
+  min-height: 4rem;
+  grid-template-columns: minmax(0, 1fr) auto 1.2rem;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 0 1.25rem;
+  color: var(--ink);
+  background: var(--surface);
+  font-size: 1.2rem;
+  font-weight: 400;
+  text-align: left;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.service-trigger:focus,
+.service-field.is-open .service-trigger {
+  border-color: #8ea8d4;
+  box-shadow: 0 0 0 4px rgba(73, 112, 177, 0.14);
+}
+
+.service-trigger-name,
+.service-option-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.service-trigger-name.is-placeholder {
+  color: var(--muted);
+}
+
+.service-trigger-price,
+.service-option-price {
+  color: var(--green-dark);
+  font-size: 0.98rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.service-trigger-icon {
+  color: #59709b;
+  font-size: 1.2rem;
+  line-height: 1;
+  text-align: right;
+}
+
+.service-menu {
+  display: none;
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  left: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 38px rgba(19, 33, 58, 0.16);
+}
+
+.service-field.is-open .service-menu {
+  display: grid;
+}
+
+.service-option {
+  display: grid;
+  position: relative;
+  min-height: 3.15rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  border: 0;
+  border-bottom: 1px solid #edf2f8;
+  padding: 0.75rem 1rem;
+  color: #2f4776;
+  background: #ffffff;
+  font-size: 1.05rem;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.service-option:last-child {
+  border-bottom: 0;
+}
+
+.service-option input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.service-option:hover,
+.service-option:focus {
+  color: var(--ink-strong);
+  background: var(--blue-soft);
+  outline: none;
+}
+
+.service-option.is-selected {
+  color: var(--ink-strong);
+  background: #f4f9f6;
+}
+
 .booking-picker {
   display: grid;
   grid-template-columns: 1fr;

@@ -40,6 +40,9 @@ def test_homepage_renders_booking_form() -> None:
     assert "data-appointment-form" in response.text
     assert "/api/appointments" in response.text
     assert "Перевірка зору" in response.text
+    assert "data-service-picker" in response.text
+    assert "data-service-option" in response.text
+    assert "500 грн" in response.text
     assert "10:00 - 11:00" in response.text
     assert "Оберіть дату" in response.text
     assert "data-calendar-carousel" in response.text
@@ -50,9 +53,10 @@ def test_homepage_renders_booking_form() -> None:
     assert "time-grid" in response.text
     assert 'name="preferred_date"' in response.text
     assert 'name="preferred_time"' in response.text
+    assert 'name="service"' in response.text
     assert 'inputmode="tel"' in response.text
     assert "booking.js" in response.text
-    assert "20260916-booking-carousel" in response.text
+    assert "20260916-service-prices" in response.text
     assert "Наприклад" not in response.text
 
 

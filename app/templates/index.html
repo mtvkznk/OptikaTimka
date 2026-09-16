@@ -20,15 +20,45 @@
         </div>
 
         <form class="booking-card" data-appointment-form data-endpoint="/api/appointments">
-          <label class="field field-wide">
-            <span>Послуга</span>
-            <select name="service" required>
-              <option value="">Оберіть послугу</option>
+          <div class="field field-wide service-field" data-service-picker>
+            <span id="service-label">Послуга</span>
+            <button
+              class="service-trigger"
+              type="button"
+              data-service-trigger
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-labelledby="service-label service-selected"
+            >
+              <span class="service-trigger-name" id="service-selected" data-service-selected>
+                Оберіть послугу
+              </span>
+              <span class="service-trigger-price" data-service-selected-price></span>
+              <span class="service-trigger-icon" aria-hidden="true">⌄</span>
+            </button>
+            <div class="service-menu" data-service-menu role="listbox" aria-labelledby="service-label">
               {% for service in services %}
-              <option value="{{ service.name }}">{{ service.name }}</option>
+              <label
+                class="service-option"
+                data-service-option
+                data-service-name="{{ service.name }}"
+                data-service-price="{{ service.price_uah }} грн"
+                role="option"
+                tabindex="0"
+              >
+                <input
+                  type="radio"
+                  name="service"
+                  value="{{ service.name }}"
+                  data-service-radio
+                  required
+                />
+                <span class="service-option-name">{{ service.name }}</span>
+                <span class="service-option-price">{{ service.price_uah }} грн</span>
+              </label>
               {% endfor %}
-            </select>
-          </label>
+            </div>
+          </div>
 
           <div class="booking-picker">
             <fieldset class="picker-field date-picker">

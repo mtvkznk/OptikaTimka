@@ -5,6 +5,12 @@ const calendarMonths = Array.from(document.querySelectorAll("[data-calendar-mont
 const calendarPrev = document.querySelector("[data-calendar-prev]");
 const calendarNext = document.querySelector("[data-calendar-next]");
 const calendarCounter = document.querySelector("[data-calendar-counter]");
+const servicePicker = document.querySelector("[data-service-picker]");
+const serviceTrigger = document.querySelector("[data-service-trigger]");
+const serviceSelected = document.querySelector("[data-service-selected]");
+const serviceSelectedPrice = document.querySelector("[data-service-selected-price]");
+const serviceOptions = Array.from(document.querySelectorAll("[data-service-option]"));
+const serviceRadios = Array.from(document.querySelectorAll("[data-service-radio]"));
 
 let activeCalendarMonth = 0;
 
@@ -15,6 +21,57 @@ function setStatus(message, type = "") {
 
   statusNode.textContent = message;
   statusNode.className = `form-status ${type}`.trim();
+}
+
+function setServiceMenu(open) {
+  if (!servicePicker || !serviceTrigger) {
+    return;
+  }
+
+  servicePicker.classList.toggle("is-open", open);
+  serviceTrigger.setAttribute("aria-expanded", String(open));
+}
+
+function clearServiceSelection() {
+  if (!serviceSelected || !serviceSelectedPrice) {
+    return;
+  }
+
+  serviceSelected.textContent = "Оберіть послугу";
+  serviceSelected.classList.add("is-placeholder");
+  serviceSelectedPrice.textContent = "";
+  serviceRadios.forEach((radio) => {
+    radio.checked = false;
+  });
+  serviceOptions.forEach((option) => {
+    option.classList.remove("is-selected");
+    option.setAttribute("aria-selected", "false");
+  });
+}
+
+function selectService(option) {
+  if (!serviceSelected || !serviceSelectedPrice) {
+    return;
+  }
+
+  const radio = option.querySelector("[data-service-radio]");
+  if (radio) {
+    radio.checked = true;
+  }
+
+  serviceSelected.textContent = option.dataset.serviceName || "";
+  serviceSelected.classList.remove("is-placeholder");
+  serviceSelectedPrice.textContent = option.dataset.servicePrice || "";
+
+  serviceOptions.forEach((item) => {
+    const isSelected = item === option;
+    item.classList.toggle("is-selected", isSelected);
+    item.setAttribute("aria-selected", String(isSelected));
+  });
+
+  setStatus("");
+  setServiceMenu(false);
+  serviceTrigger?.focus();
 }
 
 function setCalendarMonth(nextIndex) {
@@ -50,9 +107,47 @@ calendarNext?.addEventListener("click", () => {
 });
 
 setCalendarMonth(0);
+clearServiceSelection();
+
+serviceTrigger?.addEventListener("click", () => {
+  setServiceMenu(!servicePicker?.classList.contains("is-open"));
+});
+
+serviceOptions.forEach((option) => {
+  option.addEventListener("click", () => {
+    selectService(option);
+  });
+
+  option.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectService(option);
+    }
+  });
+});
+
+document.addEventListener("click", (event) => {
+  if (!servicePicker?.contains(event.target)) {
+    setServiceMenu(false);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    setServiceMenu(false);
+    serviceTrigger?.focus();
+  }
+});
 
 form?.addEventListener("submit", async (event) => {
   event.preventDefault();
+
+  if (serviceRadios.length > 0 && !serviceRadios.some((radio) => radio.checked)) {
+    setStatus("Оберіть послугу.", "is-error");
+    setServiceMenu(true);
+    serviceTrigger?.focus();
+    return;
+  }
 
   if (!form.reportValidity()) {
     return;
@@ -84,6 +179,7 @@ form?.addEventListener("submit", async (event) => {
     }
 
     form.reset();
+    clearServiceSelection();
     setCalendarMonth(0);
     setStatus("Запис прийнято. Ми зв'яжемося з вами для підтвердження.", "is-success");
   } catch (error) {
