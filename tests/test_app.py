@@ -60,7 +60,7 @@ def test_homepage_renders_booking_form() -> None:
     assert 'inputmode="tel"' in response.text
     assert 'href="/cabinet"' in response.text
     assert "booking.js" in response.text
-    assert "20260916-customer-cabinet" in response.text
+    assert "20260916-cabinet-column-login" in response.text
     assert "Наприклад" not in response.text
 
 
