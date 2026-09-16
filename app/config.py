@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+psycopg://optika_timka:optika_timka@localhost:5432/optika_timka"
     )
+    auth_secret: str = "change-me-local-auth-secret"
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -23,4 +27,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

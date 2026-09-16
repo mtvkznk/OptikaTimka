@@ -1,3 +1,4 @@
+import re
 from collections.abc import Generator
 from datetime import date, datetime, timedelta
 
@@ -57,8 +58,9 @@ def test_homepage_renders_booking_form() -> None:
     assert 'name="preferred_time"' in response.text
     assert 'name="service"' in response.text
     assert 'inputmode="tel"' in response.text
+    assert 'href="/cabinet"' in response.text
     assert "booking.js" in response.text
-    assert "20260916-booking-window-30-days" in response.text
+    assert "20260916-customer-cabinet" in response.text
     assert "Наприклад" not in response.text
 
 
@@ -317,3 +319,61 @@ def test_admin_can_reorder_time_slots() -> None:
 
     reordered_slots = client.get("/api/time-slots").json()
     assert [item["id"] for item in reordered_slots] == reversed_ids
+
+
+def test_cabinet_renders_passwordless_login_options() -> None:
+    response = client.get("/cabinet")
+
+    assert response.status_code == 200
+    assert "Особистий кабінет" in response.text
+    assert "Вхід телефоном" in response.text
+    assert "Google тимчасово недоступний" in response.text
+    assert 'action="/auth/phone/request"' in response.text
+    assert 'action="/auth/phone/verify"' in response.text
+
+
+def test_phone_code_login_shows_matching_appointments() -> None:
+    phone = "+48123456789"
+    preferred_date = current_date() + timedelta(days=8)
+    appointment_response = client.post(
+        "/api/appointments",
+        json={
+            "name": "Phone Cabinet Client",
+            "phone": phone,
+            "email": None,
+            "service": "Перевірка зору",
+            "preferred_date": preferred_date.isoformat(),
+            "preferred_time": "09:00:00",
+            "message": "",
+        },
+    )
+    assert appointment_response.status_code == 201
+
+    code_response = client.post("/auth/phone/request", data={"phone": phone})
+    assert code_response.status_code == 200
+    code_match = re.search(r"Тестовий код:\s*<strong>(\d{6})</strong>", code_response.text)
+    assert code_match is not None
+
+    login_response = client.post(
+        "/auth/phone/verify",
+        data={"phone": phone, "code": code_match.group(1)},
+        follow_redirects=False,
+    )
+    assert login_response.status_code == 303
+    assert login_response.headers["location"] == "/cabinet"
+
+    cabinet_response = client.get("/cabinet")
+    assert cabinet_response.status_code == 200
+    assert "Phone Cabinet Client" in cabinet_response.text
+    assert "Перевірка зору" in cabinet_response.text
+    assert "09:00" in cabinet_response.text
+
+    logout_response = client.post("/auth/logout", follow_redirects=False)
+    assert logout_response.status_code == 303
+
+
+def test_google_login_redirects_to_cabinet_when_not_configured() -> None:
+    response = client.get("/auth/google", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/cabinet?auth_error=google_not_configured"

@@ -1,6 +1,12 @@
-from datetime import date, datetime, time, timedelta
+import hashlib
+import json
+import re
+import secrets
+import urllib.error
+import urllib.request
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -29,6 +35,9 @@ from app.models import (
     ClosedDateRead,
     ContentBlock,
     ContentBlockRead,
+    Customer,
+    CustomerSession,
+    PhoneAuthCode,
     Product,
     ProductCreate,
     ProductRead,
@@ -87,7 +96,12 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20260916-booking-window-30-days"
+ASSET_VERSION = "20260916-customer-cabinet"
+SESSION_COOKIE_NAME = "optika_customer_session"
+OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
+SESSION_TTL_DAYS = 30
+PHONE_CODE_TTL_MINUTES = 10
+PHONE_CODE_MAX_ATTEMPTS = 5
 MONTH_TITLE_LABELS = {
     1: "СІЧЕНЬ / JANUARY",
     2: "ЛЮТИЙ / FEBRUARY",
@@ -115,6 +129,56 @@ WEEKDAY_LABELS = [
 
 class ReorderPayload(BaseModel):
     ids: list[int]
+
+
+def secure_cookie_enabled() -> bool:
+    return settings.environment.lower() == "production"
+
+
+def normalize_email(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    email = value.strip().lower()
+    return email or None
+
+
+def normalize_phone(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    raw = value.strip()
+    digits = re.sub(r"\D", "", raw)
+    if raw.startswith("+") and 7 <= len(digits) <= 15:
+        return f"+{digits}"
+    if raw.startswith("00") and 9 <= len(digits) <= 17:
+        return f"+{digits[2:]}"
+    if 7 <= len(digits) <= 15:
+        return f"+{digits}"
+    return None
+
+
+def hash_secret(value: str) -> str:
+    payload = f"{settings.auth_secret}:{value}".encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def hash_phone_code(phone: str, code: str) -> str:
+    return hash_secret(f"phone-code:{phone}:{code}")
+
+
+def hash_session_token(token: str) -> str:
+    return hash_secret(f"customer-session:{token}")
+
+
+def utc_expired(value: datetime) -> bool:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value < utc_now()
+
+
+def google_auth_enabled() -> bool:
+    return bool(settings.google_client_id and settings.google_client_secret)
 
 
 def ensure_seed_data(session: Session) -> None:
@@ -439,6 +503,205 @@ def form_time(form_data: dict[str, str], key: str) -> time:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректний час.") from exc
 
 
+def get_customer_by_session(request: Request, session: Session) -> Customer | None:
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+
+    token_hash = hash_session_token(token)
+    customer_session = session.exec(
+        select(CustomerSession).where(CustomerSession.token_hash == token_hash)
+    ).first()
+    if customer_session is None or utc_expired(customer_session.expires_at):
+        return None
+
+    return session.get(Customer, customer_session.customer_id)
+
+
+def issue_customer_session(customer: Customer, session: Session, response: RedirectResponse) -> None:
+    token = secrets.token_urlsafe(32)
+    session.add(
+        CustomerSession(
+            customer_id=customer.id or 0,
+            token_hash=hash_session_token(token),
+            expires_at=utc_now() + timedelta(days=SESSION_TTL_DAYS),
+        )
+    )
+    session.commit()
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=secure_cookie_enabled(),
+        samesite="lax",
+    )
+
+
+def clear_customer_session(request: Request, session: Session, response: RedirectResponse) -> None:
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if token:
+        customer_session = session.exec(
+            select(CustomerSession).where(CustomerSession.token_hash == hash_session_token(token))
+        ).first()
+        if customer_session is not None:
+            session.delete(customer_session)
+            session.commit()
+
+    response.delete_cookie(SESSION_COOKIE_NAME)
+
+
+def upsert_phone_customer(session: Session, phone: str, name: str = "") -> Customer:
+    customer = session.exec(select(Customer).where(Customer.phone == phone)).first()
+    if customer is None:
+        customer = Customer(phone=phone, name=name)
+    elif name and not customer.name:
+        customer.name = name
+
+    if not customer.name:
+        appointments = session.exec(select(Appointment).order_by(Appointment.created_at.desc())).all()
+        for appointment in appointments:
+            if normalize_phone(appointment.phone) == phone and appointment.name:
+                customer.name = appointment.name
+                break
+
+    customer.last_login_at = utc_now()
+    customer.updated_at = utc_now()
+    session.add(customer)
+    session.commit()
+    session.refresh(customer)
+    return customer
+
+
+def upsert_google_customer(session: Session, profile: dict[str, Any]) -> Customer:
+    google_sub = str(profile.get("sub") or "")
+    email = normalize_email(str(profile.get("email") or ""))
+    name = str(profile.get("name") or "").strip()
+    if not google_sub:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google не повернув профіль.")
+
+    customer = session.exec(select(Customer).where(Customer.google_sub == google_sub)).first()
+    if customer is None and email is not None:
+        customer = session.exec(select(Customer).where(Customer.email == email)).first()
+
+    if customer is None:
+        customer = Customer(google_sub=google_sub, email=email, name=name)
+    else:
+        customer.google_sub = customer.google_sub or google_sub
+        customer.email = customer.email or email
+        if name:
+            customer.name = name
+
+    customer.last_login_at = utc_now()
+    customer.updated_at = utc_now()
+    session.add(customer)
+    session.commit()
+    session.refresh(customer)
+    return customer
+
+
+def customer_appointments(customer: Customer, session: Session) -> list[Appointment]:
+    appointments = list(
+        session.exec(select(Appointment).order_by(Appointment.created_at.desc())).all()
+    )
+    customer_phone = normalize_phone(customer.phone)
+    customer_email = normalize_email(customer.email)
+    matched: list[Appointment] = []
+
+    for appointment in appointments:
+        appointment_phone = normalize_phone(appointment.phone)
+        appointment_email = normalize_email(appointment.email)
+        if (
+            appointment.customer_id == customer.id
+            or (customer_phone and appointment_phone == customer_phone)
+            or (customer_email and appointment_email == customer_email)
+        ):
+            matched.append(appointment)
+
+    return matched
+
+
+def cabinet_context(
+    request: Request,
+    session: Session,
+    customer: Customer | None,
+    *,
+    auth_message: str = "",
+    auth_error: str = "",
+    pending_phone: str = "",
+    phone_code_hint: str = "",
+) -> dict[str, Any]:
+    appointment_rows = []
+    if customer is not None:
+        appointment_rows = build_appointment_rows(customer_appointments(customer, session))
+
+    return {
+        "request": request,
+        "app_name": settings.app_name,
+        "asset_version": ASSET_VERSION,
+        "customer": customer,
+        "appointment_rows": appointment_rows,
+        "format_date": format_date,
+        "format_time": format_time,
+        "google_enabled": google_auth_enabled(),
+        "auth_message": auth_message,
+        "auth_error": auth_error,
+        "pending_phone": pending_phone,
+        "phone_code_hint": phone_code_hint,
+        "show_debug_phone_code": settings.environment.lower() != "production",
+    }
+
+
+def google_redirect_uri(request: Request) -> str:
+    return settings.google_redirect_uri or str(request.url_for("google_callback"))
+
+
+def exchange_google_code(request: Request, code: str) -> dict[str, Any]:
+    token_payload = urlencode(
+        {
+            "code": code,
+            "client_id": settings.google_client_id or "",
+            "client_secret": settings.google_client_secret or "",
+            "redirect_uri": google_redirect_uri(request),
+            "grant_type": "authorization_code",
+        }
+    ).encode("utf-8")
+    token_request = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=token_payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(token_request, timeout=10) as response:
+            token_data = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не вдалося отримати Google токен.",
+        ) from exc
+
+    access_token = token_data.get("access_token")
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google не повернув access token.",
+        )
+
+    user_request = urllib.request.Request(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    try:
+        with urllib.request.urlopen(user_request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не вдалося отримати Google профіль.",
+        ) from exc
+
+
 @app.get("/", response_class=HTMLResponse)
 def root(request: Request, session: SessionDep) -> HTMLResponse:
     ensure_seed_data(session)
@@ -457,6 +720,174 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
             "today": current_date().isoformat(),
         },
     )
+
+
+@app.get("/cabinet", response_class=HTMLResponse)
+def cabinet(request: Request, session: SessionDep) -> HTMLResponse:
+    auth_error = ""
+    if request.query_params.get("auth_error") == "google_not_configured":
+        auth_error = "Google-вхід ще не налаштований. Додайте OAuth ключі в конфігурацію."
+    elif request.query_params.get("auth_error") == "google_failed":
+        auth_error = "Не вдалося увійти через Google. Спробуйте ще раз."
+
+    customer = get_customer_by_session(request, session)
+    return templates.TemplateResponse(
+        request,
+        "cabinet.html",
+        cabinet_context(request, session, customer, auth_error=auth_error),
+    )
+
+
+@app.post("/auth/phone/request", response_class=HTMLResponse)
+async def request_phone_code(request: Request, session: SessionDep) -> HTMLResponse:
+    form_data = await read_form_data(request)
+    raw_phone = form_data.get("phone", "")
+    phone = normalize_phone(raw_phone)
+    if phone is None:
+        return templates.TemplateResponse(
+            request,
+            "cabinet.html",
+            cabinet_context(
+                request,
+                session,
+                None,
+                auth_error="Введіть коректний номер телефону.",
+                pending_phone=raw_phone,
+            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    session.add(
+        PhoneAuthCode(
+            phone=phone,
+            code_hash=hash_phone_code(phone, code),
+            expires_at=utc_now() + timedelta(minutes=PHONE_CODE_TTL_MINUTES),
+        )
+    )
+    session.commit()
+    return templates.TemplateResponse(
+        request,
+        "cabinet.html",
+        cabinet_context(
+            request,
+            session,
+            None,
+            auth_message="Код підтвердження створено. Введіть його нижче.",
+            pending_phone=phone,
+            phone_code_hint=code if settings.environment.lower() != "production" else "",
+        ),
+    )
+
+
+@app.post("/auth/phone/verify", response_model=None)
+async def verify_phone_code(request: Request, session: SessionDep) -> RedirectResponse | HTMLResponse:
+    form_data = await read_form_data(request)
+    phone = normalize_phone(form_data.get("phone", ""))
+    code = re.sub(r"\D", "", form_data.get("code", ""))
+    if phone is None or len(code) != 6:
+        return templates.TemplateResponse(
+            request,
+            "cabinet.html",
+            cabinet_context(
+                request,
+                session,
+                None,
+                auth_error="Перевірте номер телефону і 6-значний код.",
+                pending_phone=form_data.get("phone", ""),
+            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    auth_code = session.exec(
+        select(PhoneAuthCode)
+        .where(PhoneAuthCode.phone == phone)
+        .where(PhoneAuthCode.code_hash == hash_phone_code(phone, code))
+        .where(PhoneAuthCode.consumed_at.is_(None))
+        .order_by(PhoneAuthCode.created_at.desc())
+    ).first()
+    if (
+        auth_code is None
+        or utc_expired(auth_code.expires_at)
+        or auth_code.attempts >= PHONE_CODE_MAX_ATTEMPTS
+    ):
+        return templates.TemplateResponse(
+            request,
+            "cabinet.html",
+            cabinet_context(
+                request,
+                session,
+                None,
+                auth_error="Код недійсний або вже протермінований.",
+                pending_phone=phone,
+            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    auth_code.consumed_at = utc_now()
+    session.add(auth_code)
+    customer = upsert_phone_customer(session, phone)
+    response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
+    issue_customer_session(customer, session, response)
+    return response
+
+
+@app.get("/auth/google")
+def google_login(request: Request) -> RedirectResponse:
+    if not google_auth_enabled():
+        return RedirectResponse(
+            url="/cabinet?auth_error=google_not_configured",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    state = secrets.token_urlsafe(24)
+    params = urlencode(
+        {
+            "client_id": settings.google_client_id,
+            "redirect_uri": google_redirect_uri(request),
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "access_type": "online",
+            "prompt": "select_account",
+        }
+    )
+    response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+    response.set_cookie(
+        OAUTH_STATE_COOKIE_NAME,
+        state,
+        max_age=10 * 60,
+        httponly=True,
+        secure=secure_cookie_enabled(),
+        samesite="lax",
+    )
+    return response
+
+
+@app.get("/auth/google/callback", name="google_callback")
+def google_callback(request: Request, session: SessionDep) -> RedirectResponse:
+    state = request.query_params.get("state", "")
+    expected_state = request.cookies.get(OAUTH_STATE_COOKIE_NAME, "")
+    code = request.query_params.get("code", "")
+    if not state or state != expected_state or not code:
+        return RedirectResponse(
+            url="/cabinet?auth_error=google_failed",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    profile = exchange_google_code(request, code)
+    customer = upsert_google_customer(session, profile)
+    response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
+    issue_customer_session(customer, session, response)
+    return response
+
+
+@app.post("/auth/logout")
+def logout(request: Request, session: SessionDep) -> RedirectResponse:
+    response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
+    clear_customer_session(request, session, response)
+    return response
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -536,7 +967,7 @@ def create_product(payload: ProductCreate, session: SessionDep) -> Product:
 
 
 @app.post("/api/appointments", response_model=AppointmentRead, status_code=status.HTTP_201_CREATED)
-def create_appointment(payload: AppointmentCreate, session: SessionDep) -> Appointment:
+def create_appointment(request: Request, payload: AppointmentCreate, session: SessionDep) -> Appointment:
     ensure_seed_data(session)
 
     service = session.exec(
@@ -586,6 +1017,20 @@ def create_appointment(payload: AppointmentCreate, session: SessionDep) -> Appoi
             )
 
     appointment = Appointment.model_validate(payload)
+    customer = get_customer_by_session(request, session)
+    if customer is not None:
+        appointment.customer_id = customer.id
+        appointment_phone = normalize_phone(payload.phone)
+        appointment_email = normalize_email(payload.email)
+        if appointment_phone and not customer.phone:
+            customer.phone = appointment_phone
+        if appointment_email and not customer.email:
+            customer.email = appointment_email
+        if payload.name and not customer.name:
+            customer.name = payload.name
+        customer.updated_at = utc_now()
+        session.add(customer)
+
     session.add(appointment)
     session.commit()
     session.refresh(appointment)

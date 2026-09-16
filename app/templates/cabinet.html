@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Особистий кабінет клієнта Optika Timka для перегляду записів."
+    />
+    <title>Особистий кабінет | {{ app_name }}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}" />
+  </head>
+  <body>
+    <main class="booking-page cabinet-page">
+      <section class="booking-shell cabinet-shell" aria-labelledby="cabinet-title">
+        <nav class="public-nav" aria-label="Навігація">
+          <a href="/">Запис на прийом</a>
+        </nav>
+
+        <div class="booking-heading cabinet-heading">
+          <h1 id="cabinet-title">Особистий кабінет</h1>
+          {% if customer %}
+          <p>Ваші записи та статуси прийому</p>
+          {% else %}
+          <p>Увійдіть через Google або одноразовий код на телефон</p>
+          {% endif %}
+        </div>
+
+        {% if customer %}
+        <section class="booking-card cabinet-card" aria-label="Записи клієнта">
+          <div class="cabinet-topline">
+            <div>
+              <span class="cabinet-eyebrow">Клієнт</span>
+              <h2>{{ customer.name or customer.phone or customer.email or "Клієнт" }}</h2>
+              <p>
+                {% if customer.phone %}{{ customer.phone }}{% endif %}
+                {% if customer.phone and customer.email %} · {% endif %}
+                {% if customer.email %}{{ customer.email }}{% endif %}
+              </p>
+            </div>
+            <form action="/auth/logout" method="post">
+              <button class="secondary-button" type="submit">Вийти</button>
+            </form>
+          </div>
+
+          <div class="table-scroll">
+            <table class="appointments-table cabinet-table">
+              <thead>
+                <tr>
+                  <th>Послуга</th>
+                  <th>Дата</th>
+                  <th>Час</th>
+                  <th>Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in appointment_rows %}
+                <tr>
+                  <td>{{ row.appointment.service }}</td>
+                  <td>{{ format_date(row.appointment.preferred_date) }}</td>
+                  <td>{{ format_time(row.appointment.preferred_time) }}</td>
+                  <td>
+                    <span class="status-pill status-{{ row.status_value }}">
+                      {{ row.status_label }}
+                    </span>
+                  </td>
+                </tr>
+                {% else %}
+                <tr>
+                  <td colspan="4" class="empty-cell">Поки що немає записів для цього кабінету.</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        {% else %}
+        <section class="booking-card cabinet-login-card" aria-label="Вхід у кабінет">
+          {% if auth_message %}
+          <p class="auth-note is-success">{{ auth_message }}</p>
+          {% endif %}
+          {% if auth_error %}
+          <p class="auth-note is-error">{{ auth_error }}</p>
+          {% endif %}
+
+          <div class="cabinet-login-grid">
+            <article class="cabinet-login-panel">
+              <h2>Вхід телефоном</h2>
+              <p>Отримайте одноразовий 6-значний код і введіть його нижче.</p>
+
+              <form class="cabinet-form" action="/auth/phone/request" method="post">
+                <label class="field">
+                  <span>Телефон</span>
+                  <input
+                    name="phone"
+                    type="tel"
+                    inputmode="tel"
+                    autocomplete="tel"
+                    value="{{ pending_phone }}"
+                    required
+                  />
+                </label>
+                <button class="submit-button compact-submit" type="submit">Отримати код</button>
+              </form>
+
+              <form class="cabinet-form" action="/auth/phone/verify" method="post">
+                <input type="hidden" name="phone" value="{{ pending_phone }}" />
+                <label class="field">
+                  <span>Код підтвердження</span>
+                  <input
+                    name="code"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="6"
+                    pattern="[0-9]{6}"
+                    required
+                  />
+                </label>
+                <button class="secondary-button full-width" type="submit">Увійти</button>
+              </form>
+
+              {% if phone_code_hint and show_debug_phone_code %}
+              <p class="debug-code">Тестовий код: <strong>{{ phone_code_hint }}</strong></p>
+              {% endif %}
+            </article>
+
+            <article class="cabinet-login-panel">
+              <h2>Вхід через Google</h2>
+              <p>Після входу покажемо записи, пов'язані з вашим email або кабінетом.</p>
+              {% if google_enabled %}
+              <a class="google-button" href="/auth/google">Продовжити з Google</a>
+              {% else %}
+              <span class="google-button is-disabled">Google тимчасово недоступний</span>
+              <p class="setup-note">
+                Після підключення Google-входу тут буде швидкий доступ до кабінету.
+              </p>
+              {% endif %}
+            </article>
+          </div>
+        </section>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

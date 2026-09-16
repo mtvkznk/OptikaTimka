@@ -155,6 +155,7 @@ class AppointmentBase(SQLModel):
 
 class Appointment(AppointmentBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
+    customer_id: int | None = Field(default=None, foreign_key="customer.id", index=True)
     status: AppointmentStatus = Field(default=AppointmentStatus.new, index=True)
     created_at: datetime = Field(default_factory=utc_now, index=True)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -169,6 +170,43 @@ class AppointmentRead(AppointmentBase):
     status: AppointmentStatus
     created_at: datetime
     updated_at: datetime
+
+
+class Customer(SQLModel, table=True):
+    __table_args__ = (
+        UniqueConstraint("phone"),
+        UniqueConstraint("email"),
+        UniqueConstraint("google_sub"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(default="", max_length=160)
+    phone: str | None = Field(default=None, max_length=40, index=True)
+    email: str | None = Field(default=None, max_length=255, index=True)
+    google_sub: str | None = Field(default=None, max_length=255, index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    last_login_at: datetime | None = Field(default=None)
+
+
+class PhoneAuthCode(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    phone: str = Field(max_length=40, index=True)
+    code_hash: str = Field(max_length=128, index=True)
+    attempts: int = Field(default=0)
+    expires_at: datetime = Field(index=True)
+    consumed_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=utc_now, index=True)
+
+
+class CustomerSession(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("token_hash"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    customer_id: int = Field(foreign_key="customer.id", index=True)
+    token_hash: str = Field(max_length=128, index=True)
+    expires_at: datetime = Field(index=True)
+    created_at: datetime = Field(default_factory=utc_now, index=True)
 
 
 class AnalyticsEventBase(SQLModel):
