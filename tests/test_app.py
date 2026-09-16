@@ -1,12 +1,12 @@
 from collections.abc import Generator
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.database import get_session
-from app.main import app, current_date
+from app.main import KYIV_TZ, app, booking_window, current_date
 
 engine = create_engine(
     "sqlite://",
@@ -58,8 +58,22 @@ def test_homepage_renders_booking_form() -> None:
     assert 'name="service"' in response.text
     assert 'inputmode="tel"' in response.text
     assert "booking.js" in response.text
-    assert "20260916-date-info-tooltip" in response.text
+    assert "20260916-booking-window-30-days" in response.text
     assert "Наприклад" not in response.text
+
+
+def test_booking_window_releases_new_date_at_11_kyiv() -> None:
+    before_release = datetime(2026, 9, 16, 10, 59, tzinfo=KYIV_TZ)
+    after_release = datetime(2026, 9, 16, 11, 0, tzinfo=KYIV_TZ)
+
+    assert booking_window(before_release) == (
+        date(2026, 9, 16),
+        date(2026, 10, 15),
+    )
+    assert booking_window(after_release) == (
+        date(2026, 9, 16),
+        date(2026, 10, 16),
+    )
 
 
 def test_api_status_describes_backend_stack() -> None:
@@ -104,6 +118,7 @@ def test_create_and_list_product() -> None:
 
 
 def test_create_appointment() -> None:
+    preferred_date = current_date() + timedelta(days=1)
     response = client.post(
         "/api/appointments",
         json={
@@ -111,7 +126,7 @@ def test_create_appointment() -> None:
             "phone": "+380980000000",
             "email": "ivan@example.com",
             "service": "Перевірка зору",
-            "preferred_date": "2031-05-14",
+            "preferred_date": preferred_date.isoformat(),
             "preferred_time": "10:00:00",
             "message": "Need a consultation.",
         },
@@ -119,6 +134,25 @@ def test_create_appointment() -> None:
 
     assert response.status_code == 201
     assert response.json()["status"] == "new"
+
+
+def test_create_appointment_rejects_date_outside_booking_window() -> None:
+    _, window_end = booking_window()
+    response = client.post(
+        "/api/appointments",
+        json={
+            "name": "Too Late Client",
+            "phone": "+380990000000",
+            "email": None,
+            "service": "Перевірка зору",
+            "preferred_date": (window_end + timedelta(days=1)).isoformat(),
+            "preferred_time": "10:00:00",
+            "message": "",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Запис доступний не більше ніж на 30 днів вперед."
 
 
 def test_admin_can_add_service_that_homepage_uses() -> None:
@@ -179,10 +213,11 @@ def test_closed_date_is_not_available_on_booking_form() -> None:
 
 
 def test_closed_date_blocks_appointment_booking() -> None:
+    closed_on = current_date() + timedelta(days=5)
     close_response = client.post(
         "/admin/closed-dates",
         data={
-            "closed_on": "2031-05-15",
+            "closed_on": closed_on.isoformat(),
             "reason": "Санітарний день",
         },
         follow_redirects=False,
@@ -197,7 +232,7 @@ def test_closed_date_blocks_appointment_booking() -> None:
             "phone": "+380970000000",
             "email": None,
             "service": "Перевірка зору",
-            "preferred_date": "2031-05-15",
+            "preferred_date": closed_on.isoformat(),
             "preferred_time": "09:00:00",
             "message": "",
         },
@@ -208,6 +243,7 @@ def test_closed_date_blocks_appointment_booking() -> None:
 
 
 def test_admin_appointments_page_renders_all_appointments() -> None:
+    preferred_date = current_date() + timedelta(days=6)
     create_response = client.post(
         "/api/appointments",
         json={
@@ -215,7 +251,7 @@ def test_admin_appointments_page_renders_all_appointments() -> None:
             "phone": "+380500000000",
             "email": None,
             "service": "Перевірка зору",
-            "preferred_date": "2031-05-17",
+            "preferred_date": preferred_date.isoformat(),
             "preferred_time": "09:00:00",
             "message": "",
         },
@@ -231,6 +267,7 @@ def test_admin_appointments_page_renders_all_appointments() -> None:
 
 
 def test_admin_can_update_appointment_status() -> None:
+    preferred_date = current_date() + timedelta(days=7)
     appointment_response = client.post(
         "/api/appointments",
         json={
@@ -238,7 +275,7 @@ def test_admin_can_update_appointment_status() -> None:
             "phone": "+380630000000",
             "email": None,
             "service": "Перевірка зору",
-            "preferred_date": "2031-05-16",
+            "preferred_date": preferred_date.isoformat(),
             "preferred_time": "09:00:00",
             "message": "",
         },

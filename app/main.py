@@ -1,6 +1,7 @@
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Annotated, Any
 from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -83,8 +84,10 @@ STATUS_OPTIONS = [
 ]
 
 STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
-BOOKING_DATE_WINDOW_DAYS = 45
-ASSET_VERSION = "20260916-date-info-tooltip"
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+BOOKING_MAX_DAYS_AHEAD = 30
+BOOKING_DAILY_RELEASE_TIME = time(11, 0)
+ASSET_VERSION = "20260916-booking-window-30-days"
 MONTH_TITLE_LABELS = {
     1: "СІЧЕНЬ / JANUARY",
     2: "ЛЮТИЙ / FEBRUARY",
@@ -184,8 +187,23 @@ def format_time(value: time | None) -> str:
     return value.strftime("%H:%M")
 
 
+def kyiv_now() -> datetime:
+    return datetime.now(KYIV_TZ)
+
+
 def current_date() -> date:
-    return datetime.now(UTC).date()
+    return kyiv_now().date()
+
+
+def booking_window(now: datetime | None = None) -> tuple[date, date]:
+    now_kyiv = kyiv_now() if now is None else now.astimezone(KYIV_TZ)
+    today = now_kyiv.date()
+    release_anchor = (
+        today
+        if now_kyiv.time() >= BOOKING_DAILY_RELEASE_TIME
+        else today - timedelta(days=1)
+    )
+    return today, release_anchor + timedelta(days=BOOKING_MAX_DAYS_AHEAD)
 
 
 def build_appointment_rows(appointments: list[Appointment]) -> list[dict[str, Any]]:
@@ -200,15 +218,17 @@ def build_appointment_rows(appointments: list[Appointment]) -> list[dict[str, An
 
 
 def get_available_booking_dates(session: Session) -> list[dict[str, str]]:
-    today = current_date()
+    today, window_end = booking_window()
     closed_dates = set(
         session.exec(
-            select(ClosedDate.closed_on).where(ClosedDate.closed_on >= today)
+            select(ClosedDate.closed_on)
+            .where(ClosedDate.closed_on >= today)
+            .where(ClosedDate.closed_on <= window_end)
         ).all()
     )
     available_dates = []
 
-    for offset in range(BOOKING_DATE_WINDOW_DAYS):
+    for offset in range((window_end - today).days + 1):
         day = today + timedelta(days=offset)
         if day in closed_dates:
             continue
@@ -230,11 +250,12 @@ def next_month(value: date) -> date:
 
 
 def build_booking_calendar(session: Session) -> list[dict[str, Any]]:
-    today = current_date()
-    window_end = today + timedelta(days=BOOKING_DATE_WINDOW_DAYS - 1)
+    today, window_end = booking_window()
     closed_dates = set(
         session.exec(
-            select(ClosedDate.closed_on).where(ClosedDate.closed_on >= today)
+            select(ClosedDate.closed_on)
+            .where(ClosedDate.closed_on >= today)
+            .where(ClosedDate.closed_on <= window_end)
         ).all()
     )
     months: list[dict[str, Any]] = []
@@ -542,10 +563,17 @@ def create_appointment(payload: AppointmentCreate, session: SessionDep) -> Appoi
             )
 
     if payload.preferred_date is not None:
-        if payload.preferred_date < current_date():
+        today, window_end = booking_window()
+        if payload.preferred_date < today:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Оберіть майбутню дату.",
+            )
+
+        if payload.preferred_date > window_end:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Запис доступний не більше ніж на 30 днів вперед.",
             )
 
         closed_date = session.exec(
