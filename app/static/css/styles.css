@@ -194,7 +194,7 @@ svg {
 
 .service-trigger-price,
 .service-option-price {
-  color: var(--green-dark);
+  color: #111111;
   font-size: 0.98rem;
   font-weight: 850;
   white-space: nowrap;

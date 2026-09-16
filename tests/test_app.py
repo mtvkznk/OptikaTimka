@@ -56,7 +56,7 @@ def test_homepage_renders_booking_form() -> None:
     assert 'name="service"' in response.text
     assert 'inputmode="tel"' in response.text
     assert "booking.js" in response.text
-    assert "20260916-service-prices" in response.text
+    assert "20260916-service-prices-black" in response.text
     assert "Наприклад" not in response.text
 
 
