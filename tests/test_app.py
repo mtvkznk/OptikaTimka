@@ -45,6 +45,8 @@ def test_homepage_renders_booking_form() -> None:
     assert "500 грн" in response.text
     assert "10:00 - 11:00" in response.text
     assert "Оберіть дату" in response.text
+    assert "Інформація про доступність дат" in response.text
+    assert "31 день стане доступним з 11:00 наступного дня" in response.text
     assert "data-calendar-carousel" in response.text
     assert "data-calendar-next" in response.text
     assert "calendar-board" in response.text
@@ -56,7 +58,7 @@ def test_homepage_renders_booking_form() -> None:
     assert 'name="service"' in response.text
     assert 'inputmode="tel"' in response.text
     assert "booking.js" in response.text
-    assert "20260916-service-prices-black" in response.text
+    assert "20260916-date-info-tooltip" in response.text
     assert "Наприклад" not in response.text
 
 

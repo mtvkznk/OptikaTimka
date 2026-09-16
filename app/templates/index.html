@@ -62,8 +62,24 @@
 
           <div class="booking-picker">
             <fieldset class="picker-field date-picker">
-              <legend>Оберіть дату</legend>
-              <div class="calendar-carousel" data-calendar-carousel aria-label="Календар доступних дат">
+              <legend class="visually-hidden">Оберіть дату</legend>
+              <div class="date-picker-header">
+                <div class="date-picker-title">
+                  <span>Оберіть дату</span>
+                  <span class="date-info">
+                    <button
+                      class="date-info-button"
+                      type="button"
+                      aria-describedby="date-window-tooltip"
+                      aria-label="Інформація про доступність дат"
+                    >
+                      i
+                    </button>
+                    <span class="date-info-tooltip" id="date-window-tooltip" role="tooltip">
+                      Запис можливий не більше чим на 30 днів. 31 день стане доступним з 11:00 наступного дня.
+                    </span>
+                  </span>
+                </div>
                 <div class="calendar-nav" aria-label="Перемикання місяців">
                   <button
                     class="calendar-nav-button"
@@ -85,6 +101,8 @@
                     ›
                   </button>
                 </div>
+              </div>
+              <div class="calendar-carousel" data-calendar-carousel aria-label="Календар доступних дат">
                 <div class="calendar-stack">
                   {% for month in booking_months %}
                   <section

@@ -84,7 +84,7 @@ STATUS_OPTIONS = [
 
 STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 BOOKING_DATE_WINDOW_DAYS = 45
-ASSET_VERSION = "20260916-service-prices-black"
+ASSET_VERSION = "20260916-date-info-tooltip"
 MONTH_TITLE_LABELS = {
     1: "СІЧЕНЬ / JANUARY",
     2: "ЛЮТИЙ / FEBRUARY",

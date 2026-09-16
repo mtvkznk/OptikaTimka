@@ -50,6 +50,16 @@ svg {
   fill: currentColor;
 }
 
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
 .booking-page {
   display: grid;
   min-height: 100vh;
@@ -288,6 +298,107 @@ svg {
   line-height: 1.2;
 }
 
+.picker-field legend.visually-hidden {
+  margin: 0;
+}
+
+.date-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
+.date-picker-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 1.08rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.date-info {
+  display: inline-grid;
+  position: relative;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.date-info-button {
+  display: grid;
+  width: 1.25rem;
+  height: 1.25rem;
+  place-items: center;
+  border: 2px solid #111111;
+  border-radius: 50%;
+  padding: 0;
+  color: #111111;
+  background: #ffffff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.88rem;
+  font-style: italic;
+  font-weight: 900;
+  line-height: 1;
+  outline: none;
+}
+
+.date-info-button:focus-visible {
+  box-shadow: 0 0 0 4px rgba(73, 112, 177, 0.16);
+}
+
+.date-info-tooltip {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.55rem);
+  left: -0.4rem;
+  width: min(18rem, 72vw);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  color: var(--ink);
+  background: #ffffff;
+  box-shadow: 0 16px 35px rgba(19, 33, 58, 0.14);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-0.15rem);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    visibility 140ms ease;
+  visibility: hidden;
+}
+
+.date-info-tooltip::before {
+  content: "";
+  position: absolute;
+  top: -0.38rem;
+  left: 0.62rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-top: 1px solid var(--line-strong);
+  border-left: 1px solid var(--line-strong);
+  background: #ffffff;
+  transform: rotate(45deg);
+}
+
+.date-info:hover .date-info-tooltip,
+.date-info-button:focus + .date-info-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
 .calendar-stack {
   display: grid;
   gap: 1rem;
@@ -303,6 +414,7 @@ svg {
   align-items: center;
   justify-content: flex-end;
   gap: 0.55rem;
+  margin-left: auto;
 }
 
 .calendar-nav-button {
@@ -1115,6 +1227,33 @@ label.calendar-day {
 
   .calendar-grid {
     padding: 0 0.45rem 0.65rem;
+  }
+
+  .date-picker-header {
+    align-items: flex-start;
+    gap: 0.65rem;
+  }
+
+  .date-picker-title {
+    font-size: 1rem;
+  }
+
+  .date-info-tooltip {
+    width: min(16rem, calc(100vw - 3rem));
+  }
+
+  .calendar-nav {
+    gap: 0.4rem;
+  }
+
+  .calendar-nav-button {
+    width: 2.15rem;
+    height: 2.15rem;
+    font-size: 1.5rem;
+  }
+
+  .calendar-counter {
+    min-width: 2.65rem;
   }
 
   .calendar-board h2,
