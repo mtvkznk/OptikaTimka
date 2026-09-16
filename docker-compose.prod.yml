@@ -20,6 +20,9 @@ services:
     image: optika_timka_app:latest
     container_name: optika_timka_prod_app
     restart: unless-stopped
+    env_file:
+      - path: C:/Deploy/OptikaTimka/prod.env
+        required: false
     environment:
       APP_NAME: Optika Timka
       ENVIRONMENT: production
@@ -44,4 +47,3 @@ services:
 
 volumes:
   optika_timka_prod_postgres_data:
-
