@@ -6,7 +6,7 @@
     <meta name="description" content="Список всіх записів." />
     <title>Всі записи</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}" />
   </head>
   <body class="admin-body">
     <main class="admin-page">

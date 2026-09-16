@@ -9,7 +9,7 @@
     />
     <title>Запис на прийом | {{ app_name }}</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}" />
   </head>
   <body>
     <main class="booking-page">
@@ -33,47 +33,65 @@
           <div class="booking-picker">
             <fieldset class="picker-field date-picker">
               <legend>Оберіть дату</legend>
-              <div class="calendar-grid" aria-label="Календар доступних дат">
-                {% for weekday in weekday_labels %}
-                <span class="calendar-weekday">{{ weekday }}</span>
-                {% endfor %}
+              <div class="calendar-stack" aria-label="Календар доступних дат">
+                {% for month in booking_months %}
+                <section class="calendar-board" aria-label="{{ month.title }}">
+                  <h2>{{ month.title }}</h2>
+                  <div class="calendar-grid">
+                    {% for weekday in weekday_labels %}
+                    <span class="calendar-weekday{% if weekday.weekend %} is-weekend{% endif %}">
+                      <strong>{{ weekday.uk }}</strong>
+                      <small>{{ weekday.en }}</small>
+                    </span>
+                    {% endfor %}
 
-                {% for week in booking_weeks %}
-                  {% for day in week %}
-                    {% if day %}
-                    <label class="calendar-cell" title="{{ day.label }}">
-                      <input type="radio" name="preferred_date" value="{{ day.value }}" required />
-                      <span class="calendar-cell-inner">
-                        <strong>{{ day.day }}</strong>
-                        <small>{{ day.month_label }}</small>
-                      </span>
-                    </label>
-                    {% else %}
-                    <span class="calendar-empty" aria-hidden="true"></span>
-                    {% endif %}
-                  {% endfor %}
+                    {% for week in month.weeks %}
+                      {% for day in week %}
+                        {% if day.is_available %}
+                        <label
+                          class="calendar-day{% if day.is_weekend %} is-weekend{% endif %}{% if day.is_today %} is-today{% endif %}"
+                          title="{{ day.label }}"
+                        >
+                          <input type="radio" name="preferred_date" value="{{ day.value }}" required />
+                          <span>{{ day.day }}</span>
+                        </label>
+                        {% else %}
+                        <span
+                          class="calendar-day is-muted{% if day.is_weekend %} is-weekend{% endif %}{% if day.is_outside_month %} is-outside-month{% endif %}"
+                          aria-hidden="true"
+                        >
+                          {{ day.day }}
+                        </span>
+                        {% endif %}
+                      {% endfor %}
+                    {% endfor %}
+                  </div>
+                </section>
                 {% endfor %}
               </div>
             </fieldset>
 
             <fieldset class="picker-field time-picker">
               <legend>Оберіть час</legend>
-              <div class="time-grid" aria-label="Доступні години">
+              <div class="time-board">
+                <h2>ГОДИНИ / TIME</h2>
+                <div class="time-grid" aria-label="Доступні години">
                 {% for slot in time_slots %}
                 <label class="time-cell">
                   <input type="radio" name="preferred_time" value="{{ slot.start_time.isoformat() }}" required />
-                  <span class="time-cell-inner">
+                  <span>
                     {{ format_time(slot.start_time) }} - {{ format_time(slot.end_time) }}
                   </span>
                 </label>
                 {% endfor %}
+                </div>
               </div>
             </fieldset>
           </div>
 
           <label class="field field-wide">
             <span>Ім'я та прізвище</span>
-            <input name="name" type="text" placeholder="Наприклад, Іван Петренко" required />
+            <input name="name" type="text" required />
           </label>
 
           <label class="field field-wide">
@@ -83,7 +101,6 @@
               type="tel"
               inputmode="tel"
               autocomplete="tel"
-              placeholder="Наприклад, +380 67 123 45 67 або +48 123 456 789"
               pattern="\+?[0-9][0-9\s() -]{5,38}"
               title="Введіть номер у міжнародному або локальному форматі"
               required

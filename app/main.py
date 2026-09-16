@@ -84,21 +84,30 @@ STATUS_OPTIONS = [
 
 STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 BOOKING_DATE_WINDOW_DAYS = 45
-MONTH_SHORT_LABELS = {
-    1: "січ",
-    2: "лют",
-    3: "бер",
-    4: "кві",
-    5: "тра",
-    6: "чер",
-    7: "лип",
-    8: "сер",
-    9: "вер",
-    10: "жов",
-    11: "лис",
-    12: "гру",
+ASSET_VERSION = "20260916-booking-calendar"
+MONTH_TITLE_LABELS = {
+    1: "СІЧЕНЬ / JANUARY",
+    2: "ЛЮТИЙ / FEBRUARY",
+    3: "БЕРЕЗЕНЬ / MARCH",
+    4: "КВІТЕНЬ / APRIL",
+    5: "ТРАВЕНЬ / MAY",
+    6: "ЧЕРВЕНЬ / JUNE",
+    7: "ЛИПЕНЬ / JULY",
+    8: "СЕРПЕНЬ / AUGUST",
+    9: "ВЕРЕСЕНЬ / SEPTEMBER",
+    10: "ЖОВТЕНЬ / OCTOBER",
+    11: "ЛИСТОПАД / NOVEMBER",
+    12: "ГРУДЕНЬ / DECEMBER",
 }
-WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
+WEEKDAY_LABELS = [
+    {"uk": "Пн", "en": "Mon", "weekend": False},
+    {"uk": "Вт", "en": "Tue", "weekend": False},
+    {"uk": "Ср", "en": "Wed", "weekend": False},
+    {"uk": "Чт", "en": "Thu", "weekend": False},
+    {"uk": "Пт", "en": "Fri", "weekend": False},
+    {"uk": "Сб", "en": "Sat", "weekend": True},
+    {"uk": "Нд", "en": "Sun", "weekend": True},
+]
 
 
 class ReorderPayload(BaseModel):
@@ -214,35 +223,65 @@ def get_available_booking_dates(session: Session) -> list[dict[str, str]]:
     return available_dates
 
 
-def build_booking_calendar(session: Session) -> list[list[dict[str, str] | None]]:
+def next_month(value: date) -> date:
+    if value.month == 12:
+        return date(value.year + 1, 1, 1)
+    return date(value.year, value.month + 1, 1)
+
+
+def build_booking_calendar(session: Session) -> list[dict[str, Any]]:
     today = current_date()
+    window_end = today + timedelta(days=BOOKING_DATE_WINDOW_DAYS - 1)
     closed_dates = set(
         session.exec(
             select(ClosedDate.closed_on).where(ClosedDate.closed_on >= today)
         ).all()
     )
-    weeks: list[list[dict[str, str] | None]] = []
-    week: list[dict[str, str] | None] = [None] * 7
+    months: list[dict[str, Any]] = []
+    month_start = date(today.year, today.month, 1)
 
-    for offset in range(BOOKING_DATE_WINDOW_DAYS):
-        day = today + timedelta(days=offset)
-        weekday = day.weekday()
-        if weekday == 0 and any(week):
-            weeks.append(week)
-            week = [None] * 7
+    while month_start <= window_end:
+        month_end = next_month(month_start) - timedelta(days=1)
+        grid_start = month_start - timedelta(days=month_start.weekday())
+        grid_end = month_end + timedelta(days=6 - month_end.weekday())
+        weeks: list[list[dict[str, Any]]] = []
+        week: list[dict[str, Any]] = []
+        cursor = grid_start
 
-        if day not in closed_dates:
-            week[weekday] = {
-                "value": day.isoformat(),
-                "label": format_date(day),
-                "day": str(day.day),
-                "month_label": MONTH_SHORT_LABELS[day.month],
+        while cursor <= grid_end:
+            in_month = cursor.month == month_start.month
+            is_available = (
+                in_month
+                and today <= cursor <= window_end
+                and cursor not in closed_dates
+            )
+            week.append(
+                {
+                    "value": cursor.isoformat(),
+                    "label": format_date(cursor),
+                    "day": str(cursor.day),
+                    "is_available": is_available,
+                    "is_today": cursor == today,
+                    "is_weekend": cursor.weekday() >= 5,
+                    "is_outside_month": not in_month,
+                }
+            )
+
+            if len(week) == 7:
+                weeks.append(week)
+                week = []
+
+            cursor += timedelta(days=1)
+
+        months.append(
+            {
+                "title": f"{MONTH_TITLE_LABELS[month_start.month]} {month_start.year}",
+                "weeks": weeks,
             }
+        )
+        month_start = next_month(month_start)
 
-    if any(week):
-        weeks.append(week)
-
-    return weeks
+    return months
 
 
 def admin_return_url(form_data: dict[str, str], fallback: str = "/admin#appointments") -> str:
@@ -307,6 +346,7 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
     return {
         "request": request,
         "app_name": settings.app_name,
+        "asset_version": ASSET_VERSION,
         "services": services,
         "time_slots": time_slots,
         "closed_dates": closed_dates,
@@ -341,6 +381,7 @@ def appointments_context(session: Session, request: Request) -> dict[str, Any]:
     return {
         "request": request,
         "app_name": settings.app_name,
+        "asset_version": ASSET_VERSION,
         "status_options": STATUS_OPTIONS,
         "appointment_rows": build_appointment_rows(appointments),
         "format_date": format_date,
@@ -386,9 +427,10 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
         "index.html",
         {
             "app_name": settings.app_name,
+            "asset_version": ASSET_VERSION,
             "services": get_active_services(session),
             "time_slots": get_active_time_slots(session),
-            "booking_weeks": build_booking_calendar(session),
+            "booking_months": build_booking_calendar(session),
             "weekday_labels": WEEKDAY_LABELS,
             "format_time": format_time,
             "today": current_date().isoformat(),
