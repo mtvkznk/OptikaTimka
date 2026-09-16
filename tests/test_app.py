@@ -42,6 +42,11 @@ def test_homepage_renders_booking_form() -> None:
     assert "Перевірка зору" in response.text
     assert "10:00 - 11:00" in response.text
     assert "Оберіть дату" in response.text
+    assert "calendar-grid" in response.text
+    assert "time-grid" in response.text
+    assert 'name="preferred_date"' in response.text
+    assert 'name="preferred_time"' in response.text
+    assert "+48 123 456 789" in response.text
 
 
 def test_api_status_describes_backend_stack() -> None:

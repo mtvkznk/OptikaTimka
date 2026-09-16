@@ -84,6 +84,21 @@ STATUS_OPTIONS = [
 
 STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 BOOKING_DATE_WINDOW_DAYS = 45
+MONTH_SHORT_LABELS = {
+    1: "січ",
+    2: "лют",
+    3: "бер",
+    4: "кві",
+    5: "тра",
+    6: "чер",
+    7: "лип",
+    8: "сер",
+    9: "вер",
+    10: "жов",
+    11: "лис",
+    12: "гру",
+}
+WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
 
 
 class ReorderPayload(BaseModel):
@@ -197,6 +212,37 @@ def get_available_booking_dates(session: Session) -> list[dict[str, str]]:
         )
 
     return available_dates
+
+
+def build_booking_calendar(session: Session) -> list[list[dict[str, str] | None]]:
+    today = current_date()
+    closed_dates = set(
+        session.exec(
+            select(ClosedDate.closed_on).where(ClosedDate.closed_on >= today)
+        ).all()
+    )
+    weeks: list[list[dict[str, str] | None]] = []
+    week: list[dict[str, str] | None] = [None] * 7
+
+    for offset in range(BOOKING_DATE_WINDOW_DAYS):
+        day = today + timedelta(days=offset)
+        weekday = day.weekday()
+        if weekday == 0 and any(week):
+            weeks.append(week)
+            week = [None] * 7
+
+        if day not in closed_dates:
+            week[weekday] = {
+                "value": day.isoformat(),
+                "label": format_date(day),
+                "day": str(day.day),
+                "month_label": MONTH_SHORT_LABELS[day.month],
+            }
+
+    if any(week):
+        weeks.append(week)
+
+    return weeks
 
 
 def admin_return_url(form_data: dict[str, str], fallback: str = "/admin#appointments") -> str:
@@ -342,7 +388,8 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
             "app_name": settings.app_name,
             "services": get_active_services(session),
             "time_slots": get_active_time_slots(session),
-            "available_dates": get_available_booking_dates(session),
+            "booking_weeks": build_booking_calendar(session),
+            "weekday_labels": WEEKDAY_LABELS,
             "format_time": format_time,
             "today": current_date().isoformat(),
         },
