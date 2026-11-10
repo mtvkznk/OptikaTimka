@@ -673,3 +673,15 @@ def test_appointments_are_paginated(client: TestClient, app_db: Engine) -> None:
     assert 'href="/admin/appointments?page=2"' in first.text
     assert len(re.findall(r'action="/admin/appointments/[0-9]+/status"', first.text)) == 50
     assert len(re.findall(r'action="/admin/appointments/[0-9]+/status"', second.text)) == 5
+    filtered = client.get("/admin/appointments", params={"q": "Client", "status": "new"})
+    assert 'href="/admin/appointments?page=2&amp;q=Client&amp;status=new"' in filtered.text
+    filtered_page = client.get(
+        "/admin/appointments", params={"page": 2, "q": "Client", "status": "new"}
+    )
+    assert 'value="/admin/appointments?q=Client&amp;status=new&amp;page=2"' in filtered_page.text
+    assert "Записів не знайдено" in client.get(
+        "/admin/appointments", params={"q": "Client", "status": "canceled"}
+    ).text
+    assert "Записів не знайдено" in client.get(
+        "/admin/appointments", params={"q": "%"}
+    ).text

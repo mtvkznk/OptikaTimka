@@ -1,167 +1,134 @@
-const reorderLists = document.querySelectorAll("[data-reorder-list]");
-let activeDrag = null;
+const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 
-function getDragAfterElement(list, pointerY) {
-  const draggableItems = [
-    ...list.querySelectorAll("[data-reorder-item]:not(.is-dragging)"),
-  ];
-
-  return draggableItems.reduce(
-    (closest, child) => {
-      const box = child.getBoundingClientRect();
-      const offset = pointerY - box.top - box.height / 2;
-
-      if (offset < 0 && offset > closest.offset) {
-        return { offset, element: child };
-      }
-
-      return closest;
-    },
-    { offset: Number.NEGATIVE_INFINITY, element: null },
-  ).element;
-}
-
-function setReorderStatus(list, message, type = "") {
-  const statusKey = list.dataset.reorderStatus;
-  const statusNode = document.querySelector(`[data-reorder-status-for="${statusKey}"]`);
-
-  if (!statusNode) {
-    return;
+async function errorDetail(response, fallback) {
+  try {
+    const body = await response.json();
+    return typeof body.detail === "string" ? body.detail : fallback;
+  } catch {
+    return fallback;
   }
-
-  statusNode.textContent = message;
-  statusNode.className = `reorder-status ${type}`.trim();
 }
 
-function updateHiddenOrder(list) {
-  list.querySelectorAll("[data-order-input]").forEach((input, index) => {
-    input.value = String(index + 1);
+function showFormError(form, message) {
+  let feedback = form.querySelector(".admin-feedback");
+  if (!feedback) {
+    feedback = document.createElement("p");
+    feedback.className = "admin-feedback";
+    feedback.setAttribute("role", "alert");
+    feedback.dataset.error = "";
+    form.append(feedback);
+  }
+  feedback.textContent = message;
+}
+
+document.querySelectorAll("[data-admin-form]").forEach((form) => {
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (form.getAttribute("aria-busy") === "true") return;
+    if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) return;
+
+    const button = event.submitter;
+    const data = new URLSearchParams(new FormData(form));
+    form.querySelector(".admin-feedback")?.remove();
+    form.setAttribute("aria-busy", "true");
+    if (button) button.disabled = true;
+
+    const fallback = "Не вдалося зберегти зміни. Спробуйте ще раз.";
+    try {
+      const response = await fetch(form.action, { method: "POST", body: data });
+      if (!response.ok || !response.redirected) {
+        showFormError(form, await errorDetail(response, fallback));
+        return;
+      }
+      const target = new URL(response.url);
+      if (form.dataset.section) target.hash = form.dataset.section;
+      if (target.pathname === location.pathname && target.search === location.search) {
+        history.replaceState(null, "", target);
+        location.reload();
+      } else {
+        location.assign(target);
+      }
+    } catch {
+      showFormError(form, fallback);
+    } finally {
+      form.removeAttribute("aria-busy");
+      if (button) button.disabled = false;
+    }
+  });
+});
+
+function rowsIn(list) {
+  return [...list.querySelectorAll("[data-id]")];
+}
+
+function syncOrderButtons(list) {
+  const rows = rowsIn(list);
+  rows.forEach((row, index) => {
+    row.querySelector('[data-move="-1"]').disabled = index === 0;
+    row.querySelector('[data-move="1"]').disabled = index === rows.length - 1;
   });
 }
 
-async function persistOrder(list) {
-  updateHiddenOrder(list);
-  setReorderStatus(list, "Зберігаємо порядок...");
+document.querySelectorAll("[data-reorder-list]").forEach((list) => {
+  syncOrderButtons(list);
+  list.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-move]");
+    if (!button || list.getAttribute("aria-busy") === "true") return;
 
-  const ids = [...list.querySelectorAll("[data-reorder-item]")].map((item) =>
-    Number(item.dataset.id),
-  );
+    const rows = rowsIn(list);
+    const row = button.closest("[data-id]");
+    const index = rows.indexOf(row);
+    const direction = Number(button.dataset.move);
+    const neighbor = rows[index + direction];
+    if (!neighbor) return;
 
-  try {
-    const response = await fetch(list.dataset.reorderEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content,
-      },
-      body: JSON.stringify({ ids }),
-    });
+    const ids = rows.map((item) => Number(item.dataset.id));
+    [ids[index], ids[index + direction]] = [ids[index + direction], ids[index]];
+    const feedback = list.querySelector("[data-reorder-status]");
+    feedback.textContent = "Зберігаємо порядок…";
+    delete feedback.dataset.error;
+    list.setAttribute("aria-busy", "true");
 
-    if (!response.ok) {
-      throw new Error("Order request failed");
+    const fallback = "Не вдалося змінити порядок. Оновіть сторінку й повторіть дію.";
+    try {
+      const response = await fetch(list.dataset.reorderList, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ ids }),
+      });
+      if (!response.ok) {
+        feedback.dataset.error = "";
+        feedback.textContent = await errorDetail(response, fallback);
+        return;
+      }
+      const restoreFocus = row.contains(document.activeElement);
+      if (direction < 0) list.insertBefore(row, neighbor);
+      else list.insertBefore(neighbor, row);
+      syncOrderButtons(list);
+      if (restoreFocus) {
+        (button.disabled ? row.querySelector("[data-move]:not(:disabled)") : button)?.focus();
+      }
+      feedback.textContent = "Порядок збережено.";
+    } catch {
+      feedback.dataset.error = "";
+      feedback.textContent = fallback;
+    } finally {
+      list.removeAttribute("aria-busy");
     }
-
-    setReorderStatus(list, "Порядок збережено.", "is-success");
-  } catch {
-    setReorderStatus(list, "Не вдалося зберегти порядок. Оновіть сторінку.", "is-error");
-  }
-}
-
-function moveRow(list, row, pointerY) {
-  const afterElement = getDragAfterElement(list, pointerY);
-  if (afterElement) {
-    list.insertBefore(row, afterElement);
-  } else {
-    list.appendChild(row);
-  }
-}
-
-function startDrag(event) {
-  const handle = event.target.closest(".drag-handle");
-  const row = handle?.closest("[data-reorder-item]");
-  const list = row?.closest("[data-reorder-list]");
-
-  if (!handle || !row || !list) {
-    return;
-  }
-
-  event.preventDefault();
-  handle.setPointerCapture(event.pointerId);
-  activeDrag = {
-    handle,
-    list,
-    row,
-    pointerId: event.pointerId,
-    startY: event.clientY,
-    moved: false,
-  };
-  document.body.classList.add("is-reordering");
-  row.classList.add("is-dragging");
-}
-
-function updateDrag(event) {
-  if (!activeDrag || event.pointerId !== activeDrag.pointerId) {
-    return;
-  }
-
-  event.preventDefault();
-  if (Math.abs(event.clientY - activeDrag.startY) > 4) {
-    activeDrag.moved = true;
-  }
-
-  moveRow(activeDrag.list, activeDrag.row, event.clientY);
-}
-
-function finishDrag(event) {
-  if (!activeDrag || event.pointerId !== activeDrag.pointerId) {
-    return;
-  }
-
-  event.preventDefault();
-  const finishedDrag = activeDrag;
-  activeDrag = null;
-  finishedDrag.row.classList.remove("is-dragging");
-  document.body.classList.remove("is-reordering");
-
-  if (finishedDrag.handle.hasPointerCapture(event.pointerId)) {
-    finishedDrag.handle.releasePointerCapture(event.pointerId);
-  }
-
-  if (finishedDrag.moved) {
-    persistOrder(finishedDrag.list);
-  }
-}
-
-function moveWithKeyboard(event) {
-  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
-    return;
-  }
-
-  const handle = event.target.closest(".drag-handle");
-  const row = handle?.closest("[data-reorder-item]");
-  const list = row?.closest("[data-reorder-list]");
-
-  if (!handle || !row || !list) {
-    return;
-  }
-
-  event.preventDefault();
-  if (event.key === "ArrowUp" && row.previousElementSibling) {
-    list.insertBefore(row, row.previousElementSibling);
-    persistOrder(list);
-  }
-
-  if (event.key === "ArrowDown" && row.nextElementSibling) {
-    list.insertBefore(row.nextElementSibling, row);
-    persistOrder(list);
-  }
-}
-
-reorderLists.forEach((list) => {
-  list.addEventListener("pointerdown", startDrag);
-  list.addEventListener("keydown", moveWithKeyboard);
+  });
 });
 
-document.addEventListener("pointermove", updateDrag);
-document.addEventListener("pointerup", finishDrag);
-document.addEventListener("pointercancel", finishDrag);
+if (location.pathname === "/admin") {
+  const links = document.querySelectorAll(".admin-nav a");
+  const markCurrentSection = () => {
+    links.forEach((link) => {
+      const hash = link.hash;
+      if (hash && hash === location.hash) link.setAttribute("aria-current", "location");
+      else if (!hash && link.pathname === location.pathname && !location.hash) {
+        link.setAttribute("aria-current", "page");
+      } else link.removeAttribute("aria-current");
+    });
+  };
+  markCurrentSection();
+  window.addEventListener("hashchange", markCurrentSection);
+}

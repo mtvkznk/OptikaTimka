@@ -1,0 +1,69 @@
+{% if appointment_rows %}
+<table class="admin-table" role="table" aria-label="Записи на прийом">
+  <thead role="rowgroup">
+    <tr role="row">
+      <th scope="col" role="columnheader">Клієнт</th>
+      <th scope="col" role="columnheader">Послуга</th>
+      <th scope="col" role="columnheader">Дата й час</th>
+      <th scope="col" role="columnheader">Статус</th>
+    </tr>
+  </thead>
+  <tbody role="rowgroup">
+    {% for row in appointment_rows %}
+    {% set appointment = row.appointment %}
+    <tr role="row">
+      <td role="cell" class="admin-client">
+        <strong>{{ appointment.name }}</strong>
+        {% if appointment.phone_normalized %}
+        <a href="tel:{{ appointment.phone_normalized }}">{{ appointment.phone }}</a>
+        {% elif appointment.phone %}
+        <span>{{ appointment.phone }}</span>
+        {% endif %}
+      </td>
+      <td role="cell">
+        {{ appointment.service }}
+        {% if appointment.message %}
+        <details class="admin-comment">
+          <summary>Коментар</summary>
+          <p>{{ appointment.message }}</p>
+        </details>
+        {% endif %}
+      </td>
+      <td role="cell" class="admin-visit">
+        {% if appointment.preferred_date %}
+        <time datetime="{{ appointment.preferred_date.isoformat() }}">{{ format_date(appointment.preferred_date) }}</time>
+        {% else %}
+        <span>Без дати</span>
+        {% endif %}
+        {% if appointment.preferred_time %}
+        <time datetime="{{ format_time(appointment.preferred_time) }}">{{ format_time(appointment.preferred_time) }}</time>
+        {% endif %}
+      </td>
+      <td role="cell" class="admin-appointment-status">
+        <span class="status-pill status-{{ row.status_value }}">{{ row.status_label }}</span>
+        <form class="admin-status-form" action="/admin/appointments/{{ appointment.id }}/status" method="post" data-admin-form{% if request.url.path == '/admin' %} data-section="appointments"{% endif %}>
+          {% include "csrf_field.html" %}
+          <input type="hidden" name="return_to" value="{{ appointment_return_url }}" />
+          <select name="status" aria-label="Статус запису {{ appointment.name }}">
+            {% for option in status_options %}
+            <option value="{{ option.value }}"{% if option.value == row.status_value %} selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+          <button class="admin-button admin-button-small" type="submit">Зберегти</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="admin-empty">
+  {% if filter_values %}
+  <strong>Записів не знайдено</strong>
+  <p>Змініть умови пошуку або скиньте фільтри.</p>
+  {% else %}
+  <strong>Записів поки немає</strong>
+  <p>Тут з’являться заявки на прийом із сайту.</p>
+  {% endif %}
+</div>
+{% endif %}

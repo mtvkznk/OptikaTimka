@@ -1,100 +1,44 @@
-<!doctype html>
-<html lang="uk">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="csrf-token" content="{{ request.state.csrf_token }}" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Список всіх записів." />
-    <title>Всі записи</title>
-    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-    <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
-  </head>
-  <body class="admin-body">
-    <main class="admin-page">
-      <header class="admin-header">
-        <div class="admin-user" aria-label="Поточний користувач">
-          <span class="user-avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path
-                d="M12 12.6c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4Zm0 2c-3.1 0-6.2 1.7-6.2 4.1 0 .6.5 1.1 1.1 1.1h10.2c.6 0 1.1-.5 1.1-1.1 0-2.4-3.1-4.1-6.2-4.1Z"
-              />
-            </svg>
-          </span>
-          <span>Адміністратор</span>
-          <span class="chevron" aria-hidden="true">⌄</span>
-        </div>
-      </header>
-
-      <section class="admin-panel appointments-page-panel">
-        <div class="panel-heading appointments-page-heading">
-          <div>
-            <a class="back-link" href="/admin">← Назад</a>
-            <h1>Всі записи</h1>
-          </div>
-          <span class="records-count">{{ total_appointments }} записів</span>
-        </div>
-
-        <div class="table-scroll">
-          <table class="appointments-table">
-            <thead>
-              <tr>
-                <th>Пацієнт</th>
-                <th>Послуга</th>
-                <th>Дата</th>
-                <th>Час</th>
-                <th>Статус</th>
-                <th>Дії</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in appointment_rows %}
-              <tr>
-                <td>
-                  <strong>{{ row.appointment.name }}</strong>
-                  <span>{{ row.appointment.phone }}</span>
-                </td>
-                <td>{{ row.appointment.service }}</td>
-                <td>{{ format_date(row.appointment.preferred_date) }}</td>
-                <td>{{ format_time(row.appointment.preferred_time) }}</td>
-                <td>
-                  <span class="status-pill status-{{ row.status_value }}">
-                    {{ row.status_label }}
-                  </span>
-                </td>
-                <td>
-                  <form
-                    class="inline-action"
-                    action="/admin/appointments/{{ row.appointment.id }}/status"
-                    method="post"
-                  >
-                {% include "csrf_field.html" %}
-                    <input type="hidden" name="return_to" value="/admin/appointments" />
-                    <select name="status" aria-label="Статус запису">
-                      {% for option in status_options %}
-                      <option
-                        value="{{ option.value }}"
-                        {% if option.value == row.status_value %}selected{% endif %}
-                      >
-                        {{ option.label }}
-                      </option>
-                      {% endfor %}
-                    </select>
-                    <button class="icon-save" type="submit" aria-label="Зберегти статус">
-                      ✓
-                    </button>
-                  </form>
-                </td>
-              </tr>
-              {% else %}
-              <tr>
-                <td colspan="6" class="empty-cell">Поки що немає записів.</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% include "pagination.html" %}
-      </section>
-    </main>
-  </body>
-</html>
+{% extends "admin_base.html" %}
+{% block title %}Усі записи{% endblock %}
+{% block content %}
+<header class="admin-page-heading">
+  <div>
+    <h1>Усі записи</h1>
+    <p>Знайдіть запис за ім’ям або телефоном, датою прийому чи статусом.</p>
+  </div>
+</header>
+<section class="admin-panel" aria-labelledby="records-heading">
+  <div class="admin-panel-heading">
+    <h2 id="records-heading">Записи на прийом</h2>
+    <span class="admin-count">{{ total_appointments }} записів</span>
+  </div>
+  <form class="admin-filter" action="/admin/appointments" method="get">
+    <label class="admin-field">Ім’я або телефон
+      <input type="search" name="q" maxlength="120" value="{{ filter_values.get('q', '') }}" placeholder="Пошук клієнта" />
+    </label>
+    <label class="admin-field">Дата прийому
+      <input type="date" name="day" value="{{ filter_values.get('day', '') }}" />
+    </label>
+    <label class="admin-field">Статус
+      <select name="status">
+        <option value="">Усі статуси</option>
+        {% for option in status_options %}
+        <option value="{{ option.value }}"{% if filter_values.get('status') == option.value %} selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="admin-filter-actions">
+      <button class="admin-button admin-primary" type="submit">Застосувати</button>
+      {% if filter_values %}<a class="admin-button" href="/admin/appointments">Скинути</a>{% endif %}
+    </div>
+  </form>
+  {% include "admin_appointment_list.html" %}
+  {% if pages > 1 %}
+  <nav class="admin-pagination" aria-label="Сторінки записів">
+    {% if page > 1 %}<a class="admin-button" href="/admin/appointments?page={{ page - 1 }}{{ pagination_query }}">← Попередня</a>{% endif %}
+    <span>{{ page }} / {{ pages }}</span>
+    {% if page < pages %}<a class="admin-button" href="/admin/appointments?page={{ page + 1 }}{{ pagination_query }}">Наступна →</a>{% endif %}
+  </nav>
+  {% endif %}
+</section>
+{% endblock %}

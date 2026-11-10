@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="csrf-token" content="{{ request.state.csrf_token }}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Адмінпанель{% endblock %} · {{ app_name }}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/styles.css?v={{ admin_asset_version }}" />
+    <link rel="stylesheet" href="/static/css/admin.css?v={{ admin_asset_version }}" />
+    <script src="/static/js/admin.js?v={{ admin_asset_version }}" defer></script>
+  </head>
+  <body class="admin-body">
+    <a class="admin-skip" href="#admin-content">До вмісту</a>
+    <div class="admin-layout">
+      <aside class="admin-sidebar">
+        <a class="admin-brand" href="/admin">
+          <img src="/static/favicon.svg" alt="" width="34" height="34" />
+          <span>{{ app_name }}<small>Адмінпанель</small></span>
+        </a>
+        <nav class="admin-nav" aria-label="Розділи адмінпанелі">
+          <a href="/admin"{% if request.url.path == '/admin' %} aria-current="page"{% endif %}>Огляд</a>
+          <a href="/admin/appointments"{% if request.url.path == '/admin/appointments' %} aria-current="page"{% endif %}>Усі записи</a>
+          <a href="/admin#services">Послуги</a>
+          <a href="/admin#time-slots">Графік</a>
+          <a href="/admin#closed-dates">Закриті дати</a>
+        </nav>
+        <nav class="admin-exits" aria-label="Повернення на сайт">
+          <a href="/cabinet">До кабінету <span aria-hidden="true">↗</span></a>
+          <a href="/">На сайт <span aria-hidden="true">↗</span></a>
+        </nav>
+      </aside>
+      <main class="admin-main" id="admin-content" tabindex="-1">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </body>
+</html>

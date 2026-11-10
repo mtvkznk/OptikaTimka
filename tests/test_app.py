@@ -68,7 +68,7 @@ def test_admin_dashboard_renders_controls(client: TestClient) -> None:
     response = client.get("/admin")
 
     assert response.status_code == 200
-    assert "Optika Timka" not in response.text
+    assert "Адмінпанель" in response.text
     assert "Останні записи" in response.text
     assert "/admin/appointments" in response.text
     assert "Доступні години" in response.text
@@ -246,8 +246,7 @@ def test_admin_appointments_page_renders_all_appointments(client: TestClient) ->
 
     response = client.get("/admin/appointments")
     assert response.status_code == 200
-    assert "Optika Timka" not in response.text
-    assert "Всі записи" in response.text
+    assert "Усі записи" in response.text
     assert "All Records Client" in response.text
 
 
@@ -290,6 +289,9 @@ def test_admin_can_reorder_services(client: TestClient) -> None:
 
     reordered_services = client.get("/api/booking-services").json()
     assert [item["id"] for item in reordered_services] == reversed_ids
+    stale = client.post("/admin/reorder/services", json={"ids": reversed_ids[1:]})
+    assert stale.status_code == 409
+    assert client.get("/api/booking-services").json() == reordered_services
 
 
 def test_admin_can_reorder_time_slots(client: TestClient) -> None:
@@ -302,6 +304,29 @@ def test_admin_can_reorder_time_slots(client: TestClient) -> None:
 
     reordered_slots = client.get("/api/time-slots").json()
     assert [item["id"] for item in reordered_slots] == reversed_ids
+
+
+def test_editing_seeded_service_and_time_keeps_only_the_edited_versions(client: TestClient) -> None:
+    services = client.get("/api/booking-services").json()
+    slots = client.get("/api/time-slots").json()
+    service, slot = services[0], slots[0]
+    assert client.post(
+        f"/admin/services/{service['id']}",
+        data={"name": "Первинна консультація", "is_active": "on"},
+        follow_redirects=False,
+    ).status_code == 303
+    assert client.post(
+        f"/admin/time-slots/{slot['id']}",
+        data={"start_time": "09:10", "end_time": slot["end_time"], "is_active": "on"},
+        follow_redirects=False,
+    ).status_code == 303
+
+    edited_services = client.get("/api/booking-services").json()
+    edited_slots = client.get("/api/time-slots").json()
+    assert [item["id"] for item in edited_services] == [item["id"] for item in services]
+    assert [item["id"] for item in edited_slots] == [item["id"] for item in slots]
+    assert edited_services[0]["name"] == "Первинна консультація"
+    assert edited_slots[0]["start_time"] == "09:10:00"
 
 
 def test_cabinet_renders_passwordless_login_options(client: TestClient) -> None:

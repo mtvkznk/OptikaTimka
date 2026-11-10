@@ -3,7 +3,7 @@ import hashlib
 import re
 import secrets
 from datetime import date, datetime, time, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -144,6 +144,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261111-cabinet-admin"
+ADMIN_ASSET_VERSION = "20261111-dashboard"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -183,15 +184,14 @@ def google_auth_enabled() -> bool:
 
 
 def ensure_seed_data(session: Session) -> None:
-    names = set(session.exec(select(BookingService.name)).all())
-    starts = set(session.exec(select(AvailableTimeSlot.start_time)).all())
-    services = [item for item in DEFAULT_SERVICES if item["name"] not in names]
-    slots = [item for item in DEFAULT_TIME_SLOTS if item["start_time"] not in starts]
+    # Defaults initialize empty tables. Administrators own their contents after that.
+    services = session.exec(select(BookingService.id).limit(1)).first() is None
+    slots = session.exec(select(AvailableTimeSlot.id).limit(1)).first() is None
     insert = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
     if services:
         session.execute(
             insert(BookingService)
-            .values(services)
+            .values(DEFAULT_SERVICES)
             .on_conflict_do_nothing(
                 index_elements=[BookingService.name],
             )
@@ -199,7 +199,7 @@ def ensure_seed_data(session: Session) -> None:
     if slots:
         session.execute(
             insert(AvailableTimeSlot)
-            .values(slots)
+            .values(DEFAULT_TIME_SLOTS)
             .on_conflict_do_nothing(
                 index_elements=[AvailableTimeSlot.start_time],
             )
@@ -381,11 +381,12 @@ def admin_return_url(form_data: dict[str, str], fallback: str = "/admin#appointm
 
 
 def apply_sort_order(session: Session, model: type[Any], ids: list[int]) -> None:
-    unique_ids = list(dict.fromkeys(ids))
-    items = session.exec(select(model).where(model.id.in_(unique_ids))).all()
-    ordering = {item_id: order for order, item_id in enumerate(unique_ids, start=1)}
-    for item in items:
-        item.sort_order = ordering[item.id]
+    items = {item.id: item for item in session.exec(select(model)).all()}
+    if len(ids) != len(items) or set(ids) != items.keys():
+        raise HTTPException(409, "Список змінився. Оновіть сторінку й повторіть дію.")
+    for order, item_id in enumerate(ids, start=1):
+        item = items[item_id]
+        item.sort_order = order
         item.updated_at = utc_now()
         session.add(item)
 
@@ -395,7 +396,6 @@ def apply_sort_order(session: Session, model: type[Any], ids: list[int]) -> None
 def admin_context(session: Session, request: Request) -> dict[str, Any]:
     ensure_seed_data(session)
     today = current_date()
-    week_end = today + timedelta(days=7)
 
     services = list(
         session.exec(
@@ -411,70 +411,99 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
     )
     latest_appointments = list(
-        session.exec(select(Appointment).order_by(Appointment.created_at.desc()).limit(8)).all()
+        session.exec(
+            select(Appointment)
+            .order_by(Appointment.created_at.desc(), Appointment.id.desc())
+            .limit(8)
+        ).all()
     )
 
     active_time_slots = [slot for slot in time_slots if slot.is_active]
     active_services = [service for service in services if service.is_active]
-    closed_in_week = {item.closed_on for item in closed_dates if today <= item.closed_on < week_end}
-    workdays = [
-        today + timedelta(days=offset)
-        for offset in range(7)
-        if (today + timedelta(days=offset)).weekday() < 5
-        and (today + timedelta(days=offset)) not in closed_in_week
-    ]
 
     return {
         "request": request,
         "app_name": settings.app_name,
-        "asset_version": ASSET_VERSION,
+        "admin_asset_version": ADMIN_ASSET_VERSION,
+        "today": today,
         "services": services,
         "time_slots": time_slots,
         "closed_dates": closed_dates,
         "status_options": STATUS_OPTIONS,
         "appointment_rows": build_appointment_rows(latest_appointments),
+        "appointment_return_url": "/admin#appointments",
         "metrics": {
             "today_appointments": count_rows(
                 session,
                 Appointment,
                 Appointment.preferred_date == today,
             ),
-            "planned_appointments": count_rows(
+            "new_appointments": count_rows(
                 session,
                 Appointment,
-                Appointment.preferred_date >= today,
+                Appointment.status == AppointmentStatus.new,
             ),
             "active_services": len(active_services),
             "all_services": len(services),
-            "available_hours": len(workdays) * len(active_time_slots),
+            "active_time_slots": len(active_time_slots),
         },
         "format_date": format_date,
         "format_time": format_time,
     }
 
 
-def appointments_context(session: Session, request: Request, page: int = 1) -> dict[str, Any]:
-    ensure_seed_data(session)
-    total = count_rows(session, Appointment)
+def appointments_context(
+    session: Session,
+    request: Request,
+    page: int,
+    q: str,
+    visit_date: date | None,
+    status_filter: AppointmentStatus | Literal[""],
+) -> dict[str, Any]:
+    filters = {}
+    conditions = []
+    if q:
+        filters["q"] = q
+        conditions.append(
+            or_(
+                Appointment.name.icontains(q, autoescape=True),
+                Appointment.phone.icontains(q, autoescape=True),
+                Appointment.phone_normalized.icontains(q, autoescape=True),
+            )
+        )
+    if visit_date:
+        filters["day"] = visit_date.isoformat()
+        conditions.append(Appointment.preferred_date == visit_date)
+    if status_filter:
+        filters["status"] = status_filter.value
+        conditions.append(Appointment.status == status_filter)
+
+    total = count_rows(session, Appointment, *conditions)
     pages = max(1, (total + 49) // 50)
     page = min(page, pages)
     appointments = list(
         session.exec(
             select(Appointment)
+            .where(*conditions)
             .order_by(Appointment.created_at.desc(), Appointment.id.desc())
             .offset((page - 1) * 50)
             .limit(50)
         ).all()
     )
 
+    query = urlencode(filters)
+    path = "/admin/appointments"
+    current_query = urlencode({**filters, **({"page": page} if page > 1 else {})})
     return {
         "request": request,
         "app_name": settings.app_name,
-        "asset_version": ASSET_VERSION,
+        "admin_asset_version": ADMIN_ASSET_VERSION,
         "status_options": STATUS_OPTIONS,
         "appointment_rows": build_appointment_rows(appointments),
         "total_appointments": total,
-        "pagination_path": "/admin/appointments",
+        "appointment_return_url": f"{path}?{current_query}" if current_query else path,
+        "filter_values": filters,
+        "pagination_query": f"&{query}" if query else "",
         "page": page,
         "pages": pages,
         "format_date": format_date,
@@ -1032,11 +1061,15 @@ def admin_appointments(
     request: Request,
     session: SessionDep,
     page: Annotated[int, Query(ge=1, le=100_000)] = 1,
+    q: Annotated[str, Query(max_length=120)] = "",
+    day: Annotated[str, Query(max_length=10)] = "",
+    status_filter: Annotated[AppointmentStatus | Literal[""], Query(alias="status")] = "",
 ) -> HTMLResponse:
+    visit_date = form_date({"day": day}, "day") if day else None
     return templates.TemplateResponse(
         request,
         "admin_appointments.html",
-        appointments_context(session, request, page),
+        appointments_context(session, request, page, q.strip(), visit_date, status_filter),
     )
 
 
@@ -1250,13 +1283,14 @@ def update_appointment_status(
 
 @admin_router.post("/services")
 def create_service(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+    sort_order = session.exec(select(func.max(BookingService.sort_order))).one() or 0
     payload = validated_form(
         BookingServiceCreate,
         {
             "name": form_data.get("name", ""),
             "duration_minutes": form_int(form_data, "duration_minutes", 30),
             "price_uah": form_int(form_data, "price_uah", 0),
-            "sort_order": form_int(form_data, "sort_order", 0),
+            "sort_order": form_int(form_data, "sort_order", sort_order + 1),
             "is_active": form_data.get("is_active") == "on",
         },
     )
@@ -1302,12 +1336,13 @@ def update_service(
 
 @admin_router.post("/time-slots")
 def create_time_slot(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+    sort_order = session.exec(select(func.max(AvailableTimeSlot.sort_order))).one() or 0
     payload = validated_form(
         AvailableTimeSlotCreate,
         {
             "start_time": form_time(form_data, "start_time"),
             "end_time": form_time(form_data, "end_time"),
-            "sort_order": form_int(form_data, "sort_order", 0),
+            "sort_order": form_int(form_data, "sort_order", sort_order + 1),
             "is_active": form_data.get("is_active") == "on",
         },
     )

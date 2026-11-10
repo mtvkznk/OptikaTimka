@@ -1,331 +1,160 @@
-<!doctype html>
-<html lang="uk">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="csrf-token" content="{{ request.state.csrf_token }}" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="Адмін-панель для керування записами, послугами та робочими годинами."
-    />
-    <title>Адмінка</title>
-    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-    <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
-  </head>
-  <body class="admin-body">
-    <main class="admin-page">
-      <header class="admin-header">
-        <div class="admin-user" aria-label="Поточний користувач">
-          <span class="user-avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path
-                d="M12 12.6c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4Zm0 2c-3.1 0-6.2 1.7-6.2 4.1 0 .6.5 1.1 1.1 1.1h10.2c.6 0 1.1-.5 1.1-1.1 0-2.4-3.1-4.1-6.2-4.1Z"
-              />
-            </svg>
-          </span>
-          <span>Адміністратор</span>
-          <span class="chevron" aria-hidden="true">⌄</span>
-        </div>
-      </header>
+{% extends "admin_base.html" %}
+{% macro order_buttons(name) %}
+<div class="admin-order" aria-label="Порядок у списку">
+  <button class="admin-button admin-button-small" type="button" data-move="-1" aria-label="{{ name }} — вище" title="Перемістити вище" disabled>↑</button>
+  <button class="admin-button admin-button-small" type="button" data-move="1" aria-label="{{ name }} — нижче" title="Перемістити нижче" disabled>↓</button>
+</div>
+{% endmacro %}
+{% block content %}
+<header class="admin-page-heading">
+  <div>
+    <h1>Огляд</h1>
+    <p>Записи на прийом, послуги й графік роботи.</p>
+  </div>
+  <time class="admin-today" datetime="{{ today.isoformat() }}">{{ format_date(today) }}</time>
+</header>
 
-      <section class="metric-grid" aria-label="Коротка статистика">
-        <article class="metric-card">
-          <span class="metric-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path
-                d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1.5A2.5 2.5 0 0 1 22 6.5v12A2.5 2.5 0 0 1 19.5 21h-15A2.5 2.5 0 0 1 2 18.5v-12A2.5 2.5 0 0 1 4.5 4H6V3a1 1 0 0 1 1-1Zm12.5 8h-15v8.5c0 .3.2.5.5.5h14c.3 0 .5-.2.5-.5V10ZM5 6c-.3 0-.5.2-.5.5V8h15V6.5c0-.3-.2-.5-.5-.5H18v1a1 1 0 1 1-2 0V6H8v1a1 1 0 1 1-2 0V6H5Z"
-              />
-            </svg>
-          </span>
-          <div>
-            <p>Сьогоднішні записи</p>
-            <strong>{{ metrics.today_appointments }}</strong>
-            <span>з {{ metrics.planned_appointments }} запланованих</span>
-          </div>
-        </article>
+<section class="admin-metrics" aria-label="Коротка статистика">
+  <a class="admin-metric" href="/admin/appointments?day={{ today.isoformat() }}">
+    <span>Записи сьогодні</span>
+    <strong>{{ metrics.today_appointments }}</strong>
+    <span class="admin-metric-hint">Усі статуси</span>
+  </a>
+  <a class="admin-metric admin-metric-emphasis" href="/admin/appointments?status=new">
+    <span>Нові записи</span>
+    <strong>{{ metrics.new_appointments }}</strong>
+    <span class="admin-metric-hint">Очікують підтвердження</span>
+  </a>
+  <a class="admin-metric" href="#services">
+    <span>Активні послуги</span>
+    <strong>{{ metrics.active_services }} <small>/ {{ metrics.all_services }}</small></strong>
+    <span class="admin-metric-hint">У формі запису</span>
+  </a>
+</section>
 
-        <article class="metric-card">
-          <span class="metric-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path
-                d="M6 2.8h12A2.2 2.2 0 0 1 20.2 5v14a2.2 2.2 0 0 1-2.2 2.2H6A2.2 2.2 0 0 1 3.8 19V5A2.2 2.2 0 0 1 6 2.8Zm0 2V19h12V4.8H6Zm3.5 3.4h5a1 1 0 1 1 0 2h-5a1 1 0 0 1 0-2Zm0 4h5a1 1 0 1 1 0 2h-5a1 1 0 0 1 0-2Zm0 4h3a1 1 0 1 1 0 2h-3a1 1 0 1 1 0-2Z"
-              />
-            </svg>
-          </span>
-          <div>
-            <p>Активні послуги</p>
-            <strong>{{ metrics.active_services }}</strong>
-            <span>з {{ metrics.all_services }} загалом</span>
-          </div>
-        </article>
+<section class="admin-panel" id="appointments" aria-labelledby="latest-heading">
+  <div class="admin-panel-heading">
+    <h2 id="latest-heading">Останні записи</h2>
+    <a class="admin-button" href="/admin/appointments">Усі записи <span aria-hidden="true">→</span></a>
+  </div>
+  {% include "admin_appointment_list.html" %}
+</section>
 
-        <article class="metric-card">
-          <span class="metric-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path
-                d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 3a1 1 0 0 1 1 1v3.6l2.2 2.2a1 1 0 0 1-1.4 1.4l-2.5-2.5A1 1 0 0 1 11 12V8a1 1 0 0 1 1-1Z"
-              />
-            </svg>
-          </span>
-          <div>
-            <p>Доступні години</p>
-            <strong>{{ metrics.available_hours }}</strong>
-            <span>на найближчі 7 днів</span>
-          </div>
-        </article>
-      </section>
+<section class="admin-panel" id="services" aria-labelledby="services-heading">
+  <div class="admin-panel-heading">
+    <div>
+      <h2 id="services-heading">Послуги</h2>
+      <p>Активні послуги клієнти бачать у формі запису.</p>
+    </div>
+  </div>
+  <div class="admin-edit-list" data-reorder-list="/admin/reorder/services">
+    {% for service in services %}
+    <form class="admin-editor admin-service" action="/admin/services/{{ service.id }}" method="post" data-admin-form data-id="{{ service.id }}" data-section="services">
+      {% include "csrf_field.html" %}
+      {{ order_buttons(service.name) }}
+      <label class="admin-field admin-service-name">Назва
+        <input name="name" value="{{ service.name }}" maxlength="160" required />
+      </label>
+      <label class="admin-field">Хвилини
+        <input type="number" name="duration_minutes" min="5" max="480" value="{{ service.duration_minutes }}" required />
+      </label>
+      <label class="admin-field">Ціна, ₴
+        <input type="number" name="price_uah" min="0" max="1000000" value="{{ service.price_uah }}" required />
+      </label>
+      <label class="admin-check"><input type="checkbox" name="is_active"{% if service.is_active %} checked{% endif %} /> Активна</label>
+      <button class="admin-button" type="submit">Зберегти</button>
+    </form>
+    {% endfor %}
+    <p class="admin-reorder-status" role="status" data-reorder-status></p>
+  </div>
+  <details class="admin-add">
+    <summary>Додати послугу</summary>
+    <form class="admin-editor admin-add-service" action="/admin/services" method="post" data-admin-form data-section="services">
+      {% include "csrf_field.html" %}
+      <label class="admin-field admin-service-name">Назва
+        <input name="name" maxlength="160" required />
+      </label>
+      <label class="admin-field">Хвилини
+        <input type="number" name="duration_minutes" min="5" max="480" value="30" required />
+      </label>
+      <label class="admin-field">Ціна, ₴
+        <input type="number" name="price_uah" min="0" max="1000000" value="0" required />
+      </label>
+      <label class="admin-check"><input type="checkbox" name="is_active" checked /> Активна</label>
+      <button class="admin-button admin-primary" type="submit">Додати</button>
+    </form>
+  </details>
+</section>
 
-      <section class="admin-grid">
-        <article class="admin-panel admin-panel-wide" id="appointments">
-          <div class="panel-heading">
-            <h1>Останні записи</h1>
-            <a class="ghost-link" href="/admin/appointments">Перейти до всіх</a>
-          </div>
+<section class="admin-panel" id="time-slots" aria-labelledby="slots-heading">
+  <div class="admin-panel-heading">
+    <div>
+      <h2 id="slots-heading">Доступні години</h2>
+      <p>{{ metrics.active_time_slots }} активних годин у графіку.</p>
+    </div>
+  </div>
+  <div class="admin-edit-list" data-reorder-list="/admin/reorder/time-slots">
+    {% for slot in time_slots %}
+    <form class="admin-editor admin-slot" action="/admin/time-slots/{{ slot.id }}" method="post" data-admin-form data-id="{{ slot.id }}" data-section="time-slots">
+      {% include "csrf_field.html" %}
+      {{ order_buttons(format_time(slot.start_time)) }}
+      <label class="admin-field">Початок
+        <input type="time" name="start_time" value="{{ format_time(slot.start_time) }}" required />
+      </label>
+      <label class="admin-field">Кінець
+        <input type="time" name="end_time" value="{{ format_time(slot.end_time) }}" required />
+      </label>
+      <label class="admin-check"><input type="checkbox" name="is_active"{% if slot.is_active %} checked{% endif %} /> Активна</label>
+      <button class="admin-button" type="submit">Зберегти</button>
+    </form>
+    {% endfor %}
+    <p class="admin-reorder-status" role="status" data-reorder-status></p>
+  </div>
+  <details class="admin-add">
+    <summary>Додати годину</summary>
+    <form class="admin-editor admin-add-slot" action="/admin/time-slots" method="post" data-admin-form data-section="time-slots">
+      {% include "csrf_field.html" %}
+      <label class="admin-field">Початок <input type="time" name="start_time" required /></label>
+      <label class="admin-field">Кінець <input type="time" name="end_time" required /></label>
+      <label class="admin-check"><input type="checkbox" name="is_active" checked /> Активна</label>
+      <button class="admin-button admin-primary" type="submit">Додати</button>
+    </form>
+  </details>
+</section>
 
-          <div class="table-scroll">
-            <table class="appointments-table">
-              <thead>
-                <tr>
-                  <th>Пацієнт</th>
-                  <th>Послуга</th>
-                  <th>Дата</th>
-                  <th>Час</th>
-                  <th>Статус</th>
-                  <th>Дії</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for row in appointment_rows %}
-                <tr>
-                  <td>
-                    <strong>{{ row.appointment.name }}</strong>
-                    <span>{{ row.appointment.phone }}</span>
-                  </td>
-                  <td>{{ row.appointment.service }}</td>
-                  <td>{{ format_date(row.appointment.preferred_date) }}</td>
-                  <td>{{ format_time(row.appointment.preferred_time) }}</td>
-                  <td>
-                    <span class="status-pill status-{{ row.status_value }}">
-                      {{ row.status_label }}
-                    </span>
-                  </td>
-                  <td>
-                    <form
-                      class="inline-action"
-                      action="/admin/appointments/{{ row.appointment.id }}/status"
-                      method="post"
-                    >
-                {% include "csrf_field.html" %}
-                      <input type="hidden" name="return_to" value="/admin#appointments" />
-                      <select name="status" aria-label="Статус запису">
-                        {% for option in status_options %}
-                        <option
-                          value="{{ option.value }}"
-                          {% if option.value == row.status_value %}selected{% endif %}
-                        >
-                          {{ option.label }}
-                        </option>
-                        {% endfor %}
-                      </select>
-                      <button class="icon-save" type="submit" aria-label="Зберегти статус">
-                        ✓
-                      </button>
-                    </form>
-                  </td>
-                </tr>
-                {% else %}
-                <tr>
-                  <td colspan="6" class="empty-cell">Поки що немає записів.</td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </article>
-
-        <article class="admin-panel" id="time-slots">
-          <div class="panel-heading">
-            <h2>Доступні години</h2>
-          </div>
-
-          <div
-            class="slot-list"
-            data-reorder-list
-            data-reorder-endpoint="/admin/reorder/time-slots"
-            data-reorder-status="time-slots"
-          >
-            {% for slot in time_slots %}
-            <form
-              class="slot-row drag-row"
-              action="/admin/time-slots/{{ slot.id }}"
-              method="post"
-              data-reorder-item
-              data-id="{{ slot.id }}"
-            >
-                {% include "csrf_field.html" %}
-              <button
-                class="drag-handle"
-                type="button"
-                aria-label="Перетягнути годину"
-                title="Перетягнути"
-              >
-                ⋮⋮
-              </button>
-              <span class="row-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path
-                    d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 3a1 1 0 0 1 1 1v3.6l2.2 2.2a1 1 0 0 1-1.4 1.4l-2.5-2.5A1 1 0 0 1 11 12V8a1 1 0 0 1 1-1Z"
-                  />
-                </svg>
-              </span>
-              <input type="time" name="start_time" value="{{ format_time(slot.start_time) }}" />
-              <span class="time-dash">-</span>
-              <input type="time" name="end_time" value="{{ format_time(slot.end_time) }}" />
-              <input type="hidden" name="sort_order" value="{{ slot.sort_order }}" data-order-input />
-              <label class="compact-check">
-                <input
-                  type="checkbox"
-                  name="is_active"
-                  {% if slot.is_active %}checked{% endif %}
-                />
-                <span>Активна</span>
-              </label>
-              <button class="icon-save" type="submit" aria-label="Зберегти годину">✓</button>
-            </form>
-            {% endfor %}
-          </div>
-          <p class="reorder-status" role="status" data-reorder-status-for="time-slots"></p>
-
-          <form class="add-form" action="/admin/time-slots" method="post">
-                {% include "csrf_field.html" %}
-            <input type="time" name="start_time" required aria-label="Початок" />
-            <input type="time" name="end_time" required aria-label="Кінець" />
-            <input
-              type="hidden"
-              name="sort_order"
-              value="{{ time_slots|length + 1 }}"
-            />
-            <input type="hidden" name="is_active" value="on" />
-            <button type="submit">Додати</button>
-          </form>
-        </article>
-
-        <article class="admin-panel" id="services">
-          <div class="panel-heading">
-            <h2>Послуги</h2>
-          </div>
-
-          <div
-            class="service-list"
-            data-reorder-list
-            data-reorder-endpoint="/admin/reorder/services"
-            data-reorder-status="services"
-          >
-            {% for service in services %}
-            <form
-              class="service-row drag-row"
-              action="/admin/services/{{ service.id }}"
-              method="post"
-              data-reorder-item
-              data-id="{{ service.id }}"
-            >
-                {% include "csrf_field.html" %}
-              <button
-                class="drag-handle"
-                type="button"
-                aria-label="Перетягнути послугу"
-                title="Перетягнути"
-              >
-                ⋮⋮
-              </button>
-              <input name="name" value="{{ service.name }}" aria-label="Назва послуги" />
-              <input
-                type="number"
-                name="duration_minutes"
-                min="5"
-                step="5"
-                value="{{ service.duration_minutes }}"
-                aria-label="Тривалість у хвилинах"
-              />
-              <input
-                type="number"
-                name="price_uah"
-                min="0"
-                step="10"
-                value="{{ service.price_uah }}"
-                aria-label="Ціна"
-              />
-              <input
-                type="hidden"
-                name="sort_order"
-                value="{{ service.sort_order }}"
-                data-order-input
-              />
-              <label class="compact-check">
-                <input
-                  type="checkbox"
-                  name="is_active"
-                  {% if service.is_active %}checked{% endif %}
-                />
-                <span>Активна</span>
-              </label>
-              <button class="icon-save" type="submit" aria-label="Зберегти послугу">✓</button>
-            </form>
-            {% endfor %}
-          </div>
-          <p class="reorder-status" role="status" data-reorder-status-for="services"></p>
-
-          <form class="add-form add-form-service" action="/admin/services" method="post">
-                {% include "csrf_field.html" %}
-            <input name="name" placeholder="Нова послуга" required />
-            <input type="number" name="duration_minutes" min="5" step="5" value="30" />
-            <input type="number" name="price_uah" min="0" step="10" placeholder="Ціна" />
-            <input type="hidden" name="sort_order" value="{{ services|length + 1 }}" />
-            <input type="hidden" name="is_active" value="on" />
-            <button type="submit">Додати</button>
-          </form>
-        </article>
-
-        <article class="admin-panel" id="closed-dates">
-          <div class="panel-heading">
-            <h2>Закриті дати</h2>
-          </div>
-
-          <div class="closed-list">
-            {% for item in closed_dates %}
-            <div class="closed-row">
-              <form action="/admin/closed-dates/{{ item.id }}" method="post">
-                {% include "csrf_field.html" %}
-                <span class="row-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" focusable="false">
-                    <path
-                      d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1.5A2.5 2.5 0 0 1 22 6.5v12A2.5 2.5 0 0 1 19.5 21h-15A2.5 2.5 0 0 1 2 18.5v-12A2.5 2.5 0 0 1 4.5 4H6V3a1 1 0 0 1 1-1Zm12.5 8h-15v8.5c0 .3.2.5.5.5h14c.3 0 .5-.2.5-.5V10ZM5 6c-.3 0-.5.2-.5.5V8h15V6.5c0-.3-.2-.5-.5-.5H18v1a1 1 0 1 1-2 0V6H8v1a1 1 0 1 1-2 0V6H5Z"
-                    />
-                  </svg>
-                </span>
-                <input type="date" name="closed_on" value="{{ item.closed_on }}" required />
-                <input name="reason" value="{{ item.reason }}" placeholder="Причина" />
-                <button class="icon-save" type="submit" aria-label="Зберегти дату">✓</button>
-              </form>
-              <form action="/admin/closed-dates/{{ item.id }}/delete" method="post">
-                {% include "csrf_field.html" %}
-                <button class="icon-delete" type="submit" aria-label="Видалити дату">×</button>
-              </form>
-            </div>
-            {% else %}
-            <p class="empty-note">Закритих дат ще немає.</p>
-            {% endfor %}
-          </div>
-
-          <form class="add-form add-form-closed" action="/admin/closed-dates" method="post">
-                {% include "csrf_field.html" %}
-            <input type="date" name="closed_on" required />
-            <input name="reason" placeholder="Причина" />
-            <button type="submit">Додати</button>
-          </form>
-        </article>
-      </section>
-    </main>
-    <script src="/static/js/admin.js"></script>
-  </body>
-</html>
+<section class="admin-panel" id="closed-dates" aria-labelledby="closed-heading">
+  <div class="admin-panel-heading">
+    <div>
+      <h2 id="closed-heading">Закриті дати</h2>
+      <p>На ці дні клієнти не зможуть створити новий запис.</p>
+    </div>
+  </div>
+  <div class="admin-edit-list">
+    {% for item in closed_dates %}
+    <div class="admin-closed-row">
+      <form class="admin-editor admin-closed" action="/admin/closed-dates/{{ item.id }}" method="post" data-admin-form data-section="closed-dates">
+        {% include "csrf_field.html" %}
+        <label class="admin-field">Дата <input type="date" name="closed_on" value="{{ item.closed_on }}" required /></label>
+        <label class="admin-field">Причина <input name="reason" maxlength="160" value="{{ item.reason }}" /></label>
+        <button class="admin-button" type="submit">Зберегти</button>
+      </form>
+      <form class="admin-delete" action="/admin/closed-dates/{{ item.id }}/delete" method="post" data-admin-form data-section="closed-dates" data-confirm="Відкрити запис на {{ format_date(item.closed_on) }}?">
+        {% include "csrf_field.html" %}
+        <button class="admin-button admin-danger" type="submit">Відкрити дату</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="admin-list-empty">Закритих дат поки немає.</p>
+    {% endfor %}
+  </div>
+  <details class="admin-add">
+    <summary>Закрити дату</summary>
+    <form class="admin-editor admin-closed" action="/admin/closed-dates" method="post" data-admin-form data-section="closed-dates">
+      {% include "csrf_field.html" %}
+      <label class="admin-field">Дата <input type="date" name="closed_on" required /></label>
+      <label class="admin-field">Причина <input name="reason" maxlength="160" /></label>
+      <button class="admin-button admin-primary" type="submit">Закрити</button>
+    </form>
+  </details>
+</section>
+{% endblock %}
