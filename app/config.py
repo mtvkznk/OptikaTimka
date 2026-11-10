@@ -6,6 +6,8 @@ from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
+from app.validation import normalize_email
+
 
 class Settings(BaseSettings):
     app_name: str = "Optika Timka"
@@ -14,6 +16,7 @@ class Settings(BaseSettings):
     auth_secret: SecretStr = SecretStr("change-me-local-auth-secret")
     admin_username: str = "admin"
     admin_password: SecretStr | None = None
+    admin_google_email: str | None = None
     public_base_url: str | None = None
     phone_auth_debug: bool = False
     google_client_id: str | None = None
@@ -47,6 +50,19 @@ class Settings(BaseSettings):
     def empty_to_none(cls, value: object) -> object:
         return None if value == "" else value
 
+    @field_validator("admin_google_email")
+    @classmethod
+    def validate_admin_google_email(cls, value: str | None) -> str | None:
+        email = normalize_email(value)
+        if email and (
+            len(email) > 255
+            or email.count("@") != 1
+            or any(char.isspace() for char in email)
+            or not all(email.split("@"))
+        ):
+            raise ValueError("ADMIN_GOOGLE_EMAIL must be a single email address")
+        return email
+
     @model_validator(mode="after")
     def validate_security(self) -> Self:
         if self.public_base_url:
@@ -64,12 +80,16 @@ class Settings(BaseSettings):
             self.public_base_url = self.public_base_url.rstrip("/")
         if bool(self.google_client_id) != bool(self.google_client_secret):
             raise ValueError("Configure both Google OAuth credentials, or neither")
+        if self.admin_google_email and not self.google_client_id:
+            raise ValueError("ADMIN_GOOGLE_EMAIL requires Google OAuth credentials")
         if self.environment == "production":
             auth_secret = self.auth_secret.get_secret_value()
             if len(auth_secret.strip()) < 32 or auth_secret.lower().startswith(("replace-", "change-me")):
                 raise ValueError("Production AUTH_SECRET must contain at least 32 characters")
             password = self.admin_password.get_secret_value() if self.admin_password else ""
-            if len(password.strip()) < 16 or password.lower().startswith(("replace-", "change-me")):
+            if not self.admin_google_email and (
+                len(password.strip()) < 16 or password.lower().startswith(("replace-", "change-me"))
+            ):
                 raise ValueError("Production ADMIN_PASSWORD must contain at least 16 characters")
             database = make_url(self.database_url)
             if database.get_backend_name() != "postgresql":

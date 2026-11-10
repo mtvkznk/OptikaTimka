@@ -32,10 +32,15 @@
               </p>
               {% endif %}
             </div>
-            <form action="/auth/logout" method="post">
-              {% include "csrf_field.html" %}
-              <button class="secondary-button" type="submit">Вийти</button>
-            </form>
+            <div class="cabinet-actions">
+              {% if is_admin %}
+              <a class="secondary-button" href="/admin">Адмінпанель</a>
+              {% endif %}
+              <form action="/auth/logout" method="post">
+                {% include "csrf_field.html" %}
+                <button class="secondary-button" type="submit">Вийти</button>
+              </form>
+            </div>
           </div>
 
           {% if appointment_rows %}

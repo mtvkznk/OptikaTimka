@@ -2,7 +2,7 @@ import base64
 import hashlib
 import re
 import secrets
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Annotated, Any
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
@@ -50,13 +50,19 @@ from app.models import (
     utc_now,
 )
 from app.security import (
+    GOOGLE_SESSION_PREFIX,
     SESSION_COOKIE_NAME,
+    CanonicalHostMiddleware,
     SecurityMiddleware,
     cookie_name,
+    get_customer_by_session,
     hash_secret,
+    hash_session_token,
+    is_google_admin,
     rate_limit,
     read_form_data,
     require_admin,
+    utc_expired,
 )
 from app.validation import normalize_email, normalize_phone
 
@@ -73,6 +79,7 @@ if not IS_PRODUCTION:
 if settings.public_base_url:
     allowed_hosts.append(urlsplit(settings.public_base_url).hostname)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+app.add_middleware(CanonicalHostMiddleware)
 app.add_middleware(SecurityMiddleware)
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -136,7 +143,7 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261110-booking-design"
+ASSET_VERSION = "20261111-cabinet-admin"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -169,16 +176,6 @@ def secure_cookie_enabled() -> bool:
 
 def hash_phone_code(phone: str, code: str) -> str:
     return hash_secret(f"phone-code:{phone}:{code}")
-
-
-def hash_session_token(token: str) -> str:
-    return hash_secret(f"customer-session:{token}")
-
-
-def utc_expired(value: datetime) -> bool:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value < utc_now()
 
 
 def google_auth_enabled() -> bool:
@@ -519,30 +516,19 @@ def form_time(form_data: dict[str, str], key: str) -> time:
         ) from exc
 
 
-def get_customer_by_session(request: Request, session: Session) -> Customer | None:
-    token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME))
-    if not token or len(token) > 128:
-        return None
-
-    token_hash = hash_session_token(token)
-    customer_session = session.exec(
-        select(CustomerSession).where(CustomerSession.token_hash == token_hash)
-    ).first()
-    if customer_session is None or utc_expired(customer_session.expires_at):
-        return None
-
-    return session.get(Customer, customer_session.customer_id)
-
-
 def issue_customer_session(
     customer: Customer,
     session: Session,
     response: RedirectResponse,
     request: Request,
+    *,
+    via_google: bool = False,
 ) -> None:
     clear_customer_session(request, session, response)
     session.execute(delete(CustomerSession).where(CustomerSession.expires_at < utc_now()))
     token = secrets.token_urlsafe(32)
+    if via_google:
+        token = GOOGLE_SESSION_PREFIX + token
     session.add(
         CustomerSession(
             customer_id=customer.id or 0,
@@ -705,6 +691,7 @@ def cabinet_context(
         "app_name": settings.app_name,
         "asset_version": ASSET_VERSION,
         "customer": customer,
+        "is_admin": is_google_admin(request, customer),
         "appointment_rows": appointment_rows,
         "format_date": format_date,
         "format_time": format_time,
@@ -1014,7 +1001,7 @@ def google_callback(request: Request, session: SessionDep) -> RedirectResponse:
             profile = exchange_google_code(request, code)
             customer = upsert_google_customer(session, profile)
             response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
-            issue_customer_session(customer, session, response, request)
+            issue_customer_session(customer, session, response, request, via_google=True)
         except (HTTPException, IntegrityError):
             session.rollback()
             response = RedirectResponse("/cabinet?auth_error=google_failed", status_code=303)

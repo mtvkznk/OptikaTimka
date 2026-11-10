@@ -599,6 +599,12 @@ label.calendar-day:hover {
   overflow-wrap: anywhere;
 }
 
+.cabinet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
 .cabinet-appointments {
   display: grid;
   gap: 0.6rem;

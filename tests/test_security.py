@@ -21,7 +21,7 @@ from app.models import (
     SecurityRateLimit,
     utc_now,
 )
-from app.security import SESSION_COOKIE_NAME, cookie_name
+from app.security import GOOGLE_SESSION_PREFIX, SESSION_COOKIE_NAME, cookie_name, hash_session_token
 
 
 def booking(**changes: object) -> dict[str, object]:
@@ -60,7 +60,7 @@ def sign_in_customer(client: TestClient, engine: Engine, customer: Customer) -> 
         session.add(
             CustomerSession(
                 customer_id=customer.id,
-                token_hash=main.hash_session_token(token),
+                token_hash=hash_session_token(token),
                 expires_at=utc_now() + timedelta(hours=1),
             )
         )
@@ -219,6 +219,22 @@ def test_production_has_secure_host_cookies_and_no_phone_login(
     assert 'action="/auth/phone/request"' not in response.text
 
 
+def test_production_alias_redirects_before_creating_oauth_state(
+    raw_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "public_base_url", "https://optika.example")
+    response = raw_client.get(
+        "/auth/google?demo=1",
+        headers={"Host": "www.optika.example"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 308
+    assert response.headers["Location"] == "https://optika.example/auth/google?demo=1"
+    assert "Set-Cookie" not in response.headers
+    assert raw_client.get("/health", headers={"Host": "unrelated.example"}).status_code == 400
+
+
 @pytest.mark.parametrize(
     "changes",
     [
@@ -233,6 +249,8 @@ def test_production_has_secure_host_cookies_and_no_phone_login(
         {"phone_auth_debug": True},
         {"environment": "prodction"},
         {"public_base_url": "https://optika.example/path"},
+        {"admin_google_email": "owner@example.com"},
+        {"admin_google_email": "owner@example.com,other@example.com"},
     ],
 )
 def test_unsafe_production_configuration_rejected(changes: dict[str, object]) -> None:
@@ -257,6 +275,18 @@ def test_valid_production_configuration_is_accepted() -> None:
         phone_auth_debug=False,
     )
     assert configured.environment == "production"
+
+
+def test_production_google_admin_does_not_need_an_admin_password() -> None:
+    configured = Settings(
+        _env_file=None, environment="production", auth_secret="test-only-secret-" * 4,
+        public_base_url="https://optika.example", google_client_id="test-client",
+        google_client_secret="test-secret", admin_google_email=" Owner@Example.com ",
+        database_url="postgresql+psycopg://app:test-only-database-password@db/optika_timka",
+        admin_password=None,
+    )
+    assert configured.admin_google_email == "owner@example.com"
+    assert configured.admin_password is None
 
 
 def test_wrong_phone_codes_exhaust_attempts(anonymous_client: TestClient, app_db: Engine) -> None:
@@ -377,11 +407,16 @@ def test_verified_contact_cannot_read_records_owned_by_another_account(
     assert "Private service" not in anonymous_client.get("/cabinet").text
 
 
+@pytest.mark.parametrize("is_owner", [True, False])
 def test_google_login_opens_customer_cabinet(
-    anonymous_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    anonymous_client: TestClient, monkeypatch: pytest.MonkeyPatch, is_owner: bool,
 ) -> None:
     monkeypatch.setattr(settings, "google_client_id", "test-client")
     monkeypatch.setattr(settings, "google_client_secret", SecretStr("test-secret"))
+    monkeypatch.setattr(settings, "admin_google_email", "owner@example.com")
+    assert anonymous_client.get(
+        "/admin", auth=(settings.admin_username, settings.admin_password.get_secret_value())
+    ).status_code == 403
     start = anonymous_client.get("/auth/google", follow_redirects=False)
     assert start.status_code == 307
     authorization = urlsplit(start.headers["location"])
@@ -403,7 +438,7 @@ def test_google_login_opens_customer_cabinet(
             200,
             json={
                 "sub": "test-google-sub",
-                "email": "google-client@example.com",
+                "email": "owner@example.com" if is_owner else "google-client@example.com",
                 "email_verified": True,
                 "name": "Google Test Client",
             },
@@ -425,6 +460,29 @@ def test_google_login_opens_customer_cabinet(
     assert cookie_name(SESSION_COOKIE_NAME) in anonymous_client.cookies
     assert cookie_name(main.OAUTH_STATE_COOKIE_NAME) not in anonymous_client.cookies
     assert cookie_name(main.OAUTH_VERIFIER_COOKIE_NAME) not in anonymous_client.cookies
+    assert ('href="/admin"' in result.text) is is_owner
+    assert anonymous_client.get("/admin").status_code == (200 if is_owner else 403)
+    if not is_owner:
+        assert anonymous_client.get("/admin/appointments").status_code == 403
+        assert anonymous_client.post("/api/products", json={}).status_code == 403
+    else:
+        assert anonymous_client.post("/auth/logout").status_code == 200
+        assert anonymous_client.get("/admin").status_code == 403
+
+
+def test_google_admin_rejects_non_google_session_for_owner(
+    anonymous_client: TestClient, app_db: Engine, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "admin_google_email", "owner@example.com")
+    sign_in_customer(
+        anonymous_client, app_db,
+        Customer(google_sub="owner", email="owner@example.com", email_verified=True),
+    )
+    assert 'href="/admin"' not in anonymous_client.get("/cabinet").text
+    assert anonymous_client.get("/admin").status_code == 403
+    name = cookie_name(SESSION_COOKIE_NAME)
+    anonymous_client.cookies.set(name, GOOGLE_SESSION_PREFIX + anonymous_client.cookies[name])
+    assert anonymous_client.get("/admin").status_code == 403
 
 
 @pytest.mark.parametrize("verified", [False, "true", None])

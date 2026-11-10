@@ -10,16 +10,17 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlmodel import Session
-from starlette.datastructures import MutableHeaders
-from starlette.responses import JSONResponse
+from sqlmodel import Session, select
+from starlette.datastructures import URL, MutableHeaders
+from starlette.responses import JSONResponse, RedirectResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import settings
 from app.database import get_session
-from app.models import SecurityRateLimit, utc_now
+from app.models import Customer, CustomerSession, SecurityRateLimit, utc_now
 
 SESSION_COOKIE_NAME = "optika_customer_session"
+GOOGLE_SESSION_PREFIX = "g."
 CSRF_COOKIE_NAME = "optika_csrf"
 MAX_BODY_BYTES = 65_536
 CSRF_TTL_SECONDS = 24 * 60 * 60
@@ -40,6 +41,44 @@ def hash_secret(value: str) -> str:
         value.encode(),
         hashlib.sha256,
     ).hexdigest()
+
+
+def hash_session_token(token: str) -> str:
+    return hash_secret(f"customer-session:{token}")
+
+
+def utc_expired(value: datetime) -> bool:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value < utc_now()
+
+
+def get_customer_by_session(request: Request, session: Session) -> Customer | None:
+    token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "")
+    if not token or len(token) > 128:
+        return None
+    customer_session = session.exec(
+        select(CustomerSession).where(CustomerSession.token_hash == hash_session_token(token))
+    ).first()
+    if customer_session is None or utc_expired(customer_session.expires_at):
+        return None
+    return session.get(Customer, customer_session.customer_id)
+
+
+def google_session(request: Request) -> bool:
+    # The prefix is part of the hashed session token, so adding it cannot elevate a phone session.
+    return request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "").startswith(GOOGLE_SESSION_PREFIX)
+
+
+def is_google_admin(request: Request, customer: Customer | None) -> bool:
+    return bool(
+        settings.admin_google_email
+        and customer
+        and customer.google_sub
+        and customer.email_verified
+        and customer.email == settings.admin_google_email
+        and google_session(request)
+    )
 
 
 def csrf_signature(payload: str, session_token: str) -> str:
@@ -212,6 +251,30 @@ class SecurityMiddleware:
             await self.app(scope, receive, send_with_headers)
 
 
+class CanonicalHostMiddleware:
+    """Keep browser sessions and Google OAuth on the configured production host."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] == "http"
+            and scope["method"] in {"GET", "HEAD"}
+            and production()
+            and settings.public_base_url
+        ):
+            origin = urlsplit(settings.public_base_url)
+            host = origin.netloc.lower()
+            alias = host.removeprefix("www.") if host.startswith("www.") else f"www.{host}"
+            request = Request(scope)
+            if request.headers.get("host", "").lower() == alias:
+                url = URL(scope=scope).replace(scheme=origin.scheme, netloc=origin.netloc)
+                await RedirectResponse(url, status_code=308)(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 def rate_limit(
     session: Session,
     request: Request,
@@ -259,6 +322,11 @@ def require_admin(
     session: Annotated[Session, Depends(get_session)],
     credentials: Annotated[HTTPBasicCredentials | None, Depends(basic_auth)],
 ) -> None:
+    if settings.admin_google_email:
+        customer = get_customer_by_session(request, session) if google_session(request) else None
+        if is_google_admin(request, customer):
+            return
+        raise HTTPException(403, "Увійдіть у кабінет через Google-акаунт адміністратора.")
     if not settings.admin_password:
         raise HTTPException(503, "Доступ адміністратора тимчасово недоступний.")
     if credentials is not None:
