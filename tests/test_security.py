@@ -222,6 +222,7 @@ def test_production_has_secure_host_cookies_and_no_phone_login(
         {"auth_secret": "replace-with-a-long-random-string"},
         {"admin_password": "replace-with-a-long-admin-password"},
         {"database_url": "postgresql+psycopg://optika_timka:optika_timka@db/optika_timka"},
+        {"database_url": "sqlite://"},
         {"admin_password": "short"},
         {"public_base_url": "http://optika.example"},
         {"public_base_url": None},

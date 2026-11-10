@@ -76,15 +76,26 @@ jobs:
           }
           Path(os.environ["OPTIKA_ENV_FILE"]).write_text("\n".join(f"{k}={v}" for k, v in config.items()))
           PY
+          unset DATABASE_URL
           docker compose --env-file "$OPTIKA_ENV_FILE" -f docker-compose.prod.yml up -d --build --wait --wait-timeout 120
           curl --fail --silent http://127.0.0.1:8080/ > /dev/null
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/admin)" = 401
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/docs)" = 404
+      - name: Show container diagnostics on failure
+        if: failure() && matrix.python == '3.12'
+        env:
+          OPTIKA_ENV_FILE: ${{ runner.temp }}/optika-prod.env
+        run: |
+          unset DATABASE_URL
+          if [ -f "$OPTIKA_ENV_FILE" ]; then
+            docker compose --env-file "$OPTIKA_ENV_FILE" -f docker-compose.prod.yml logs --tail 80 app
+          fi
       - name: Remove smoke-test containers
         if: always() && matrix.python == '3.12'
         env:
           OPTIKA_ENV_FILE: ${{ runner.temp }}/optika-prod.env
         run: |
+          unset DATABASE_URL
           if [ -f "$OPTIKA_ENV_FILE" ]; then
             docker compose --env-file "$OPTIKA_ENV_FILE" -f docker-compose.prod.yml down -v
           fi

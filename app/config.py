@@ -72,7 +72,9 @@ class Settings(BaseSettings):
             if len(password.strip()) < 16 or password.lower().startswith(("replace-", "change-me")):
                 raise ValueError("Production ADMIN_PASSWORD must contain at least 16 characters")
             database = make_url(self.database_url)
-            if database.get_backend_name() == "postgresql" and database.password == "optika_timka":
+            if database.get_backend_name() != "postgresql":
+                raise ValueError("Production requires a PostgreSQL database")
+            if database.password == "optika_timka":
                 raise ValueError("Replace the shared development PostgreSQL password in production")
             if not self.public_base_url or not self.public_base_url.startswith("https://"):
                 raise ValueError("Production PUBLIC_BASE_URL must use HTTPS")
