@@ -219,6 +219,9 @@ def test_production_has_secure_host_cookies_and_no_phone_login(
     "changes",
     [
         {"auth_secret": "short"},
+        {"auth_secret": "replace-with-a-long-random-string"},
+        {"admin_password": "replace-with-a-long-admin-password"},
+        {"database_url": "postgresql+psycopg://optika_timka:optika_timka@db/optika_timka"},
         {"admin_password": "short"},
         {"public_base_url": "http://optika.example"},
         {"public_base_url": None},
@@ -234,10 +237,21 @@ def test_unsafe_production_configuration_rejected(changes: dict[str, object]) ->
         "admin_password": "test-only-admin-password-123",
         "public_base_url": "https://optika.example",
         "phone_auth_debug": False,
+        "database_url": "postgresql+psycopg://app:test-only-database-password@db/optika_timka",
         **changes,
     }
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **options)
+
+
+def test_valid_production_configuration_is_accepted() -> None:
+    configured = Settings(
+        _env_file=None, environment="production", auth_secret="test-only-secret-" * 4,
+        admin_password="test-only-admin-password-123", public_base_url="https://optika.example",
+        database_url="postgresql+psycopg://app:test-only-database-password@db/optika_timka",
+        phone_auth_debug=False,
+    )
+    assert configured.environment == "production"
 
 
 def test_wrong_phone_codes_exhaust_attempts(anonymous_client: TestClient, app_db: Engine) -> None:

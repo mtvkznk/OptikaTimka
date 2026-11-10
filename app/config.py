@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class Settings(BaseSettings):
@@ -64,10 +65,15 @@ class Settings(BaseSettings):
         if bool(self.google_client_id) != bool(self.google_client_secret):
             raise ValueError("Configure both Google OAuth credentials, or neither")
         if self.environment == "production":
-            if len(self.auth_secret.get_secret_value()) < 32:
+            auth_secret = self.auth_secret.get_secret_value()
+            if len(auth_secret.strip()) < 32 or auth_secret.lower().startswith(("replace-", "change-me")):
                 raise ValueError("Production AUTH_SECRET must contain at least 32 characters")
-            if not self.admin_password or len(self.admin_password.get_secret_value()) < 16:
+            password = self.admin_password.get_secret_value() if self.admin_password else ""
+            if len(password.strip()) < 16 or password.lower().startswith(("replace-", "change-me")):
                 raise ValueError("Production ADMIN_PASSWORD must contain at least 16 characters")
+            database = make_url(self.database_url)
+            if database.get_backend_name() == "postgresql" and database.password == "optika_timka":
+                raise ValueError("Replace the shared development PostgreSQL password in production")
             if not self.public_base_url or not self.public_base_url.startswith("https://"):
                 raise ValueError("Production PUBLIC_BASE_URL must use HTTPS")
             if self.phone_auth_debug:
