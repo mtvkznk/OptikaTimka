@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -376,6 +377,56 @@ def test_verified_contact_cannot_read_records_owned_by_another_account(
     assert "Private service" not in anonymous_client.get("/cabinet").text
 
 
+def test_google_login_opens_customer_cabinet(
+    anonymous_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "google_client_id", "test-client")
+    monkeypatch.setattr(settings, "google_client_secret", SecretStr("test-secret"))
+    start = anonymous_client.get("/auth/google", follow_redirects=False)
+    assert start.status_code == 307
+    authorization = urlsplit(start.headers["location"])
+    assert authorization.hostname == "accounts.google.com"
+    params = parse_qs(authorization.query)
+    verifier = anonymous_client.cookies[cookie_name(main.OAUTH_VERIFIER_COOKIE_NAME)]
+
+    def google_response(request: httpx.Request) -> httpx.Response:
+        if request.url == httpx.URL("https://oauth2.googleapis.com/token"):
+            assert request.method == "POST"
+            data = parse_qs(request.content.decode())
+            assert data["code"] == ["test-code"]
+            assert data["code_verifier"] == [verifier]
+            assert data["redirect_uri"] == params["redirect_uri"]
+            return httpx.Response(200, json={"access_token": "test-access-token"})
+        assert request.url == httpx.URL("https://openidconnect.googleapis.com/v1/userinfo")
+        assert request.headers["Authorization"] == "Bearer test-access-token"
+        return httpx.Response(
+            200,
+            json={
+                "sub": "test-google-sub",
+                "email": "google-client@example.com",
+                "email_verified": True,
+                "name": "Google Test Client",
+            },
+        )
+
+    original_client = httpx.Client
+    transport = httpx.MockTransport(google_response)
+    monkeypatch.setattr(
+        main.httpx, "Client", lambda **kwargs: original_client(transport=transport, **kwargs)
+    )
+    result = anonymous_client.get(
+        "/auth/google/callback",
+        params={"code": "test-code", "state": params["state"][0]},
+        follow_redirects=True,
+    )
+    assert result.status_code == 200
+    assert result.url.path == "/cabinet"
+    assert "Google Test Client" in result.text
+    assert cookie_name(SESSION_COOKIE_NAME) in anonymous_client.cookies
+    assert cookie_name(main.OAUTH_STATE_COOKIE_NAME) not in anonymous_client.cookies
+    assert cookie_name(main.OAUTH_VERIFIER_COOKIE_NAME) not in anonymous_client.cookies
+
+
 @pytest.mark.parametrize("verified", [False, "true", None])
 def test_google_requires_verified_email(
     anonymous_client: TestClient,
@@ -410,6 +461,10 @@ def test_google_state_mismatch_never_exchanges_code(
     anonymous_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(settings, "google_client_id", "test-client")
+    monkeypatch.setattr(settings, "google_client_secret", SecretStr("test-secret"))
+    assert anonymous_client.get("/auth/google", follow_redirects=False).status_code == 307
+
     def forbidden_exchange(*args: object) -> None:
         pytest.fail("Invalid OAuth state reached the provider")
 
@@ -422,7 +477,6 @@ def test_google_state_mismatch_never_exchanges_code(
 
 
 def test_google_network_failure_is_a_controlled_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    import httpx
     from starlette.requests import Request
 
     original_client = httpx.Client

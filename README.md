@@ -29,6 +29,20 @@ PostgreSQL integration tests.
 Open `/` for booking and `/cabinet` for customer login. `/health` reports process
 health. `/api/status` describes the application stack.
 
+### Enable Google sign-in
+
+Create a **Web application** OAuth client in [Google Cloud](https://console.cloud.google.com/auth/clients).
+For the local Uvicorn command above, register
+`http://127.0.0.1:8000/auth/google/callback` as an authorized redirect URI. Use
+`127.0.0.1:8000` when opening the local site so the login and callback share a host.
+
+Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and the matching
+`GOOGLE_REDIRECT_URI` in the local `.env`, then restart Uvicorn and try Google
+sign-in from `/cabinet`. Keep credentials in the ignored environment file.
+For production, register `https://YOUR-DOMAIN/auth/google/callback` and set the
+credentials in `prod.env`. The callback defaults to `PUBLIC_BASE_URL` plus
+`/auth/google/callback` when `GOOGLE_REDIRECT_URI` is empty.
+
 ## Security behavior
 
 - All `/admin` routes and `POST /api/products` require administrator credentials.
@@ -39,8 +53,7 @@ health. `/api/status` describes the application stack.
 - Customer records are selected by account ownership or verified contact details
   on unclaimed appointments. Booking fields never establish verified identity.
 - Google login requires a verified email, uses the stable Google `sub`, validates
-  OAuth state, uses PKCE, and refuses provider redirects. Configure both OAuth
-  credentials, and register `https://YOUR-DOMAIN/auth/google/callback` with Google.
+  OAuth state, uses PKCE, and refuses provider redirects.
 - Production cookies are Secure, HttpOnly, and host-prefixed. Dynamic responses
   use `Cache-Control: no-store`; CSP, frame restrictions, and other security headers
   apply to responses. Production OpenAPI/Swagger/ReDoc endpoints are disabled.
