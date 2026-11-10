@@ -73,6 +73,7 @@ def sign_in_customer(client: TestClient, engine: Engine, customer: Customer) -> 
     [
         ("GET", "/admin"),
         ("GET", "/admin/appointments"),
+        ("POST", "/admin/changes"),
         ("POST", "/admin/services"),
         ("POST", "/admin/time-slots"),
         ("POST", "/admin/closed-dates"),

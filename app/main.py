@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.admin_changes import AdminChanges, apply_admin_changes, closed_periods_for_display
 from app.config import settings
 from app.database import get_session
 from app.models import (
@@ -144,7 +145,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261111-cabinet-admin"
-ADMIN_ASSET_VERSION = "20261111-dashboard"
+ADMIN_ASSET_VERSION = "20261111-admin-changes"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -428,7 +429,7 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         "today": today,
         "services": services,
         "time_slots": time_slots,
-        "closed_dates": closed_dates,
+        "closed_periods": closed_periods_for_display(closed_dates),
         "status_options": STATUS_OPTIONS,
         "appointment_rows": build_appointment_rows(latest_appointments),
         "appointment_return_url": "/admin#appointments",
@@ -1071,6 +1072,19 @@ def admin_appointments(
         "admin_appointments.html",
         appointments_context(session, request, page, q.strip(), visit_date, status_filter),
     )
+
+
+@admin_router.post("/changes")
+def save_admin_changes(changes: AdminChanges, session: SessionDep) -> dict[str, str]:
+    try:
+        apply_admin_changes(session, changes)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            409, "Конфлікт записів, назв або годин. Перевірте зміни й спробуйте ще раз."
+        ) from exc
+    return {"status": "ok"}
 
 
 @app.get("/api/status")

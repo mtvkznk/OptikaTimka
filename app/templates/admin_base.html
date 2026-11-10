@@ -33,6 +33,13 @@
       <main class="admin-main" id="admin-content" tabindex="-1">
         {% block content %}{% endblock %}
       </main>
+      <div class="admin-save-bar">
+        <p data-save-message role="status">Усі зміни збережено.</p>
+        <div class="admin-save-actions">
+          <button class="admin-button" type="button" data-admin-discard hidden>Скинути зміни</button>
+          <button class="admin-button admin-primary" type="button" data-admin-save disabled>Зберегти зміни</button>
+        </div>
+      </div>
     </div>
   </body>
 </html>

@@ -41,7 +41,7 @@
       </td>
       <td role="cell" class="admin-appointment-status">
         <span class="status-pill status-{{ row.status_value }}">{{ row.status_label }}</span>
-        <form class="admin-status-form" action="/admin/appointments/{{ appointment.id }}/status" method="post" data-admin-form{% if request.url.path == '/admin' %} data-section="appointments"{% endif %}>
+        <form class="admin-status-form" action="/admin/appointments/{{ appointment.id }}/status" method="post" data-admin-edit="appointments" data-id="{{ appointment.id }}" data-version="{{ appointment.updated_at.isoformat() }}">
           {% include "csrf_field.html" %}
           <input type="hidden" name="return_to" value="{{ appointment_return_url }}" />
           <select name="status" aria-label="Статус запису {{ appointment.name }}">
@@ -49,7 +49,6 @@
             <option value="{{ option.value }}"{% if option.value == row.status_value %} selected{% endif %}>{{ option.label }}</option>
             {% endfor %}
           </select>
-          <button class="admin-button admin-button-small" type="submit">Зберегти</button>
         </form>
       </td>
     </tr>

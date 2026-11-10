@@ -47,9 +47,9 @@
       <p>Активні послуги клієнти бачать у формі запису.</p>
     </div>
   </div>
-  <div class="admin-edit-list" data-reorder-list="/admin/reorder/services">
+  <div class="admin-edit-list" data-order="service_order">
     {% for service in services %}
-    <form class="admin-editor admin-service" action="/admin/services/{{ service.id }}" method="post" data-admin-form data-id="{{ service.id }}" data-section="services">
+    <form class="admin-editor admin-service" action="/admin/services/{{ service.id }}" method="post" data-admin-edit="services" data-id="{{ service.id }}" data-version="{{ service.updated_at.isoformat() }}">
       {% include "csrf_field.html" %}
       {{ order_buttons(service.name) }}
       <label class="admin-field admin-service-name">Назва
@@ -62,14 +62,13 @@
         <input type="number" name="price_uah" min="0" max="1000000" value="{{ service.price_uah }}" required />
       </label>
       <label class="admin-check"><input type="checkbox" name="is_active"{% if service.is_active %} checked{% endif %} /> Активна</label>
-      <button class="admin-button" type="submit">Зберегти</button>
     </form>
     {% endfor %}
-    <p class="admin-reorder-status" role="status" data-reorder-status></p>
   </div>
+  <ul class="admin-pending" data-pending-for="services" hidden></ul>
   <details class="admin-add">
     <summary>Додати послугу</summary>
-    <form class="admin-editor admin-add-service" action="/admin/services" method="post" data-admin-form data-section="services">
+    <form class="admin-editor admin-add-service" action="/admin/services" method="post" data-admin-add="services">
       {% include "csrf_field.html" %}
       <label class="admin-field admin-service-name">Назва
         <input name="name" maxlength="160" required />
@@ -81,7 +80,7 @@
         <input type="number" name="price_uah" min="0" max="1000000" value="0" required />
       </label>
       <label class="admin-check"><input type="checkbox" name="is_active" checked /> Активна</label>
-      <button class="admin-button admin-primary" type="submit">Додати</button>
+      <button class="admin-button" type="submit">Додати до списку</button>
     </form>
   </details>
 </section>
@@ -93,9 +92,9 @@
       <p>{{ metrics.active_time_slots }} активних годин у графіку.</p>
     </div>
   </div>
-  <div class="admin-edit-list" data-reorder-list="/admin/reorder/time-slots">
+  <div class="admin-edit-list" data-order="time_slot_order">
     {% for slot in time_slots %}
-    <form class="admin-editor admin-slot" action="/admin/time-slots/{{ slot.id }}" method="post" data-admin-form data-id="{{ slot.id }}" data-section="time-slots">
+    <form class="admin-editor admin-slot" action="/admin/time-slots/{{ slot.id }}" method="post" data-admin-edit="time_slots" data-id="{{ slot.id }}" data-version="{{ slot.updated_at.isoformat() }}">
       {% include "csrf_field.html" %}
       {{ order_buttons(format_time(slot.start_time)) }}
       <label class="admin-field">Початок
@@ -105,19 +104,18 @@
         <input type="time" name="end_time" value="{{ format_time(slot.end_time) }}" required />
       </label>
       <label class="admin-check"><input type="checkbox" name="is_active"{% if slot.is_active %} checked{% endif %} /> Активна</label>
-      <button class="admin-button" type="submit">Зберегти</button>
     </form>
     {% endfor %}
-    <p class="admin-reorder-status" role="status" data-reorder-status></p>
   </div>
+  <ul class="admin-pending" data-pending-for="time_slots" hidden></ul>
   <details class="admin-add">
     <summary>Додати годину</summary>
-    <form class="admin-editor admin-add-slot" action="/admin/time-slots" method="post" data-admin-form data-section="time-slots">
+    <form class="admin-editor admin-add-slot" action="/admin/time-slots" method="post" data-admin-add="time_slots">
       {% include "csrf_field.html" %}
       <label class="admin-field">Початок <input type="time" name="start_time" required /></label>
       <label class="admin-field">Кінець <input type="time" name="end_time" required /></label>
       <label class="admin-check"><input type="checkbox" name="is_active" checked /> Активна</label>
-      <button class="admin-button admin-primary" type="submit">Додати</button>
+      <button class="admin-button" type="submit">Додати до списку</button>
     </form>
   </details>
 </section>
@@ -126,34 +124,30 @@
   <div class="admin-panel-heading">
     <div>
       <h2 id="closed-heading">Закриті дати</h2>
-      <p>На ці дні клієнти не зможуть створити новий запис.</p>
+      <p>Обидві дати входять у період. Закриття блокує нові записи.</p>
     </div>
   </div>
   <div class="admin-edit-list">
-    {% for item in closed_dates %}
-    <div class="admin-closed-row">
-      <form class="admin-editor admin-closed" action="/admin/closed-dates/{{ item.id }}" method="post" data-admin-form data-section="closed-dates">
-        {% include "csrf_field.html" %}
-        <label class="admin-field">Дата <input type="date" name="closed_on" value="{{ item.closed_on }}" required /></label>
-        <label class="admin-field">Причина <input name="reason" maxlength="160" value="{{ item.reason }}" /></label>
-        <button class="admin-button" type="submit">Зберегти</button>
-      </form>
-      <form class="admin-delete" action="/admin/closed-dates/{{ item.id }}/delete" method="post" data-admin-form data-section="closed-dates" data-confirm="Відкрити запис на {{ format_date(item.closed_on) }}?">
-        {% include "csrf_field.html" %}
-        <button class="admin-button admin-danger" type="submit">Відкрити дату</button>
-      </form>
-    </div>
+    {% for period in closed_periods %}
+    <form class="admin-editor admin-closed" method="post" data-admin-edit="closed_periods" data-id="{{ period.id }}" data-closed-days='{{ period.days | tojson }}'>
+      <label class="admin-field">Від <input type="date" name="start" value="{{ period.start }}" required /></label>
+      <label class="admin-field">До включно <input type="date" name="end" value="{{ period.end if period.end != period.start else '' }}" /></label>
+      <label class="admin-field">Причина <input name="reason" maxlength="160" value="{{ period.reason }}" /></label>
+      <button class="admin-button admin-danger" type="button" data-reopen>Відкрити вибрані дати</button>
+    </form>
     {% else %}
     <p class="admin-list-empty">Закритих дат поки немає.</p>
     {% endfor %}
   </div>
+  <ul class="admin-pending" data-pending-for="closed_periods" hidden></ul>
   <details class="admin-add">
-    <summary>Закрити дату</summary>
-    <form class="admin-editor admin-closed" action="/admin/closed-dates" method="post" data-admin-form data-section="closed-dates">
-      {% include "csrf_field.html" %}
-      <label class="admin-field">Дата <input type="date" name="closed_on" required /></label>
+    <summary>Закрити період</summary>
+    <form class="admin-editor admin-closed" method="post" data-admin-add="closed_periods">
+      <label class="admin-field">Від <input type="date" name="start" required /></label>
+      <label class="admin-field">До включно <input type="date" name="end" aria-describedby="admin-period-help" /></label>
       <label class="admin-field">Причина <input name="reason" maxlength="160" /></label>
-      <button class="admin-button admin-primary" type="submit">Закрити</button>
+      <button class="admin-button" type="submit">Додати до списку</button>
+      <p class="admin-period-help" id="admin-period-help">Для одного дня залиште поле «До включно» порожнім.</p>
     </form>
   </details>
 </section>
