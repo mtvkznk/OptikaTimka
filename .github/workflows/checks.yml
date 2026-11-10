@@ -56,3 +56,35 @@ jobs:
         run: python -m pytest -q -p no:cacheprovider
       - name: Audit locked dependencies
         run: python -m pip_audit -r requirements.lock --no-deps --disable-pip --progress-spinner off
+      - name: Build and smoke-test production containers
+        if: matrix.python == '3.12'
+        env:
+          OPTIKA_ENV_FILE: ${{ runner.temp }}/optika-prod.env
+        run: |
+          python - <<'PY'
+          import os
+          import secrets
+          from pathlib import Path
+          password = secrets.token_hex(32)
+          config = {
+              "ENVIRONMENT": "production",
+              "PUBLIC_BASE_URL": "https://optika.invalid",
+              "AUTH_SECRET": secrets.token_hex(32),
+              "ADMIN_PASSWORD": secrets.token_hex(32),
+              "POSTGRES_PASSWORD": password,
+              "DATABASE_URL": f"postgresql+psycopg://optika_timka:{password}@db:5432/optika_timka",
+          }
+          Path(os.environ["OPTIKA_ENV_FILE"]).write_text("\n".join(f"{k}={v}" for k, v in config.items()))
+          PY
+          docker compose --env-file "$OPTIKA_ENV_FILE" -f docker-compose.prod.yml up -d --build --wait --wait-timeout 120
+          curl --fail --silent http://127.0.0.1:8080/ > /dev/null
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/admin)" = 401
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/docs)" = 404
+      - name: Remove smoke-test containers
+        if: always() && matrix.python == '3.12'
+        env:
+          OPTIKA_ENV_FILE: ${{ runner.temp }}/optika-prod.env
+        run: |
+          if [ -f "$OPTIKA_ENV_FILE" ]; then
+            docker compose --env-file "$OPTIKA_ENV_FILE" -f docker-compose.prod.yml down -v
+          fi

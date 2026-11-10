@@ -25,7 +25,7 @@ def migration_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Gener
         engine = create_engine(url)
         database_url = url.render_as_string(hide_password=False)
     else:
-        database_url = f"sqlite:///{(tmp_path / 'migrations.db').as_posix()}"
+        database_url = f"sqlite:///{(tmp_path / 'migrations%test.db').as_posix()}"
         engine = create_engine(database_url)
     from app.config import settings
     monkeypatch.setattr(settings, "database_url", database_url)
