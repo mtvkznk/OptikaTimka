@@ -74,7 +74,8 @@ class Settings(BaseSettings):
             database = make_url(self.database_url)
             if database.get_backend_name() != "postgresql":
                 raise ValueError("Production requires a PostgreSQL database")
-            if database.password == "optika_timka":
+            # This is a rejected public development value, never an accepted credential.
+            if database.password == "optika_timka":  # nosec B105
                 raise ValueError("Replace the shared development PostgreSQL password in production")
             if not self.public_base_url or not self.public_base_url.startswith("https://"):
                 raise ValueError("Production PUBLIC_BASE_URL must use HTTPS")
