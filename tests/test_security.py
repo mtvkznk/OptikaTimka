@@ -198,8 +198,11 @@ def test_host_and_security_headers(raw_client: TestClient) -> None:
     assert response.headers["Cache-Control"] == "no-store"
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "same-origin"
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
     assert "HttpOnly" in response.headers["set-cookie"]
+    oauth_redirect = raw_client.get("/auth/google", follow_redirects=False)
+    assert oauth_redirect.headers["Referrer-Policy"] == "no-referrer"
 
 
 def test_production_has_secure_host_cookies_and_no_phone_login(

@@ -112,7 +112,10 @@ class SecurityMiddleware:
                 headers = MutableHeaders(scope=message)
                 headers["X-Content-Type-Options"] = "nosniff"
                 headers["X-Frame-Options"] = "DENY"
-                headers["Referrer-Policy"] = "no-referrer"
+                # Native form POSTs need their Origin header. Keep OAuth redirect URLs private.
+                headers["Referrer-Policy"] = (
+                    "no-referrer" if scope["path"].startswith("/auth/google") else "same-origin"
+                )
                 headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
                 headers["Cross-Origin-Opener-Policy"] = "same-origin"
                 headers["Content-Security-Policy"] = (
