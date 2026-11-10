@@ -24,16 +24,15 @@ def test_homepage_renders_booking_form(client: TestClient) -> None:
     assert "data-service-picker" in response.text
     assert "data-service-option" in response.text
     assert "500 грн" in response.text
-    assert "10:00 - 11:00" in response.text
+    assert "30 хв" in response.text
     assert "Оберіть дату" in response.text
-    assert "Інформація про доступність дат" in response.text
-    assert "31 день стане доступним з 11:00 наступного дня" in response.text
-    assert "data-calendar-carousel" in response.text
+    assert "Коли відкриваються нові дати?" in response.text
+    assert "Щодня об 11:00 за Києвом" in response.text
     assert "data-calendar-next" in response.text
     assert "calendar-board" in response.text
     assert "calendar-grid" in response.text
-    assert "ГОДИНИ / TIME" in response.text
-    assert "time-grid" in response.text
+    assert "Оберіть дату, щоб побачити вільні години." in response.text
+    assert "data-time-slots" in response.text
     assert 'name="preferred_date"' in response.text
     assert 'name="preferred_time"' in response.text
     assert 'name="service"' in response.text
@@ -157,7 +156,7 @@ def test_admin_can_add_service_that_homepage_uses(client: TestClient) -> None:
     assert "Ремонт окулярів" in homepage.text
 
 
-def test_admin_can_add_time_slot_that_homepage_uses(client: TestClient) -> None:
+def test_admin_can_add_time_slot_that_appears_in_availability(client: TestClient) -> None:
     response = client.post(
         "/admin/time-slots",
         data={
@@ -171,9 +170,13 @@ def test_admin_can_add_time_slot_that_homepage_uses(client: TestClient) -> None:
 
     assert response.status_code == 303
 
-    homepage = client.get("/")
-    assert homepage.status_code == 200
-    assert "17:00 - 18:00" in homepage.text
+    tomorrow = current_date() + timedelta(days=1)
+    availability = client.get("/api/availability", params={"preferred_date": tomorrow.isoformat()})
+    assert availability.status_code == 200
+    assert any(
+        slot["start_time"] == "17:00:00" and slot["end_time"] == "18:00:00"
+        for slot in availability.json()
+    )
 
 
 def test_closed_date_is_not_available_on_booking_form(client: TestClient) -> None:
@@ -307,10 +310,9 @@ def test_cabinet_renders_passwordless_login_options(client: TestClient) -> None:
     assert response.status_code == 200
     assert "Особистий кабінет" in response.text
     assert "Вхід телефоном" in response.text
-    assert "Google тимчасово недоступний" in response.text
-    assert "Вхід через Google" not in response.text
+    assert 'href="/auth/google"' not in response.text
     assert 'action="/auth/phone/request"' in response.text
-    assert 'action="/auth/phone/verify"' in response.text
+    assert 'action="/auth/phone/verify"' not in response.text
 
 
 def test_phone_code_login_shows_matching_appointments(client: TestClient) -> None:
@@ -332,6 +334,7 @@ def test_phone_code_login_shows_matching_appointments(client: TestClient) -> Non
 
     code_response = client.post("/auth/phone/request", data={"phone": phone})
     assert code_response.status_code == 200
+    assert 'action="/auth/phone/verify"' in code_response.text
     code_match = re.search(r"Тестовий код:\s*<strong>(\d{6})</strong>", code_response.text)
     assert code_match is not None
 

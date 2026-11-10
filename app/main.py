@@ -136,35 +136,27 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261110-security-availability"
+ASSET_VERSION = "20261110-booking-design"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
 PHONE_CODE_TTL_MINUTES = 10
 PHONE_CODE_MAX_ATTEMPTS = 5
 MONTH_TITLE_LABELS = {
-    1: "СІЧЕНЬ / JANUARY",
-    2: "ЛЮТИЙ / FEBRUARY",
-    3: "БЕРЕЗЕНЬ / MARCH",
-    4: "КВІТЕНЬ / APRIL",
-    5: "ТРАВЕНЬ / MAY",
-    6: "ЧЕРВЕНЬ / JUNE",
-    7: "ЛИПЕНЬ / JULY",
-    8: "СЕРПЕНЬ / AUGUST",
-    9: "ВЕРЕСЕНЬ / SEPTEMBER",
-    10: "ЖОВТЕНЬ / OCTOBER",
-    11: "ЛИСТОПАД / NOVEMBER",
-    12: "ГРУДЕНЬ / DECEMBER",
+    1: "Січень",
+    2: "Лютий",
+    3: "Березень",
+    4: "Квітень",
+    5: "Травень",
+    6: "Червень",
+    7: "Липень",
+    8: "Серпень",
+    9: "Вересень",
+    10: "Жовтень",
+    11: "Листопад",
+    12: "Грудень",
 }
-WEEKDAY_LABELS = [
-    {"uk": "Пн", "en": "Mon", "weekend": False},
-    {"uk": "Вт", "en": "Tue", "weekend": False},
-    {"uk": "Ср", "en": "Wed", "weekend": False},
-    {"uk": "Чт", "en": "Thu", "weekend": False},
-    {"uk": "Пт", "en": "Fri", "weekend": False},
-    {"uk": "Сб", "en": "Sat", "weekend": True},
-    {"uk": "Нд", "en": "Sun", "weekend": True},
-]
+WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
 
 
 class ReorderPayload(BaseModel):
@@ -359,7 +351,6 @@ def build_booking_calendar(session: Session) -> list[dict[str, Any]]:
                     "day": str(cursor.day),
                     "is_available": is_available,
                     "is_today": cursor == today,
-                    "is_weekend": cursor.weekday() >= 5,
                     "is_outside_month": not in_month,
                 }
             )
@@ -696,6 +687,7 @@ def cabinet_context(
     auth_message: str = "",
     auth_error: str = "",
     pending_phone: str = "",
+    awaiting_phone_code: bool = False,
     phone_code_hint: str = "",
     page: int = 1,
 ) -> dict[str, Any]:
@@ -720,6 +712,7 @@ def cabinet_context(
         "auth_message": auth_message,
         "auth_error": auth_error,
         "pending_phone": pending_phone,
+        "awaiting_phone_code": awaiting_phone_code,
         "phone_code_hint": phone_code_hint,
         "show_debug_phone_code": settings.phone_auth_debug and settings.environment != "production",
         "phone_enabled": settings.phone_auth_debug and settings.environment != "production",
@@ -785,11 +778,8 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
             "app_name": settings.app_name,
             "asset_version": ASSET_VERSION,
             "services": get_active_services(session),
-            "time_slots": get_active_time_slots(session),
             "booking_months": build_booking_calendar(session),
             "weekday_labels": WEEKDAY_LABELS,
-            "format_time": format_time,
-            "today": current_date().isoformat(),
         },
     )
 
@@ -867,8 +857,9 @@ def request_phone_code(
             request,
             session,
             None,
-            auth_message="Код підтвердження створено. Введіть його нижче.",
+            auth_message="Введіть код підтвердження.",
             pending_phone=phone,
+            awaiting_phone_code=True,
             phone_code_hint=code,
         ),
     )
@@ -895,6 +886,7 @@ def verify_phone_code(
                 None,
                 auth_error="Перевірте номер телефону і 6-значний код.",
                 pending_phone=form_data.get("phone", ""),
+                awaiting_phone_code=phone is not None,
             ),
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -917,7 +909,7 @@ def verify_phone_code(
                 request,
                 session,
                 None,
-                auth_error="Код недійсний або вже протермінований.",
+                auth_error="Запросіть новий код підтвердження.",
                 pending_phone=phone,
             ),
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -948,8 +940,9 @@ def verify_phone_code(
                 request,
                 session,
                 None,
-                auth_error="Код недійсний або вже протермінований.",
+                auth_error="Не вдалося підтвердити код. Перевірте його або запросіть новий.",
                 pending_phone=phone,
+                awaiting_phone_code=True,
             ),
             status_code=400,
         )

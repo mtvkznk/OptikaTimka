@@ -1,222 +1,222 @@
 const form = document.querySelector("[data-appointment-form]");
-const statusNode = document.querySelector("[data-form-status]");
-const calendarCarousel = document.querySelector("[data-calendar-carousel]");
-const calendarMonths = Array.from(document.querySelectorAll("[data-calendar-month]"));
-const calendarPrev = document.querySelector("[data-calendar-prev]");
-const calendarNext = document.querySelector("[data-calendar-next]");
-const calendarCounter = document.querySelector("[data-calendar-counter]");
-const servicePicker = document.querySelector("[data-service-picker]");
-const serviceTrigger = document.querySelector("[data-service-trigger]");
-const serviceSelected = document.querySelector("[data-service-selected]");
-const serviceSelectedPrice = document.querySelector("[data-service-selected-price]");
-const serviceOptions = Array.from(document.querySelectorAll("[data-service-option]"));
-const serviceRadios = Array.from(document.querySelectorAll("[data-service-radio]"));
+const statusNode = form.querySelector("[data-form-status]");
+const submitButton = form.querySelector('button[type="submit"]');
+const calendarMonths = [...form.querySelectorAll("[data-calendar-month]")];
+const calendarTitle = form.querySelector("[data-calendar-title]");
+const calendarPrev = form.querySelector("[data-calendar-prev]");
+const calendarNext = form.querySelector("[data-calendar-next]");
+const dateRadios = [...form.querySelectorAll('input[name="preferred_date"]')];
+const serviceRadios = [...form.querySelectorAll('input[name="service"]')];
+const timeGrid = form.querySelector("[data-time-slots]");
+const timeOption = form.querySelector("[data-time-option]");
+const availabilityStatus = form.querySelector("[data-availability-status]");
+const availabilityRetry = form.querySelector("[data-availability-retry]");
+const selection = form.querySelector("[data-booking-selection]");
+const confirmation = document.querySelector("[data-booking-confirmation]");
+const dateFormat = new Intl.DateTimeFormat("uk-UA", {
+  day: "numeric",
+  month: "long",
+  timeZone: "UTC",
+});
 
-let activeCalendarMonth = 0;
-let availabilityVersion = 0;
-const dateRadios = Array.from(document.querySelectorAll('input[name="preferred_date"]'));
-const timeRadios = Array.from(document.querySelectorAll('input[name="preferred_time"]'));
+let calendarIndex = 0;
+let availabilityRequest;
+
+function checked(name) {
+  return form.querySelector('input[name="' + name + '"]:checked');
+}
+
+function formatDate(value) {
+  return dateFormat.format(new Date(value + "T00:00:00Z"));
+}
+
+function bookingDetails() {
+  const date = checked("preferred_date");
+  const time = checked("preferred_time");
+  return [
+    checked("service")?.value,
+    date && formatDate(date.value),
+    time && time.closest("label").textContent.trim(),
+  ].filter(Boolean).join(" · ");
+}
+
+function updateSelection() {
+  selection.textContent = bookingDetails();
+  selection.hidden = !selection.textContent;
+}
+
+function setStatus(message, state = "") {
+  statusNode.textContent = message;
+  statusNode.dataset.state = state;
+}
+
+function showMonth(index) {
+  calendarIndex = Math.max(0, Math.min(index, calendarMonths.length - 1));
+  calendarMonths.forEach((month, position) => {
+    month.hidden = position !== calendarIndex;
+  });
+  calendarTitle.textContent = calendarMonths[calendarIndex].dataset.monthTitle;
+  calendarPrev.disabled = calendarIndex === 0;
+  calendarNext.disabled = calendarIndex === calendarMonths.length - 1;
+}
 
 async function refreshAvailability() {
-  const selectedDate = dateRadios.find((radio) => radio.checked)?.value;
-  const version = ++availabilityVersion;
-  timeRadios.forEach((radio) => { radio.disabled = true; });
-  if (!selectedDate) return;
+  availabilityRequest?.abort();
+  const date = checked("preferred_date");
+  timeGrid.replaceChildren();
+  timeGrid.hidden = true;
+  availabilityRetry.hidden = true;
+  updateSelection();
+
+  if (!date) {
+    availabilityStatus.textContent = dateRadios.length
+      ? "Оберіть дату, щоб побачити вільні години."
+      : "Зараз немає доступних дат для запису.";
+    return;
+  }
+
+  const request = new AbortController();
+  availabilityRequest = request;
+  availabilityStatus.textContent = "Завантажуємо вільні години…";
   try {
-    const response = await fetch(`/api/availability?preferred_date=${encodeURIComponent(selectedDate)}`);
+    const response = await fetch(
+      "/api/availability?preferred_date=" + encodeURIComponent(date.value),
+      { signal: request.signal },
+    );
     if (!response.ok) throw new Error("Availability request failed");
     const slots = await response.json();
-    if (version !== availabilityVersion) return;
-    const available = new Set(slots.map((slot) => slot.start_time.slice(0, 5)));
-    timeRadios.forEach((radio) => {
-      radio.disabled = !available.has(radio.value.slice(0, 5));
-      if (radio.disabled) radio.checked = false;
+    if (request.signal.aborted) return;
+    if (!slots.length) {
+      availabilityStatus.textContent = "На цю дату немає вільних годин. Оберіть іншу дату.";
+      return;
+    }
+
+    const options = slots.map((slot) => {
+      const label = timeOption.content.firstElementChild.cloneNode(true);
+      label.querySelector("input").value = slot.start_time;
+      label.querySelector("span").textContent =
+        slot.start_time.slice(0, 5) + " – " + slot.end_time.slice(0, 5);
+      return label;
     });
+    timeGrid.replaceChildren(...options);
+    timeGrid.hidden = false;
+    availabilityStatus.textContent = formatDate(date.value);
   } catch {
-    if (version === availabilityVersion) {
-      setStatus("Не вдалося оновити доступний час. Оберіть дату ще раз.", "is-error");
-    }
+    if (request.signal.aborted) return;
+    availabilityStatus.textContent = "Не вдалося завантажити вільні години.";
+    availabilityRetry.hidden = false;
   }
 }
 
-dateRadios.forEach((radio) => radio.addEventListener("change", refreshAvailability));
-refreshAvailability();
+calendarPrev.addEventListener("click", () => showMonth(calendarIndex - 1));
+calendarNext.addEventListener("click", () => showMonth(calendarIndex + 1));
+availabilityRetry.addEventListener("click", refreshAvailability);
 
-function setStatus(message, type = "") {
-  if (!statusNode) {
-    return;
-  }
-
-  statusNode.textContent = message;
-  statusNode.className = `form-status ${type}`.trim();
-}
-
-function setServiceMenu(open) {
-  if (!servicePicker || !serviceTrigger) {
-    return;
-  }
-
-  servicePicker.classList.toggle("is-open", open);
-  serviceTrigger.setAttribute("aria-expanded", String(open));
-}
-
-function clearServiceSelection() {
-  if (!serviceSelected || !serviceSelectedPrice) {
-    return;
-  }
-
-  serviceSelected.textContent = "Оберіть послугу";
-  serviceSelected.classList.add("is-placeholder");
-  serviceSelectedPrice.textContent = "";
-  serviceRadios.forEach((radio) => {
-    radio.checked = false;
-  });
-  serviceOptions.forEach((option) => {
-    option.classList.remove("is-selected");
-    option.setAttribute("aria-selected", "false");
-  });
-}
-
-function selectService(option) {
-  if (!serviceSelected || !serviceSelectedPrice) {
-    return;
-  }
-
-  const radio = option.querySelector("[data-service-radio]");
-  if (radio) {
-    radio.checked = true;
-  }
-
-  serviceSelected.textContent = option.dataset.serviceName || "";
-  serviceSelected.classList.remove("is-placeholder");
-  serviceSelectedPrice.textContent = option.dataset.servicePrice || "";
-
-  serviceOptions.forEach((item) => {
-    const isSelected = item === option;
-    item.classList.toggle("is-selected", isSelected);
-    item.setAttribute("aria-selected", String(isSelected));
-  });
-
+form.addEventListener("change", (event) => {
   setStatus("");
-  setServiceMenu(false);
-  serviceTrigger?.focus();
+  if (event.target.name === "preferred_date") {
+    refreshAvailability();
+  } else {
+    updateSelection();
+  }
+});
+
+function showError(message, target = statusNode) {
+  setStatus(message, "error");
+  target.focus();
 }
 
-function setCalendarMonth(nextIndex) {
-  if (!calendarCarousel || calendarMonths.length === 0) {
-    return;
-  }
-
-  activeCalendarMonth = Math.min(Math.max(nextIndex, 0), calendarMonths.length - 1);
-
-  calendarMonths.forEach((month, index) => {
-    month.hidden = index !== activeCalendarMonth;
-  });
-
-  if (calendarPrev) {
-    calendarPrev.disabled = activeCalendarMonth === 0;
-  }
-
-  if (calendarNext) {
-    calendarNext.disabled = activeCalendarMonth === calendarMonths.length - 1;
-  }
-
-  if (calendarCounter) {
-    calendarCounter.textContent = `${activeCalendarMonth + 1} / ${calendarMonths.length}`;
-  }
-}
-
-calendarPrev?.addEventListener("click", () => {
-  setCalendarMonth(activeCalendarMonth - 1);
-});
-
-calendarNext?.addEventListener("click", () => {
-  setCalendarMonth(activeCalendarMonth + 1);
-});
-
-setCalendarMonth(0);
-clearServiceSelection();
-
-serviceTrigger?.addEventListener("click", () => {
-  setServiceMenu(!servicePicker?.classList.contains("is-open"));
-});
-
-serviceOptions.forEach((option) => {
-  option.addEventListener("click", () => {
-    selectService(option);
-  });
-
-  option.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      selectService(option);
-    }
-  });
-});
-
-document.addEventListener("click", (event) => {
-  if (!servicePicker?.contains(event.target)) {
-    setServiceMenu(false);
-  }
-});
-
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    setServiceMenu(false);
-    serviceTrigger?.focus();
-  }
-});
-
-form?.addEventListener("submit", async (event) => {
+form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (submitButton.disabled) return;
 
-  if (serviceRadios.length > 0 && !serviceRadios.some((radio) => radio.checked)) {
-    setStatus("Оберіть послугу.", "is-error");
-    setServiceMenu(true);
-    serviceTrigger?.focus();
+  const service = checked("service");
+  const date = checked("preferred_date");
+  const time = checked("preferred_time");
+  if (!service) {
+    showError("Оберіть послугу.", serviceRadios[0]);
     return;
   }
-
-  if (!form.reportValidity()) {
+  if (!date) {
+    showError("Оберіть дату прийому.", calendarMonths[calendarIndex].querySelector("input") || statusNode);
     return;
   }
+  if (!time) {
+    const firstTime = timeGrid.querySelector("input");
+    showError(firstTime ? "Оберіть час прийому." : availabilityStatus.textContent, firstTime || statusNode);
+    return;
+  }
+  if (!form.reportValidity()) return;
 
-  const submitButton = form.querySelector("button[type='submit']");
   const formData = new FormData(form);
-  const payload = Object.fromEntries(formData.entries());
-
+  const name = formData.get("name").trim();
+  const phone = formData.get("phone").trim();
+  if (!name) {
+    showError("Введіть ім’я та прізвище.", form.elements.namedItem("name"));
+    return;
+  }
+  const details = bookingDetails();
+  const fieldsets = [...form.querySelectorAll("fieldset")];
+  fieldsets.forEach((fieldset) => { fieldset.disabled = true; });
   submitButton.disabled = true;
-  setStatus("Надсилаємо запис...");
+  setStatus("Надсилаємо заявку…");
 
   try {
-    const response = await fetch(form.dataset.endpoint, {
+    const response = await fetch(form.action, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content,
+        "X-CSRF-Token": formData.get("csrf_token"),
       },
       body: JSON.stringify({
-        ...payload,
-        email: null,
-        message: "",
+        name,
+        phone,
+        service: service.value,
+        preferred_date: date.value,
+        preferred_time: time.value,
       }),
     });
 
+    if (response.status === 409) {
+      refreshAvailability();
+      showError("Цю годину вже зайняли. Оберіть інший час.");
+      return;
+    }
     if (!response.ok) {
-      const errorPayload = await response.json().catch(() => null);
-      if (response.status === 409) refreshAvailability();
-      throw new Error(typeof errorPayload?.detail === "string"
-        ? errorPayload.detail : "Перевірте введені дані та повторіть спробу.");
+      const payload = await response.json().catch(() => null);
+      if (Array.isArray(payload?.detail) && payload.detail.some((error) => error.loc?.includes("phone"))) {
+        fieldsets.forEach((fieldset) => { fieldset.disabled = false; });
+        showError("Введіть номер із кодом країни, від 8 до 15 цифр.", form.elements.namedItem("phone"));
+        return;
+      }
+      showError(typeof payload?.detail === "string"
+        ? payload.detail : "Перевірте введені дані та повторіть спробу.");
+      return;
     }
 
+    confirmation.querySelector("[data-confirmation-details]").textContent = details;
+    form.hidden = true;
+    confirmation.hidden = false;
+    confirmation.querySelector("h2").focus();
     form.reset();
-    clearServiceSelection();
-    setCalendarMonth(0);
+    showMonth(0);
     refreshAvailability();
-    setStatus("Запис прийнято. Ми зв'яжемося з вами для підтвердження.", "is-success");
-  } catch (error) {
-    setStatus(error.message || "Не вдалося створити запис. Спробуйте ще раз.", "is-error");
+    setStatus("");
+  } catch {
+    showError("Не вдалося надіслати заявку. Перевірте з’єднання та спробуйте ще раз.");
   } finally {
+    fieldsets.forEach((fieldset) => { fieldset.disabled = false; });
     submitButton.disabled = false;
   }
 });
+
+confirmation.querySelector("[data-new-booking]").addEventListener("click", () => {
+  confirmation.hidden = true;
+  form.hidden = false;
+  serviceRadios[0]?.focus();
+});
+
+const restoredMonth = checked("preferred_date")?.closest("[data-calendar-month]");
+showMonth(calendarMonths.indexOf(restoredMonth));
+submitButton.disabled = !serviceRadios.length || !dateRadios.length;
+refreshAvailability();

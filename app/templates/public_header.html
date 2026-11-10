@@ -1,0 +1,12 @@
+<header class="site-header">
+  <div class="site-header-inner">
+    <a class="site-brand" href="/">{{ app_name }}</a>
+    <nav aria-label="Головна навігація">
+      {% if request.url.path == "/" %}
+      <a class="site-nav-link" href="/cabinet">Кабінет</a>
+      {% else %}
+      <a class="site-nav-link" href="/">Запис на прийом</a>
+      {% endif %}
+    </nav>
+  </div>
+</header>
