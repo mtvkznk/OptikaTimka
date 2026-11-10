@@ -1,39 +1,19 @@
 import re
-from collections.abc import Generator
 from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
-from sqlmodel.pool import StaticPool
 
-from app.database import get_session
-from app.main import KYIV_TZ, app, booking_window, current_date
-
-engine = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-SQLModel.metadata.create_all(engine)
+from app.main import ASSET_VERSION, KYIV_TZ, booking_window, current_date
 
 
-def make_session() -> Generator[Session, None, None]:
-    with Session(engine) as session:
-        yield session
-
-
-app.dependency_overrides[get_session] = make_session
-client = TestClient(app)
-
-
-def test_health() -> None:
+def test_health(client: TestClient) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
 
-def test_homepage_renders_booking_form() -> None:
+def test_homepage_renders_booking_form(client: TestClient) -> None:
     response = client.get("/")
 
     assert response.status_code == 200
@@ -60,7 +40,7 @@ def test_homepage_renders_booking_form() -> None:
     assert 'inputmode="tel"' in response.text
     assert 'href="/cabinet"' in response.text
     assert "booking.js" in response.text
-    assert "20260916-cabinet-column-login" in response.text
+    assert ASSET_VERSION in response.text
     assert "Наприклад" not in response.text
 
 
@@ -78,14 +58,14 @@ def test_booking_window_releases_new_date_at_11_kyiv() -> None:
     )
 
 
-def test_api_status_describes_backend_stack() -> None:
+def test_api_status_describes_backend_stack(client: TestClient) -> None:
     response = client.get("/api/status")
 
     assert response.status_code == 200
     assert response.json()["stack"] == ["FastAPI", "SQLModel", "Alembic", "PostgreSQL"]
 
 
-def test_admin_dashboard_renders_controls() -> None:
+def test_admin_dashboard_renders_controls(client: TestClient) -> None:
     response = client.get("/admin")
 
     assert response.status_code == 200
@@ -97,7 +77,7 @@ def test_admin_dashboard_renders_controls() -> None:
     assert "Закриті дати" in response.text
 
 
-def test_create_and_list_product() -> None:
+def test_create_and_list_product(client: TestClient) -> None:
     create_response = client.post(
         "/api/products",
         json={
@@ -119,7 +99,7 @@ def test_create_and_list_product() -> None:
     assert list_response.json()[0]["name"] == "Classic frame"
 
 
-def test_create_appointment() -> None:
+def test_create_appointment(client: TestClient) -> None:
     preferred_date = current_date() + timedelta(days=1)
     response = client.post(
         "/api/appointments",
@@ -138,7 +118,7 @@ def test_create_appointment() -> None:
     assert response.json()["status"] == "new"
 
 
-def test_create_appointment_rejects_date_outside_booking_window() -> None:
+def test_create_appointment_rejects_date_outside_booking_window(client: TestClient) -> None:
     _, window_end = booking_window()
     response = client.post(
         "/api/appointments",
@@ -157,7 +137,7 @@ def test_create_appointment_rejects_date_outside_booking_window() -> None:
     assert response.json()["detail"] == "Запис доступний не більше ніж на 30 днів вперед."
 
 
-def test_admin_can_add_service_that_homepage_uses() -> None:
+def test_admin_can_add_service_that_homepage_uses(client: TestClient) -> None:
     response = client.post(
         "/admin/services",
         data={
@@ -177,7 +157,7 @@ def test_admin_can_add_service_that_homepage_uses() -> None:
     assert "Ремонт окулярів" in homepage.text
 
 
-def test_admin_can_add_time_slot_that_homepage_uses() -> None:
+def test_admin_can_add_time_slot_that_homepage_uses(client: TestClient) -> None:
     response = client.post(
         "/admin/time-slots",
         data={
@@ -196,7 +176,7 @@ def test_admin_can_add_time_slot_that_homepage_uses() -> None:
     assert "17:00 - 18:00" in homepage.text
 
 
-def test_closed_date_is_not_available_on_booking_form() -> None:
+def test_closed_date_is_not_available_on_booking_form(client: TestClient) -> None:
     closed_on = current_date() + timedelta(days=3)
     close_response = client.post(
         "/admin/closed-dates",
@@ -214,7 +194,7 @@ def test_closed_date_is_not_available_on_booking_form() -> None:
     assert f'value="{closed_on.isoformat()}"' not in homepage.text
 
 
-def test_closed_date_blocks_appointment_booking() -> None:
+def test_closed_date_blocks_appointment_booking(client: TestClient) -> None:
     closed_on = current_date() + timedelta(days=5)
     close_response = client.post(
         "/admin/closed-dates",
@@ -244,7 +224,7 @@ def test_closed_date_blocks_appointment_booking() -> None:
     assert response.json()["detail"] == "На цю дату запис закритий."
 
 
-def test_admin_appointments_page_renders_all_appointments() -> None:
+def test_admin_appointments_page_renders_all_appointments(client: TestClient) -> None:
     preferred_date = current_date() + timedelta(days=6)
     create_response = client.post(
         "/api/appointments",
@@ -268,7 +248,7 @@ def test_admin_appointments_page_renders_all_appointments() -> None:
     assert "All Records Client" in response.text
 
 
-def test_admin_can_update_appointment_status() -> None:
+def test_admin_can_update_appointment_status(client: TestClient) -> None:
     preferred_date = current_date() + timedelta(days=7)
     appointment_response = client.post(
         "/api/appointments",
@@ -297,7 +277,7 @@ def test_admin_can_update_appointment_status() -> None:
     assert "Підтверджено" in admin_page.text
 
 
-def test_admin_can_reorder_services() -> None:
+def test_admin_can_reorder_services(client: TestClient) -> None:
     services = client.get("/api/booking-services").json()
     reversed_ids = [item["id"] for item in reversed(services)]
 
@@ -309,7 +289,7 @@ def test_admin_can_reorder_services() -> None:
     assert [item["id"] for item in reordered_services] == reversed_ids
 
 
-def test_admin_can_reorder_time_slots() -> None:
+def test_admin_can_reorder_time_slots(client: TestClient) -> None:
     slots = client.get("/api/time-slots").json()
     reversed_ids = [item["id"] for item in reversed(slots)]
 
@@ -321,7 +301,7 @@ def test_admin_can_reorder_time_slots() -> None:
     assert [item["id"] for item in reordered_slots] == reversed_ids
 
 
-def test_cabinet_renders_passwordless_login_options() -> None:
+def test_cabinet_renders_passwordless_login_options(client: TestClient) -> None:
     response = client.get("/cabinet")
 
     assert response.status_code == 200
@@ -333,7 +313,7 @@ def test_cabinet_renders_passwordless_login_options() -> None:
     assert 'action="/auth/phone/verify"' in response.text
 
 
-def test_phone_code_login_shows_matching_appointments() -> None:
+def test_phone_code_login_shows_matching_appointments(client: TestClient) -> None:
     phone = "+48123456789"
     preferred_date = current_date() + timedelta(days=8)
     appointment_response = client.post(
@@ -373,7 +353,7 @@ def test_phone_code_login_shows_matching_appointments() -> None:
     assert logout_response.status_code == 303
 
 
-def test_google_login_redirects_to_cabinet_when_not_configured() -> None:
+def test_google_login_redirects_to_cabinet_when_not_configured(client: TestClient) -> None:
     response = client.get("/auth/google", follow_redirects=False)
 
     assert response.status_code == 303

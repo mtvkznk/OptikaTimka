@@ -642,6 +642,21 @@ label.calendar-day {
   transform: translateY(-1px);
 }
 
+.time-cell:has(input:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  background: #f1f4f8;
+  box-shadow: none;
+}
+
+.pagination {
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+}
+
 .time-cell input:focus-visible + span {
   outline: 3px solid rgba(73, 112, 177, 0.22);
   outline-offset: 0.45rem;

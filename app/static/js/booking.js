@@ -13,6 +13,34 @@ const serviceOptions = Array.from(document.querySelectorAll("[data-service-optio
 const serviceRadios = Array.from(document.querySelectorAll("[data-service-radio]"));
 
 let activeCalendarMonth = 0;
+let availabilityVersion = 0;
+const dateRadios = Array.from(document.querySelectorAll('input[name="preferred_date"]'));
+const timeRadios = Array.from(document.querySelectorAll('input[name="preferred_time"]'));
+
+async function refreshAvailability() {
+  const selectedDate = dateRadios.find((radio) => radio.checked)?.value;
+  const version = ++availabilityVersion;
+  timeRadios.forEach((radio) => { radio.disabled = true; });
+  if (!selectedDate) return;
+  try {
+    const response = await fetch(`/api/availability?preferred_date=${encodeURIComponent(selectedDate)}`);
+    if (!response.ok) throw new Error("Availability request failed");
+    const slots = await response.json();
+    if (version !== availabilityVersion) return;
+    const available = new Set(slots.map((slot) => slot.start_time.slice(0, 5)));
+    timeRadios.forEach((radio) => {
+      radio.disabled = !available.has(radio.value.slice(0, 5));
+      if (radio.disabled) radio.checked = false;
+    });
+  } catch {
+    if (version === availabilityVersion) {
+      setStatus("Не вдалося оновити доступний час. Оберіть дату ще раз.", "is-error");
+    }
+  }
+}
+
+dateRadios.forEach((radio) => radio.addEventListener("change", refreshAvailability));
+refreshAvailability();
 
 function setStatus(message, type = "") {
   if (!statusNode) {
@@ -165,6 +193,7 @@ form?.addEventListener("submit", async (event) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content,
       },
       body: JSON.stringify({
         ...payload,
@@ -175,12 +204,15 @@ form?.addEventListener("submit", async (event) => {
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => null);
-      throw new Error(errorPayload?.detail || "Request failed");
+      if (response.status === 409) refreshAvailability();
+      throw new Error(typeof errorPayload?.detail === "string"
+        ? errorPayload.detail : "Перевірте введені дані та повторіть спробу.");
     }
 
     form.reset();
     clearServiceSelection();
     setCalendarMonth(0);
+    refreshAvailability();
     setStatus("Запис прийнято. Ми зв'яжемося з вами для підтвердження.", "is-success");
   } catch (error) {
     setStatus(error.message || "Не вдалося створити запис. Спробуйте ще раз.", "is-error");

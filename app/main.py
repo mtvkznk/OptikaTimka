@@ -1,21 +1,24 @@
+import base64
 import hashlib
-import json
 import re
 import secrets
-import urllib.error
-import urllib.request
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+import httpx
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
-from sqlalchemy import func
+from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import and_, delete, func, or_, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import settings
 from app.database import get_session
@@ -28,10 +31,13 @@ from app.models import (
     AppointmentRead,
     AppointmentStatus,
     AvailableTimeSlot,
+    AvailableTimeSlotCreate,
     AvailableTimeSlotRead,
     BookingService,
+    BookingServiceCreate,
     BookingServiceRead,
     ClosedDate,
+    ClosedDateCreate,
     ClosedDateRead,
     ContentBlock,
     ContentBlockRead,
@@ -43,11 +49,45 @@ from app.models import (
     ProductRead,
     utc_now,
 )
+from app.security import (
+    SESSION_COOKIE_NAME,
+    SecurityMiddleware,
+    cookie_name,
+    hash_secret,
+    rate_limit,
+    read_form_data,
+    require_admin,
+)
+from app.validation import normalize_email, normalize_phone
 
-app = FastAPI(title=settings.app_name)
+IS_PRODUCTION = settings.environment == "production"
+app = FastAPI(
+    title=settings.app_name,
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+)
+allowed_hosts = ["localhost", "127.0.0.1", "[::1]"]
+if not IS_PRODUCTION:
+    allowed_hosts.append("testserver")
+if settings.public_base_url:
+    allowed_hosts.append(urlsplit(settings.public_base_url).hostname)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+app.add_middleware(SecurityMiddleware)
+admin_router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 SessionDep = Annotated[Session, Depends(get_session)]
+FormDataDep = Annotated[dict[str, str], Depends(read_form_data)]
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:
+    return JSONResponse(
+        {"detail": "Цей час уже зайнятий або такі дані вже існують. Оновіть сторінку."},
+        status_code=409,
+    )
+
 
 DEFAULT_SERVICES = [
     {
@@ -96,9 +136,9 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20260916-cabinet-column-login"
-SESSION_COOKIE_NAME = "optika_customer_session"
+ASSET_VERSION = "20261110-security-availability"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
+OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
 PHONE_CODE_TTL_MINUTES = 10
 PHONE_CODE_MAX_ATTEMPTS = 5
@@ -128,39 +168,11 @@ WEEKDAY_LABELS = [
 
 
 class ReorderPayload(BaseModel):
-    ids: list[int]
+    ids: list[Annotated[int, Field(gt=0)]] = Field(min_length=1, max_length=1000)
 
 
 def secure_cookie_enabled() -> bool:
     return settings.environment.lower() == "production"
-
-
-def normalize_email(value: str | None) -> str | None:
-    if not value:
-        return None
-
-    email = value.strip().lower()
-    return email or None
-
-
-def normalize_phone(value: str | None) -> str | None:
-    if not value:
-        return None
-
-    raw = value.strip()
-    digits = re.sub(r"\D", "", raw)
-    if raw.startswith("+") and 7 <= len(digits) <= 15:
-        return f"+{digits}"
-    if raw.startswith("00") and 9 <= len(digits) <= 17:
-        return f"+{digits[2:]}"
-    if 7 <= len(digits) <= 15:
-        return f"+{digits}"
-    return None
-
-
-def hash_secret(value: str) -> str:
-    payload = f"{settings.auth_secret}:{value}".encode()
-    return hashlib.sha256(payload).hexdigest()
 
 
 def hash_phone_code(phone: str, code: str) -> str:
@@ -182,23 +194,29 @@ def google_auth_enabled() -> bool:
 
 
 def ensure_seed_data(session: Session) -> None:
-    for service_data in DEFAULT_SERVICES:
-        service = session.exec(
-            select(BookingService).where(BookingService.name == service_data["name"])
-        ).first()
-        if service is None:
-            session.add(BookingService(**service_data))
-
-    for slot_data in DEFAULT_TIME_SLOTS:
-        slot = session.exec(
-            select(AvailableTimeSlot).where(
-                AvailableTimeSlot.start_time == slot_data["start_time"]
+    names = set(session.exec(select(BookingService.name)).all())
+    starts = set(session.exec(select(AvailableTimeSlot.start_time)).all())
+    services = [item for item in DEFAULT_SERVICES if item["name"] not in names]
+    slots = [item for item in DEFAULT_TIME_SLOTS if item["start_time"] not in starts]
+    insert = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
+    if services:
+        session.execute(
+            insert(BookingService)
+            .values(services)
+            .on_conflict_do_nothing(
+                index_elements=[BookingService.name],
             )
-        ).first()
-        if slot is None:
-            session.add(AvailableTimeSlot(**slot_data))
-
-    session.commit()
+        )
+    if slots:
+        session.execute(
+            insert(AvailableTimeSlot)
+            .values(slots)
+            .on_conflict_do_nothing(
+                index_elements=[AvailableTimeSlot.start_time],
+            )
+        )
+    if services or slots:
+        session.commit()
 
 
 def get_active_services(session: Session) -> list[BookingService]:
@@ -263,9 +281,7 @@ def booking_window(now: datetime | None = None) -> tuple[date, date]:
     now_kyiv = kyiv_now() if now is None else now.astimezone(KYIV_TZ)
     today = now_kyiv.date()
     release_anchor = (
-        today
-        if now_kyiv.time() >= BOOKING_DAILY_RELEASE_TIME
-        else today - timedelta(days=1)
+        today if now_kyiv.time() >= BOOKING_DAILY_RELEASE_TIME else today - timedelta(days=1)
     )
     return today, release_anchor + timedelta(days=BOOKING_MAX_DAYS_AHEAD)
 
@@ -335,11 +351,7 @@ def build_booking_calendar(session: Session) -> list[dict[str, Any]]:
 
         while cursor <= grid_end:
             in_month = cursor.month == month_start.month
-            is_available = (
-                in_month
-                and today <= cursor <= window_end
-                and cursor not in closed_dates
-            )
+            is_available = in_month and today <= cursor <= window_end and cursor not in closed_dates
             week.append(
                 {
                     "value": cursor.isoformat(),
@@ -371,23 +383,21 @@ def build_booking_calendar(session: Session) -> list[dict[str, Any]]:
 
 def admin_return_url(form_data: dict[str, str], fallback: str = "/admin#appointments") -> str:
     return_to = form_data.get("return_to", fallback)
-    if not return_to.startswith("/admin"):
+    try:
+        parsed = urlsplit(return_to)
+    except ValueError:
+        return fallback
+    if parsed.scheme or parsed.netloc or parsed.path not in {"/admin", "/admin/appointments"}:
         return fallback
     return return_to
 
 
 def apply_sort_order(session: Session, model: type[Any], ids: list[int]) -> None:
-    seen_ids = set()
-    for sort_order, item_id in enumerate(ids, start=1):
-        if item_id in seen_ids:
-            continue
-
-        seen_ids.add(item_id)
-        item = session.get(model, item_id)
-        if item is None:
-            continue
-
-        item.sort_order = sort_order
+    unique_ids = list(dict.fromkeys(ids))
+    items = session.exec(select(model).where(model.id.in_(unique_ids))).all()
+    ordering = {item_id: order for order, item_id in enumerate(unique_ids, start=1)}
+    for item in items:
+        item.sort_order = ordering[item.id]
         item.updated_at = utc_now()
         session.add(item)
 
@@ -400,7 +410,9 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
     week_end = today + timedelta(days=7)
 
     services = list(
-        session.exec(select(BookingService).order_by(BookingService.sort_order, BookingService.id)).all()
+        session.exec(
+            select(BookingService).order_by(BookingService.sort_order, BookingService.id)
+        ).all()
     )
     time_slots = list(
         session.exec(
@@ -416,11 +428,7 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
 
     active_time_slots = [slot for slot in time_slots if slot.is_active]
     active_services = [service for service in services if service.is_active]
-    closed_in_week = {
-        item.closed_on
-        for item in closed_dates
-        if today <= item.closed_on < week_end
-    }
+    closed_in_week = {item.closed_on for item in closed_dates if today <= item.closed_on < week_end}
     workdays = [
         today + timedelta(days=offset)
         for offset in range(7)
@@ -457,10 +465,18 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
     }
 
 
-def appointments_context(session: Session, request: Request) -> dict[str, Any]:
+def appointments_context(session: Session, request: Request, page: int = 1) -> dict[str, Any]:
     ensure_seed_data(session)
+    total = count_rows(session, Appointment)
+    pages = max(1, (total + 49) // 50)
+    page = min(page, pages)
     appointments = list(
-        session.exec(select(Appointment).order_by(Appointment.created_at.desc())).all()
+        session.exec(
+            select(Appointment)
+            .order_by(Appointment.created_at.desc(), Appointment.id.desc())
+            .offset((page - 1) * 50)
+            .limit(50)
+        ).all()
     )
 
     return {
@@ -469,22 +485,27 @@ def appointments_context(session: Session, request: Request) -> dict[str, Any]:
         "asset_version": ASSET_VERSION,
         "status_options": STATUS_OPTIONS,
         "appointment_rows": build_appointment_rows(appointments),
+        "total_appointments": total,
+        "pagination_path": "/admin/appointments",
+        "page": page,
+        "pages": pages,
         "format_date": format_date,
         "format_time": format_time,
     }
 
 
-async def read_form_data(request: Request) -> dict[str, str]:
-    body = (await request.body()).decode("utf-8")
-    parsed = parse_qs(body, keep_blank_values=True)
-    return {key: values[-1] for key, values in parsed.items()}
-
-
 def form_int(form_data: dict[str, str], key: str, default: int = 0) -> int:
     try:
         return int(form_data.get(key, default))
-    except (TypeError, ValueError):
-        return default
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Вкажіть коректне ціле число.") from exc
+
+
+def validated_form(model: type[Any], values: dict[str, Any]) -> Any:
+    try:
+        return model.model_validate(values)
+    except ValidationError as exc:
+        raise HTTPException(422, "Перевірте значення та довжину полів форми.") from exc
 
 
 def form_date(form_data: dict[str, str], key: str) -> date:
@@ -492,7 +513,9 @@ def form_date(form_data: dict[str, str], key: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректна дата.") from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректна дата."
+        ) from exc
 
 
 def form_time(form_data: dict[str, str], key: str) -> time:
@@ -500,12 +523,14 @@ def form_time(form_data: dict[str, str], key: str) -> time:
     try:
         return time.fromisoformat(value)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректний час.") from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректний час."
+        ) from exc
 
 
 def get_customer_by_session(request: Request, session: Session) -> Customer | None:
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    if not token:
+    token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME))
+    if not token or len(token) > 128:
         return None
 
     token_hash = hash_session_token(token)
@@ -518,7 +543,14 @@ def get_customer_by_session(request: Request, session: Session) -> Customer | No
     return session.get(Customer, customer_session.customer_id)
 
 
-def issue_customer_session(customer: Customer, session: Session, response: RedirectResponse) -> None:
+def issue_customer_session(
+    customer: Customer,
+    session: Session,
+    response: RedirectResponse,
+    request: Request,
+) -> None:
+    clear_customer_session(request, session, response)
+    session.execute(delete(CustomerSession).where(CustomerSession.expires_at < utc_now()))
     token = secrets.token_urlsafe(32)
     session.add(
         CustomerSession(
@@ -529,7 +561,7 @@ def issue_customer_session(customer: Customer, session: Session, response: Redir
     )
     session.commit()
     response.set_cookie(
-        SESSION_COOKIE_NAME,
+        cookie_name(SESSION_COOKIE_NAME),
         token,
         max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
         httponly=True,
@@ -539,7 +571,7 @@ def issue_customer_session(customer: Customer, session: Session, response: Redir
 
 
 def clear_customer_session(request: Request, session: Session, response: RedirectResponse) -> None:
-    token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME))
     if token:
         customer_session = session.exec(
             select(CustomerSession).where(CustomerSession.token_hash == hash_session_token(token))
@@ -548,23 +580,37 @@ def clear_customer_session(request: Request, session: Session, response: Redirec
             session.delete(customer_session)
             session.commit()
 
-    response.delete_cookie(SESSION_COOKIE_NAME)
+    response.delete_cookie(
+        cookie_name(SESSION_COOKIE_NAME),
+        secure=secure_cookie_enabled(),
+        httponly=True,
+        samesite="lax",
+    )
 
 
 def upsert_phone_customer(session: Session, phone: str, name: str = "") -> Customer:
     customer = session.exec(select(Customer).where(Customer.phone == phone)).first()
+    if customer is not None and customer.google_sub and not customer.phone_verified:
+        customer.phone = None
+        session.add(customer)
+        session.flush()
+        customer = None
     if customer is None:
         customer = Customer(phone=phone, name=name)
     elif name and not customer.name:
         customer.name = name
 
     if not customer.name:
-        appointments = session.exec(select(Appointment).order_by(Appointment.created_at.desc())).all()
-        for appointment in appointments:
-            if normalize_phone(appointment.phone) == phone and appointment.name:
-                customer.name = appointment.name
-                break
+        appointment = session.exec(
+            select(Appointment)
+            .where(Appointment.customer_id.is_(None), Appointment.phone_normalized == phone)
+            .order_by(Appointment.created_at.desc())
+            .limit(1)
+        ).first()
+        if appointment is not None:
+            customer.name = appointment.name
 
+    customer.phone_verified = True
     customer.last_login_at = utc_now()
     customer.updated_at = utc_now()
     session.add(customer)
@@ -576,22 +622,40 @@ def upsert_phone_customer(session: Session, phone: str, name: str = "") -> Custo
 def upsert_google_customer(session: Session, profile: dict[str, Any]) -> Customer:
     google_sub = str(profile.get("sub") or "")
     email = normalize_email(str(profile.get("email") or ""))
-    name = str(profile.get("name") or "").strip()
-    if not google_sub:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google не повернув профіль.")
+    name = str(profile.get("name") or "").strip()[:160]
+    if (
+        not google_sub
+        or len(google_sub) > 255
+        or not email
+        or len(email) > 255
+        or profile.get("email_verified") is not True
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Google не повернув профіль."
+        )
 
     customer = session.exec(select(Customer).where(Customer.google_sub == google_sub)).first()
-    if customer is None and email is not None:
-        customer = session.exec(select(Customer).where(Customer.email == email)).first()
+    email_customer = session.exec(select(Customer).where(Customer.email == email)).first()
+    if customer is None and email_customer is not None and email_customer.email_verified:
+        if email_customer.google_sub and email_customer.google_sub != google_sub:
+            raise HTTPException(409, "Не вдалося підтвердити обліковий запис.")
+        customer = email_customer
+    if email_customer is not None and email_customer is not customer:
+        if email_customer.email_verified:
+            raise HTTPException(409, "Не вдалося підтвердити обліковий запис.")
+        email_customer.email = None
+        session.add(email_customer)
+        session.flush()
 
     if customer is None:
         customer = Customer(google_sub=google_sub, email=email, name=name)
     else:
         customer.google_sub = customer.google_sub or google_sub
-        customer.email = customer.email or email
+        customer.email = email
         if name:
             customer.name = name
 
+    customer.email_verified = True
     customer.last_login_at = utc_now()
     customer.updated_at = utc_now()
     session.add(customer)
@@ -600,25 +664,28 @@ def upsert_google_customer(session: Session, profile: dict[str, Any]) -> Custome
     return customer
 
 
-def customer_appointments(customer: Customer, session: Session) -> list[Appointment]:
-    appointments = list(
-        session.exec(select(Appointment).order_by(Appointment.created_at.desc())).all()
+def customer_appointment_filter(customer: Customer) -> Any:
+    verified_contacts = []
+    if customer.phone_verified and customer.phone:
+        verified_contacts.append(Appointment.phone_normalized == customer.phone)
+    if customer.email_verified and customer.email:
+        verified_contacts.append(Appointment.email_normalized == customer.email)
+    owned = Appointment.customer_id == customer.id
+    if verified_contacts:
+        return or_(owned, and_(Appointment.customer_id.is_(None), or_(*verified_contacts)))
+    return owned
+
+
+def customer_appointments(customer: Customer, session: Session, page: int = 1) -> list[Appointment]:
+    return list(
+        session.exec(
+            select(Appointment)
+            .where(customer_appointment_filter(customer))
+            .order_by(Appointment.created_at.desc(), Appointment.id.desc())
+            .offset((page - 1) * 50)
+            .limit(50)
+        ).all()
     )
-    customer_phone = normalize_phone(customer.phone)
-    customer_email = normalize_email(customer.email)
-    matched: list[Appointment] = []
-
-    for appointment in appointments:
-        appointment_phone = normalize_phone(appointment.phone)
-        appointment_email = normalize_email(appointment.email)
-        if (
-            appointment.customer_id == customer.id
-            or (customer_phone and appointment_phone == customer_phone)
-            or (customer_email and appointment_email == customer_email)
-        ):
-            matched.append(appointment)
-
-    return matched
 
 
 def cabinet_context(
@@ -630,10 +697,16 @@ def cabinet_context(
     auth_error: str = "",
     pending_phone: str = "",
     phone_code_hint: str = "",
+    page: int = 1,
 ) -> dict[str, Any]:
     appointment_rows = []
+    total = (
+        count_rows(session, Appointment, customer_appointment_filter(customer)) if customer else 0
+    )
+    pages = max(1, (total + 49) // 50)
+    page = min(page, pages)
     if customer is not None:
-        appointment_rows = build_appointment_rows(customer_appointments(customer, session))
+        appointment_rows = build_appointment_rows(customer_appointments(customer, session, page))
 
     return {
         "request": request,
@@ -648,57 +721,56 @@ def cabinet_context(
         "auth_error": auth_error,
         "pending_phone": pending_phone,
         "phone_code_hint": phone_code_hint,
-        "show_debug_phone_code": settings.environment.lower() != "production",
+        "show_debug_phone_code": settings.phone_auth_debug and settings.environment != "production",
+        "phone_enabled": settings.phone_auth_debug and settings.environment != "production",
+        "pagination_path": "/cabinet",
+        "page": page,
+        "pages": pages,
     }
 
 
 def google_redirect_uri(request: Request) -> str:
-    return settings.google_redirect_uri or str(request.url_for("google_callback"))
+    if settings.google_redirect_uri:
+        return settings.google_redirect_uri
+    if settings.public_base_url:
+        return f"{settings.public_base_url}/auth/google/callback"
+    return str(request.url_for("google_callback"))
 
 
 def exchange_google_code(request: Request, code: str) -> dict[str, Any]:
-    token_payload = urlencode(
-        {
-            "code": code,
-            "client_id": settings.google_client_id or "",
-            "client_secret": settings.google_client_secret or "",
-            "redirect_uri": google_redirect_uri(request),
-            "grant_type": "authorization_code",
-        }
-    ).encode("utf-8")
-    token_request = urllib.request.Request(
-        "https://oauth2.googleapis.com/token",
-        data=token_payload,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
+    token_payload = {
+        "code": code,
+        "client_id": settings.google_client_id or "",
+        "client_secret": (
+            settings.google_client_secret.get_secret_value()
+            if settings.google_client_secret
+            else ""
+        ),
+        "redirect_uri": google_redirect_uri(request),
+        "grant_type": "authorization_code",
+        "code_verifier": request.cookies.get(cookie_name(OAUTH_VERIFIER_COOKIE_NAME), ""),
+    }
     try:
-        with urllib.request.urlopen(token_request, timeout=10) as response:
-            token_data = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        with httpx.Client(timeout=10, follow_redirects=False) as client:
+            response = client.post("https://oauth2.googleapis.com/token", data=token_payload)
+            response.raise_for_status()
+            token_data = response.json()
+            access_token = token_data.get("access_token")
+            if not isinstance(access_token, str) or not access_token:
+                raise ValueError("Missing access token")
+            response = client.get(
+                "https://openidconnect.googleapis.com/v1/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            response.raise_for_status()
+            profile = response.json()
+            if not isinstance(profile, dict):
+                raise TypeError("Invalid profile")
+            return profile
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Не вдалося отримати Google токен.",
-        ) from exc
-
-    access_token = token_data.get("access_token")
-    if not access_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Google не повернув access token.",
-        )
-
-    user_request = urllib.request.Request(
-        "https://openidconnect.googleapis.com/v1/userinfo",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    try:
-        with urllib.request.urlopen(user_request, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Не вдалося отримати Google профіль.",
+            detail="Не вдалося увійти через Google. Спробуйте ще раз.",
         ) from exc
 
 
@@ -723,10 +795,14 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
 
 
 @app.get("/cabinet", response_class=HTMLResponse)
-def cabinet(request: Request, session: SessionDep) -> HTMLResponse:
+def cabinet(
+    request: Request,
+    session: SessionDep,
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
+) -> HTMLResponse:
     auth_error = ""
     if request.query_params.get("auth_error") == "google_not_configured":
-        auth_error = "Google-вхід ще не налаштований. Додайте OAuth ключі в конфігурацію."
+        auth_error = "Google-вхід тимчасово недоступний. Спробуйте пізніше."
     elif request.query_params.get("auth_error") == "google_failed":
         auth_error = "Не вдалося увійти через Google. Спробуйте ще раз."
 
@@ -734,13 +810,19 @@ def cabinet(request: Request, session: SessionDep) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "cabinet.html",
-        cabinet_context(request, session, customer, auth_error=auth_error),
+        cabinet_context(request, session, customer, auth_error=auth_error, page=page),
     )
 
 
 @app.post("/auth/phone/request", response_class=HTMLResponse)
-async def request_phone_code(request: Request, session: SessionDep) -> HTMLResponse:
-    form_data = await read_form_data(request)
+def request_phone_code(
+    request: Request,
+    session: SessionDep,
+    form_data: FormDataDep,
+) -> HTMLResponse:
+    if not settings.phone_auth_debug or settings.environment == "production":
+        raise HTTPException(503, "Вхід телефоном тимчасово недоступний.")
+    rate_limit(session, request, "phone-request-ip", 10, 600)
     raw_phone = form_data.get("phone", "")
     phone = normalize_phone(raw_phone)
     if phone is None:
@@ -757,6 +839,18 @@ async def request_phone_code(request: Request, session: SessionDep) -> HTMLRespo
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
+    rate_limit(session, request, "phone-request-number", 1, 60, identifier=phone)
+    rate_limit(session, request, "phone-request-hour", 5, 3600, identifier=phone)
+    now = utc_now()
+    session.execute(
+        update(PhoneAuthCode)
+        .where(
+            PhoneAuthCode.phone == phone,
+            PhoneAuthCode.consumed_at.is_(None),
+        )
+        .values(consumed_at=now)
+    )
+    session.execute(delete(PhoneAuthCode).where(PhoneAuthCode.expires_at < now))
     code = f"{secrets.randbelow(1_000_000):06d}"
     session.add(
         PhoneAuthCode(
@@ -775,17 +869,23 @@ async def request_phone_code(request: Request, session: SessionDep) -> HTMLRespo
             None,
             auth_message="Код підтвердження створено. Введіть його нижче.",
             pending_phone=phone,
-            phone_code_hint=code if settings.environment.lower() != "production" else "",
+            phone_code_hint=code,
         ),
     )
 
 
 @app.post("/auth/phone/verify", response_model=None)
-async def verify_phone_code(request: Request, session: SessionDep) -> RedirectResponse | HTMLResponse:
-    form_data = await read_form_data(request)
+def verify_phone_code(
+    request: Request,
+    session: SessionDep,
+    form_data: FormDataDep,
+) -> RedirectResponse | HTMLResponse:
+    if not settings.phone_auth_debug or settings.environment == "production":
+        raise HTTPException(503, "Вхід телефоном тимчасово недоступний.")
+    rate_limit(session, request, "phone-verify-ip", 30, 600)
     phone = normalize_phone(form_data.get("phone", ""))
-    code = re.sub(r"\D", "", form_data.get("code", ""))
-    if phone is None or len(code) != 6:
+    code = form_data.get("code", "").strip()
+    if phone is None or not re.fullmatch(r"[0-9]{6}", code):
         return templates.TemplateResponse(
             request,
             "cabinet.html",
@@ -802,9 +902,8 @@ async def verify_phone_code(request: Request, session: SessionDep) -> RedirectRe
     auth_code = session.exec(
         select(PhoneAuthCode)
         .where(PhoneAuthCode.phone == phone)
-        .where(PhoneAuthCode.code_hash == hash_phone_code(phone, code))
         .where(PhoneAuthCode.consumed_at.is_(None))
-        .order_by(PhoneAuthCode.created_at.desc())
+        .order_by(PhoneAuthCode.created_at.desc(), PhoneAuthCode.id.desc())
     ).first()
     if (
         auth_code is None
@@ -824,11 +923,39 @@ async def verify_phone_code(request: Request, session: SessionDep) -> RedirectRe
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    auth_code.consumed_at = utc_now()
-    session.add(auth_code)
+    correct = secrets.compare_digest(auth_code.code_hash, hash_phone_code(phone, code))
+    updated = session.execute(
+        update(PhoneAuthCode)
+        .where(
+            PhoneAuthCode.id == auth_code.id,
+            PhoneAuthCode.consumed_at.is_(None),
+            PhoneAuthCode.attempts < PHONE_CODE_MAX_ATTEMPTS,
+            PhoneAuthCode.expires_at > utc_now(),
+        )
+        .values(
+            attempts=PhoneAuthCode.attempts + 1,
+            consumed_at=utc_now() if correct else None,
+        )
+        .returning(PhoneAuthCode.id)
+        .execution_options(synchronize_session=False)
+    ).scalar_one_or_none()
+    session.commit()
+    if not correct or updated is None:
+        return templates.TemplateResponse(
+            request,
+            "cabinet.html",
+            cabinet_context(
+                request,
+                session,
+                None,
+                auth_error="Код недійсний або вже протермінований.",
+                pending_phone=phone,
+            ),
+            status_code=400,
+        )
     customer = upsert_phone_customer(session, phone)
     response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
-    issue_customer_session(customer, session, response)
+    issue_customer_session(customer, session, response, request)
     return response
 
 
@@ -841,6 +968,8 @@ def google_login(request: Request) -> RedirectResponse:
         )
 
     state = secrets.token_urlsafe(24)
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=")
     params = urlencode(
         {
             "client_id": settings.google_client_id,
@@ -848,14 +977,24 @@ def google_login(request: Request) -> RedirectResponse:
             "response_type": "code",
             "scope": "openid email profile",
             "state": state,
+            "code_challenge": challenge.decode(),
+            "code_challenge_method": "S256",
             "access_type": "online",
             "prompt": "select_account",
         }
     )
     response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
     response.set_cookie(
-        OAUTH_STATE_COOKIE_NAME,
+        cookie_name(OAUTH_STATE_COOKIE_NAME),
         state,
+        max_age=10 * 60,
+        httponly=True,
+        secure=secure_cookie_enabled(),
+        samesite="lax",
+    )
+    response.set_cookie(
+        cookie_name(OAUTH_VERIFIER_COOKIE_NAME),
+        verifier,
         max_age=10 * 60,
         httponly=True,
         secure=secure_cookie_enabled(),
@@ -867,19 +1006,32 @@ def google_login(request: Request) -> RedirectResponse:
 @app.get("/auth/google/callback", name="google_callback")
 def google_callback(request: Request, session: SessionDep) -> RedirectResponse:
     state = request.query_params.get("state", "")
-    expected_state = request.cookies.get(OAUTH_STATE_COOKIE_NAME, "")
+    expected_state = request.cookies.get(cookie_name(OAUTH_STATE_COOKIE_NAME), "")
+    verifier = request.cookies.get(cookie_name(OAUTH_VERIFIER_COOKIE_NAME), "")
     code = request.query_params.get("code", "")
-    if not state or state != expected_state or not code:
-        return RedirectResponse(
-            url="/cabinet?auth_error=google_failed",
-            status_code=status.HTTP_303_SEE_OTHER,
+    response = RedirectResponse("/cabinet?auth_error=google_failed", status_code=303)
+    if (
+        google_auth_enabled()
+        and state
+        and code
+        and 43 <= len(verifier) <= 128
+        and secrets.compare_digest(state.encode(), expected_state.encode())
+    ):
+        try:
+            profile = exchange_google_code(request, code)
+            customer = upsert_google_customer(session, profile)
+            response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
+            issue_customer_session(customer, session, response, request)
+        except (HTTPException, IntegrityError):
+            session.rollback()
+            response = RedirectResponse("/cabinet?auth_error=google_failed", status_code=303)
+    for name in (OAUTH_STATE_COOKIE_NAME, OAUTH_VERIFIER_COOKIE_NAME):
+        response.delete_cookie(
+            cookie_name(name),
+            secure=secure_cookie_enabled(),
+            httponly=True,
+            samesite="lax",
         )
-
-    profile = exchange_google_code(request, code)
-    customer = upsert_google_customer(session, profile)
-    response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
-    response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
-    issue_customer_session(customer, session, response)
     return response
 
 
@@ -890,17 +1042,21 @@ def logout(request: Request, session: SessionDep) -> RedirectResponse:
     return response
 
 
-@app.get("/admin", response_class=HTMLResponse)
+@admin_router.get("", response_class=HTMLResponse)
 def admin(request: Request, session: SessionDep) -> HTMLResponse:
     return templates.TemplateResponse(request, "admin.html", admin_context(session, request))
 
 
-@app.get("/admin/appointments", response_class=HTMLResponse)
-def admin_appointments(request: Request, session: SessionDep) -> HTMLResponse:
+@admin_router.get("/appointments", response_class=HTMLResponse)
+def admin_appointments(
+    request: Request,
+    session: SessionDep,
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
+) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "admin_appointments.html",
-        appointments_context(session, request),
+        appointments_context(session, request, page),
     )
 
 
@@ -941,23 +1097,54 @@ def list_time_slots(session: SessionDep) -> list[AvailableTimeSlot]:
     return get_active_time_slots(session)
 
 
+@app.get("/api/availability", response_model=list[AvailableTimeSlotRead])
+def available_time_slots(preferred_date: date, session: SessionDep) -> list[AvailableTimeSlot]:
+    today, window_end = booking_window()
+    if not today <= preferred_date <= window_end:
+        raise HTTPException(400, "Оберіть дату в межах доступного періоду.")
+    if session.exec(select(ClosedDate).where(ClosedDate.closed_on == preferred_date)).first():
+        return []
+    ensure_seed_data(session)
+    booked = select(Appointment.preferred_time).where(
+        Appointment.preferred_date == preferred_date,
+        Appointment.status != AppointmentStatus.canceled,
+        Appointment.preferred_time.is_not(None),
+    )
+    statement = (
+        select(AvailableTimeSlot)
+        .where(
+            AvailableTimeSlot.is_active,
+            AvailableTimeSlot.start_time.not_in(booked),
+        )
+        .order_by(AvailableTimeSlot.sort_order, AvailableTimeSlot.id)
+    )
+    if preferred_date == today:
+        statement = statement.where(AvailableTimeSlot.start_time > kyiv_now().time())
+    return list(session.exec(statement).all())
+
+
 @app.get("/api/closed-dates", response_model=list[ClosedDateRead])
 def list_closed_dates(session: SessionDep) -> list[ClosedDate]:
-    return list(session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all())
+    return list(
+        session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
+    )
 
 
 @app.get("/api/products", response_model=list[ProductRead])
 def list_products(session: SessionDep) -> list[Product]:
     return list(
         session.exec(
-            select(Product)
-            .where(Product.is_active)
-            .order_by(Product.sort_order, Product.id)
+            select(Product).where(Product.is_active).order_by(Product.sort_order, Product.id)
         ).all()
     )
 
 
-@app.post("/api/products", response_model=ProductRead, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/api/products",
+    response_model=ProductRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
 def create_product(payload: ProductCreate, session: SessionDep) -> Product:
     product = Product.model_validate(payload)
     session.add(product)
@@ -967,7 +1154,10 @@ def create_product(payload: ProductCreate, session: SessionDep) -> Product:
 
 
 @app.post("/api/appointments", response_model=AppointmentRead, status_code=status.HTTP_201_CREATED)
-def create_appointment(request: Request, payload: AppointmentCreate, session: SessionDep) -> Appointment:
+def create_appointment(
+    request: Request, payload: AppointmentCreate, session: SessionDep
+) -> Appointment:
+    rate_limit(session, request, "appointment-create", 10, 3600)
     ensure_seed_data(session)
 
     service = session.exec(
@@ -1017,15 +1207,13 @@ def create_appointment(request: Request, payload: AppointmentCreate, session: Se
             )
 
     appointment = Appointment.model_validate(payload)
+    if payload.preferred_date == current_date() and payload.preferred_time <= kyiv_now().time():
+        raise HTTPException(400, "Оберіть майбутній час прийому.")
+    appointment.phone_normalized = normalize_phone(payload.phone)
+    appointment.email_normalized = normalize_email(payload.email)
     customer = get_customer_by_session(request, session)
     if customer is not None:
         appointment.customer_id = customer.id
-        appointment_phone = normalize_phone(payload.phone)
-        appointment_email = normalize_email(payload.email)
-        if appointment_phone and not customer.phone:
-            customer.phone = appointment_phone
-        if appointment_email and not customer.email:
-            customer.email = appointment_email
         if payload.name and not customer.name:
             customer.name = payload.name
         customer.updated_at = utc_now()
@@ -1043,9 +1231,11 @@ def create_appointment(request: Request, payload: AppointmentCreate, session: Se
     status_code=status.HTTP_201_CREATED,
 )
 def record_analytics_event(
+    request: Request,
     payload: AnalyticsEventCreate,
     session: SessionDep,
 ) -> AnalyticsEvent:
+    rate_limit(session, request, "analytics", 60, 60)
     event = AnalyticsEvent.model_validate(payload)
     session.add(event)
     session.commit()
@@ -1053,17 +1243,17 @@ def record_analytics_event(
     return event
 
 
-@app.post("/admin/appointments/{appointment_id}/status")
-async def update_appointment_status(
+@admin_router.post("/appointments/{appointment_id}/status")
+def update_appointment_status(
     appointment_id: int,
     request: Request,
     session: SessionDep,
+    form_data: FormDataDep,
 ) -> RedirectResponse:
     appointment = session.get(Appointment, appointment_id)
     if appointment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Запис не знайдено.")
 
-    form_data = await read_form_data(request)
     try:
         appointment.status = AppointmentStatus(form_data.get("status", ""))
     except ValueError as exc:
@@ -1078,130 +1268,159 @@ async def update_appointment_status(
     return RedirectResponse(url=admin_return_url(form_data), status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/admin/services")
-async def create_service(request: Request, session: SessionDep) -> RedirectResponse:
-    form_data = await read_form_data(request)
-    service = BookingService(
-        name=form_data.get("name", "").strip(),
-        duration_minutes=form_int(form_data, "duration_minutes", 30),
-        price_uah=form_int(form_data, "price_uah", 0),
-        sort_order=form_int(form_data, "sort_order", 0),
-        is_active=form_data.get("is_active") == "on",
+@admin_router.post("/services")
+def create_service(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+    payload = validated_form(
+        BookingServiceCreate,
+        {
+            "name": form_data.get("name", ""),
+            "duration_minutes": form_int(form_data, "duration_minutes", 30),
+            "price_uah": form_int(form_data, "price_uah", 0),
+            "sort_order": form_int(form_data, "sort_order", 0),
+            "is_active": form_data.get("is_active") == "on",
+        },
     )
-    if not service.name:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Вкажіть назву послуги.")
+    service = BookingService.model_validate(payload)
 
     session.add(service)
     session.commit()
     return RedirectResponse(url="/admin#services", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/admin/reorder/services")
+@admin_router.post("/reorder/services")
 def reorder_services(payload: ReorderPayload, session: SessionDep) -> dict[str, str]:
     apply_sort_order(session, BookingService, payload.ids)
     return {"status": "ok"}
 
 
-@app.post("/admin/services/{service_id}")
-async def update_service(
+@admin_router.post("/services/{service_id}")
+def update_service(
     service_id: int,
-    request: Request,
     session: SessionDep,
+    form_data: FormDataDep,
 ) -> RedirectResponse:
     service = session.get(BookingService, service_id)
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Послугу не знайдено.")
 
-    form_data = await read_form_data(request)
-    service.name = form_data.get("name", "").strip() or service.name
-    service.duration_minutes = form_int(form_data, "duration_minutes", service.duration_minutes)
-    service.price_uah = form_int(form_data, "price_uah", service.price_uah)
-    service.sort_order = form_int(form_data, "sort_order", service.sort_order)
-    service.is_active = form_data.get("is_active") == "on"
+    payload = validated_form(
+        BookingServiceCreate,
+        {
+            "name": form_data.get("name", service.name),
+            "duration_minutes": form_int(form_data, "duration_minutes", service.duration_minutes),
+            "price_uah": form_int(form_data, "price_uah", service.price_uah),
+            "sort_order": form_int(form_data, "sort_order", service.sort_order),
+            "is_active": form_data.get("is_active") == "on",
+        },
+    )
+    service.sqlmodel_update(payload.model_dump())
     service.updated_at = utc_now()
     session.add(service)
     session.commit()
     return RedirectResponse(url="/admin#services", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/admin/time-slots")
-async def create_time_slot(request: Request, session: SessionDep) -> RedirectResponse:
-    form_data = await read_form_data(request)
-    slot = AvailableTimeSlot(
-        start_time=form_time(form_data, "start_time"),
-        end_time=form_time(form_data, "end_time"),
-        sort_order=form_int(form_data, "sort_order", 0),
-        is_active=form_data.get("is_active") == "on",
+@admin_router.post("/time-slots")
+def create_time_slot(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+    payload = validated_form(
+        AvailableTimeSlotCreate,
+        {
+            "start_time": form_time(form_data, "start_time"),
+            "end_time": form_time(form_data, "end_time"),
+            "sort_order": form_int(form_data, "sort_order", 0),
+            "is_active": form_data.get("is_active") == "on",
+        },
     )
+    slot = AvailableTimeSlot.model_validate(payload)
     session.add(slot)
     session.commit()
     return RedirectResponse(url="/admin#time-slots", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/admin/reorder/time-slots")
+@admin_router.post("/reorder/time-slots")
 def reorder_time_slots(payload: ReorderPayload, session: SessionDep) -> dict[str, str]:
     apply_sort_order(session, AvailableTimeSlot, payload.ids)
     return {"status": "ok"}
 
 
-@app.post("/admin/time-slots/{slot_id}")
-async def update_time_slot(
+@admin_router.post("/time-slots/{slot_id}")
+def update_time_slot(
     slot_id: int,
-    request: Request,
     session: SessionDep,
+    form_data: FormDataDep,
 ) -> RedirectResponse:
     slot = session.get(AvailableTimeSlot, slot_id)
     if slot is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Годину не знайдено.")
 
-    form_data = await read_form_data(request)
-    slot.start_time = form_time(form_data, "start_time")
-    slot.end_time = form_time(form_data, "end_time")
-    slot.sort_order = form_int(form_data, "sort_order", slot.sort_order)
-    slot.is_active = form_data.get("is_active") == "on"
+    payload = validated_form(
+        AvailableTimeSlotCreate,
+        {
+            "start_time": form_time(form_data, "start_time"),
+            "end_time": form_time(form_data, "end_time"),
+            "sort_order": form_int(form_data, "sort_order", slot.sort_order),
+            "is_active": form_data.get("is_active") == "on",
+        },
+    )
+    slot.sqlmodel_update(payload.model_dump())
     slot.updated_at = utc_now()
     session.add(slot)
     session.commit()
     return RedirectResponse(url="/admin#time-slots", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/admin/closed-dates")
-async def create_closed_date(request: Request, session: SessionDep) -> RedirectResponse:
-    form_data = await read_form_data(request)
-    closed_date = ClosedDate(
-        closed_on=form_date(form_data, "closed_on"),
-        reason=form_data.get("reason", "").strip(),
+@admin_router.post("/closed-dates")
+def create_closed_date(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+    payload = validated_form(
+        ClosedDateCreate,
+        {
+            "closed_on": form_date(form_data, "closed_on"),
+            "reason": form_data.get("reason", "").strip(),
+        },
     )
+    closed_date = ClosedDate.model_validate(payload)
     session.add(closed_date)
     session.commit()
     return RedirectResponse(url="/admin#closed-dates", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/admin/closed-dates/{closed_date_id}")
-async def update_closed_date(
+@admin_router.post("/closed-dates/{closed_date_id}")
+def update_closed_date(
     closed_date_id: int,
-    request: Request,
     session: SessionDep,
+    form_data: FormDataDep,
 ) -> RedirectResponse:
     closed_date = session.get(ClosedDate, closed_date_id)
     if closed_date is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Закриту дату не знайдено.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Закриту дату не знайдено."
+        )
 
-    form_data = await read_form_data(request)
-    closed_date.closed_on = form_date(form_data, "closed_on")
-    closed_date.reason = form_data.get("reason", "").strip()
+    payload = validated_form(
+        ClosedDateCreate,
+        {
+            "closed_on": form_date(form_data, "closed_on"),
+            "reason": form_data.get("reason", "").strip(),
+        },
+    )
+    closed_date.sqlmodel_update(payload.model_dump())
     closed_date.updated_at = utc_now()
     session.add(closed_date)
     session.commit()
     return RedirectResponse(url="/admin#closed-dates", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/admin/closed-dates/{closed_date_id}/delete")
+@admin_router.post("/closed-dates/{closed_date_id}/delete")
 def delete_closed_date(closed_date_id: int, session: SessionDep) -> RedirectResponse:
     closed_date = session.get(ClosedDate, closed_date_id)
     if closed_date is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Закриту дату не знайдено.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Закриту дату не знайдено."
+        )
 
     session.delete(closed_date)
     session.commit()
     return RedirectResponse(url="/admin#closed-dates", status_code=status.HTTP_303_SEE_OTHER)
+
+
+app.include_router(admin_router)

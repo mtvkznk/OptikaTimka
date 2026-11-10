@@ -2,11 +2,12 @@
 <html lang="uk">
   <head>
     <meta charset="UTF-8" />
+    <meta name="csrf-token" content="{{ request.state.csrf_token }}" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Список всіх записів." />
     <title>Всі записи</title>
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
   </head>
   <body class="admin-body">
     <main class="admin-page">
@@ -30,7 +31,7 @@
             <a class="back-link" href="/admin">← Назад</a>
             <h1>Всі записи</h1>
           </div>
-          <span class="records-count">{{ appointment_rows|length }} записів</span>
+          <span class="records-count">{{ total_appointments }} записів</span>
         </div>
 
         <div class="table-scroll">
@@ -66,6 +67,7 @@
                     action="/admin/appointments/{{ row.appointment.id }}/status"
                     method="post"
                   >
+                {% include "csrf_field.html" %}
                     <input type="hidden" name="return_to" value="/admin/appointments" />
                     <select name="status" aria-label="Статус запису">
                       {% for option in status_options %}
@@ -91,6 +93,7 @@
             </tbody>
           </table>
         </div>
+        {% include "pagination.html" %}
       </section>
     </main>
   </body>

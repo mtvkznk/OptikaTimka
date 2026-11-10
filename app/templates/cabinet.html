@@ -2,14 +2,15 @@
 <html lang="uk">
   <head>
     <meta charset="UTF-8" />
+    <meta name="csrf-token" content="{{ request.state.csrf_token }}" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
       content="Особистий кабінет клієнта Optika Timka для перегляду записів."
     />
     <title>Особистий кабінет | {{ app_name }}</title>
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
   </head>
   <body>
     <main class="booking-page cabinet-page">
@@ -40,6 +41,7 @@
               </p>
             </div>
             <form action="/auth/logout" method="post">
+                {% include "csrf_field.html" %}
               <button class="secondary-button" type="submit">Вийти</button>
             </form>
           </div>
@@ -74,6 +76,7 @@
               </tbody>
             </table>
           </div>
+          {% include "pagination.html" %}
         </section>
         {% else %}
         <section class="booking-card cabinet-login-card" aria-label="Вхід у кабінет">
@@ -87,9 +90,11 @@
           <div class="cabinet-login-grid">
             <article class="cabinet-login-panel">
               <h2>Вхід телефоном</h2>
+              {% if phone_enabled %}
               <p>Отримайте одноразовий 6-значний код і введіть його нижче.</p>
 
               <form class="cabinet-form" action="/auth/phone/request" method="post">
+                {% include "csrf_field.html" %}
                 <label class="field">
                   <span>Телефон</span>
                   <input
@@ -105,6 +110,7 @@
               </form>
 
               <form class="cabinet-form" action="/auth/phone/verify" method="post">
+                {% include "csrf_field.html" %}
                 <input type="hidden" name="phone" value="{{ pending_phone }}" />
                 <label class="field">
                   <span>Код підтвердження</span>
@@ -123,6 +129,9 @@
 
               {% if phone_code_hint and show_debug_phone_code %}
               <p class="debug-code">Тестовий код: <strong>{{ phone_code_hint }}</strong></p>
+              {% endif %}
+              {% else %}
+              <p>Вхід телефоном тимчасово недоступний.</p>
               {% endif %}
             </article>
 

@@ -2,14 +2,15 @@
 <html lang="uk">
   <head>
     <meta charset="UTF-8" />
+    <meta name="csrf-token" content="{{ request.state.csrf_token }}" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
       content="Адмін-панель для керування записами, послугами та робочими годинами."
     />
     <title>Адмінка</title>
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}?v={{ asset_version }}" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
   </head>
   <body class="admin-body">
     <main class="admin-page">
@@ -114,6 +115,7 @@
                       action="/admin/appointments/{{ row.appointment.id }}/status"
                       method="post"
                     >
+                {% include "csrf_field.html" %}
                       <input type="hidden" name="return_to" value="/admin#appointments" />
                       <select name="status" aria-label="Статус запису">
                         {% for option in status_options %}
@@ -160,6 +162,7 @@
               data-reorder-item
               data-id="{{ slot.id }}"
             >
+                {% include "csrf_field.html" %}
               <button
                 class="drag-handle"
                 type="button"
@@ -194,6 +197,7 @@
           <p class="reorder-status" role="status" data-reorder-status-for="time-slots"></p>
 
           <form class="add-form" action="/admin/time-slots" method="post">
+                {% include "csrf_field.html" %}
             <input type="time" name="start_time" required aria-label="Початок" />
             <input type="time" name="end_time" required aria-label="Кінець" />
             <input
@@ -225,6 +229,7 @@
               data-reorder-item
               data-id="{{ service.id }}"
             >
+                {% include "csrf_field.html" %}
               <button
                 class="drag-handle"
                 type="button"
@@ -271,6 +276,7 @@
           <p class="reorder-status" role="status" data-reorder-status-for="services"></p>
 
           <form class="add-form add-form-service" action="/admin/services" method="post">
+                {% include "csrf_field.html" %}
             <input name="name" placeholder="Нова послуга" required />
             <input type="number" name="duration_minutes" min="5" step="5" value="30" />
             <input type="number" name="price_uah" min="0" step="10" placeholder="Ціна" />
@@ -289,6 +295,7 @@
             {% for item in closed_dates %}
             <div class="closed-row">
               <form action="/admin/closed-dates/{{ item.id }}" method="post">
+                {% include "csrf_field.html" %}
                 <span class="row-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" focusable="false">
                     <path
@@ -301,6 +308,7 @@
                 <button class="icon-save" type="submit" aria-label="Зберегти дату">✓</button>
               </form>
               <form action="/admin/closed-dates/{{ item.id }}/delete" method="post">
+                {% include "csrf_field.html" %}
                 <button class="icon-delete" type="submit" aria-label="Видалити дату">×</button>
               </form>
             </div>
@@ -310,6 +318,7 @@
           </div>
 
           <form class="add-form add-form-closed" action="/admin/closed-dates" method="post">
+                {% include "csrf_field.html" %}
             <input type="date" name="closed_on" required />
             <input name="reason" placeholder="Причина" />
             <button type="submit">Додати</button>
@@ -317,6 +326,6 @@
         </article>
       </section>
     </main>
-    <script src="{{ url_for('static', path='/js/admin.js') }}"></script>
+    <script src="/static/js/admin.js"></script>
   </body>
 </html>

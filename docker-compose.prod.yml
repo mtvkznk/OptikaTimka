@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: optika_timka
       POSTGRES_USER: optika_timka
-      POSTGRES_PASSWORD: optika_timka
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the production env file}
     volumes:
       - optika_timka_prod_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,14 +21,23 @@ services:
     container_name: optika_timka_prod_app
     restart: unless-stopped
     env_file:
-      - path: C:/Deploy/OptikaTimka/prod.env
-        required: false
+      - path: ${OPTIKA_ENV_FILE:-C:/Deploy/OptikaTimka/prod.env}
+        required: true
     environment:
       APP_NAME: Optika Timka
       ENVIRONMENT: production
-      DATABASE_URL: postgresql+psycopg://optika_timka:optika_timka@db:5432/optika_timka
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in the production env file}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     ports:
-      - "8080:8000"
+      - "127.0.0.1:8080:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
     depends_on:
       db:
         condition: service_healthy
