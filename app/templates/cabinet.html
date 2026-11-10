@@ -96,12 +96,14 @@
               <form class="cabinet-form" action="/auth/phone/request" method="post">
                 {% include "csrf_field.html" %}
                 <label class="field">
-                  <span>Телефон</span>
+                  <span>Телефон із кодом країни</span>
                   <input
                     name="phone"
                     type="tel"
                     inputmode="tel"
                     autocomplete="tel"
+                    minlength="8"
+                    maxlength="40"
                     value="{{ pending_phone }}"
                     required
                   />

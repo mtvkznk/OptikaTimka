@@ -176,14 +176,15 @@
           </label>
 
           <label class="field field-wide">
-            <span>Телефон</span>
+            <span>Телефон із кодом країни</span>
             <input
               name="phone"
               type="tel"
               inputmode="tel"
               autocomplete="tel"
-              pattern="\+?[0-9][0-9\s() -]{5,38}"
-              title="Введіть номер у міжнародному або локальному форматі"
+              minlength="8"
+              maxlength="40"
+              title="Введіть номер із кодом країни, від 8 до 15 цифр"
               required
             />
           </label>
