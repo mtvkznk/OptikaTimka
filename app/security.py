@@ -72,12 +72,14 @@ def google_session(request: Request) -> bool:
 
 def is_google_admin(request: Request, customer: Customer | None) -> bool:
     return bool(
-        settings.admin_google_email
-        and customer
+        customer
         and customer.google_sub
         and customer.email_verified
-        and customer.email == settings.admin_google_email
         and google_session(request)
+        and (
+            customer.google_sub in settings.admin_google_subjects
+            or (settings.admin_google_email and customer.email == settings.admin_google_email)
+        )
     )
 
 
@@ -322,7 +324,7 @@ def require_admin(
     session: Annotated[Session, Depends(get_session)],
     credentials: Annotated[HTTPBasicCredentials | None, Depends(basic_auth)],
 ) -> None:
-    if settings.admin_google_email:
+    if settings.google_admin_configured:
         customer = get_customer_by_session(request, session) if google_session(request) else None
         if is_google_admin(request, customer):
             return

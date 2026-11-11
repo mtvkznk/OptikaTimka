@@ -44,18 +44,19 @@ For production, register `https://YOUR-DOMAIN/auth/google/callback` and set the
 credentials in `prod.env`. The callback defaults to `PUBLIC_BASE_URL` plus
 `/auth/google/callback` when `GOOGLE_REDIRECT_URI` is empty.
 
-### Restrict administration to one Google account
+### Restrict administration to specific Google accounts
 
-Set `ADMIN_GOOGLE_EMAIL` in `prod.env` (or local `.env`) to the exact email of
-the owner, with both Google OAuth credentials configured. This disables HTTP
-Basic for all administrator routes and product creation. Sign out of the customer
-cabinet and sign back in with the specified Google account to see the administrator
-dashboard button. Older sessions and phone logins do not grant administrator access.
+Set `ADMIN_GOOGLE_EMAIL` in `prod.env` (or local `.env`) to the owner's exact email.
+To grant access to another account that has already signed in through Google, add
+its stored `customer.google_sub` to `ADMIN_GOOGLE_SUBJECTS` as a comma-separated list
+of Google account IDs. Both settings require Google OAuth credentials and disable
+HTTP Basic for all administrator routes and product creation. Authorized users
+see the administrator dashboard button in their Google-authenticated cabinet.
 
 ## Security behavior
 
-- All `/admin` routes and `POST /api/products` require the configured Google
-  account, or HTTP Basic when `ADMIN_GOOGLE_EMAIL` is unset. Use HTTPS.
+- All `/admin` routes and `POST /api/products` require an authorized Google account,
+  or HTTP Basic when neither Google administrator setting is configured. Use HTTPS.
 - State-changing requests require a signed, session-bound CSRF token. HTML forms
   carry `csrf_token`; JavaScript reads the `csrf-token` meta tag and sends the
   `X-CSRF-Token` header. Cross-origin mutations are rejected as well.
@@ -84,7 +85,7 @@ SQLite preview databases, or debug settings to production.
    `C:/Deploy/OptikaTimka/prod.env`, or set `OPTIKA_ENV_FILE` to its actual path.
 2. Set `PUBLIC_BASE_URL` to your public HTTPS origin. Set independent random
    `AUTH_SECRET` (at least 32 characters) and `POSTGRES_PASSWORD`. Configure
-   `ADMIN_GOOGLE_EMAIL` with Google OAuth, or set a random `ADMIN_PASSWORD`
+   `ADMIN_GOOGLE_EMAIL` or `ADMIN_GOOGLE_SUBJECTS` with Google OAuth, or set a random `ADMIN_PASSWORD`
    (at least 16 characters). Generate each secret independently, for example:
    `python -c "import secrets; print(secrets.token_hex(32))"`.
 3. Set `DATABASE_URL` to the PostgreSQL connection string using the matching

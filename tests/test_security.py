@@ -252,6 +252,7 @@ def test_production_alias_redirects_before_creating_oauth_state(
         {"public_base_url": "https://optika.example/path"},
         {"admin_google_email": "owner@example.com"},
         {"admin_google_email": "owner@example.com,other@example.com"},
+        {"admin_google_subjects": "test-google-sub"},
     ],
 )
 def test_unsafe_production_configuration_rejected(changes: dict[str, object]) -> None:
@@ -288,6 +289,19 @@ def test_production_google_admin_does_not_need_an_admin_password() -> None:
     )
     assert configured.admin_google_email == "owner@example.com"
     assert configured.admin_password is None
+
+
+def test_google_subjects_only_can_configure_admin_access(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADMIN_GOOGLE_SUBJECTS", " first-sub , second-sub ")
+    configured = Settings(
+        _env_file=None, environment="production", auth_secret="test-only-secret-" * 4,
+        public_base_url="https://optika.example", google_client_id="test-client",
+        google_client_secret="test-secret", admin_google_email=None,
+        database_url="postgresql+psycopg://app:test-only-database-password@db/optika_timka",
+        admin_password=None,
+    )
+    assert configured.admin_google_subjects == {"first-sub", "second-sub"}
+    assert configured.google_admin_configured
 
 
 def test_wrong_phone_codes_exhaust_attempts(anonymous_client: TestClient, app_db: Engine) -> None:
@@ -408,13 +422,22 @@ def test_verified_contact_cannot_read_records_owned_by_another_account(
     assert "Private service" not in anonymous_client.get("/cabinet").text
 
 
-@pytest.mark.parametrize("is_owner", [True, False])
+@pytest.mark.parametrize(
+    ("email", "google_sub", "is_admin"),
+    [
+        ("owner@example.com", "owner-sub", True),
+        ("additional@example.net", "approved-sub", True),
+        ("additional@example.net", "other-sub", False),
+    ],
+)
 def test_google_login_opens_customer_cabinet(
-    anonymous_client: TestClient, monkeypatch: pytest.MonkeyPatch, is_owner: bool,
+    anonymous_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    email: str, google_sub: str, is_admin: bool,
 ) -> None:
     monkeypatch.setattr(settings, "google_client_id", "test-client")
     monkeypatch.setattr(settings, "google_client_secret", SecretStr("test-secret"))
     monkeypatch.setattr(settings, "admin_google_email", "owner@example.com")
+    monkeypatch.setattr(settings, "admin_google_subjects", frozenset({"approved-sub"}))
     assert anonymous_client.get(
         "/admin", auth=(settings.admin_username, settings.admin_password.get_secret_value())
     ).status_code == 403
@@ -438,8 +461,8 @@ def test_google_login_opens_customer_cabinet(
         return httpx.Response(
             200,
             json={
-                "sub": "test-google-sub",
-                "email": "owner@example.com" if is_owner else "google-client@example.com",
+                "sub": google_sub,
+                "email": email,
                 "email_verified": True,
                 "name": "Google Test Client",
             },
@@ -461,9 +484,9 @@ def test_google_login_opens_customer_cabinet(
     assert cookie_name(SESSION_COOKIE_NAME) in anonymous_client.cookies
     assert cookie_name(main.OAUTH_STATE_COOKIE_NAME) not in anonymous_client.cookies
     assert cookie_name(main.OAUTH_VERIFIER_COOKIE_NAME) not in anonymous_client.cookies
-    assert ('href="/admin"' in result.text) is is_owner
-    assert anonymous_client.get("/admin").status_code == (200 if is_owner else 403)
-    if not is_owner:
+    assert ('href="/admin"' in result.text) is is_admin
+    assert anonymous_client.get("/admin").status_code == (200 if is_admin else 403)
+    if not is_admin:
         assert anonymous_client.get("/admin/appointments").status_code == 403
         assert anonymous_client.post("/api/products", json={}).status_code == 403
     else:

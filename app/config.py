@@ -1,9 +1,9 @@
 from functools import lru_cache
-from typing import Self
+from typing import Annotated, Self
 from urllib.parse import urlsplit
 
 from pydantic import SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
 from app.validation import normalize_email
@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: SecretStr | None = None
     admin_google_email: str | None = None
+    admin_google_subjects: Annotated[frozenset[str], NoDecode] = frozenset()
     public_base_url: str | None = None
     phone_auth_debug: bool = False
     google_client_id: str | None = None
@@ -63,6 +64,27 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_GOOGLE_EMAIL must be a single email address")
         return email
 
+    @field_validator("admin_google_subjects", mode="before")
+    @classmethod
+    def parse_admin_google_subjects(cls, value: object) -> object:
+        if isinstance(value, str):
+            return tuple(subject.strip() for subject in value.split(",")) if value.strip() else ()
+        return value
+
+    @field_validator("admin_google_subjects")
+    @classmethod
+    def validate_admin_google_subjects(cls, value: frozenset[str]) -> frozenset[str]:
+        for subject in value:
+            if not subject or len(subject) > 255 or not subject.isascii() or any(
+                char.isspace() or not char.isprintable() or char == "," for char in subject
+            ):
+                raise ValueError("ADMIN_GOOGLE_SUBJECTS must contain valid Google account IDs")
+        return value
+
+    @property
+    def google_admin_configured(self) -> bool:
+        return bool(self.admin_google_email or self.admin_google_subjects)
+
     @model_validator(mode="after")
     def validate_security(self) -> Self:
         if self.public_base_url:
@@ -80,14 +102,14 @@ class Settings(BaseSettings):
             self.public_base_url = self.public_base_url.rstrip("/")
         if bool(self.google_client_id) != bool(self.google_client_secret):
             raise ValueError("Configure both Google OAuth credentials, or neither")
-        if self.admin_google_email and not self.google_client_id:
-            raise ValueError("ADMIN_GOOGLE_EMAIL requires Google OAuth credentials")
+        if self.google_admin_configured and not self.google_client_id:
+            raise ValueError("Google administrator accounts require Google OAuth credentials")
         if self.environment == "production":
             auth_secret = self.auth_secret.get_secret_value()
             if len(auth_secret.strip()) < 32 or auth_secret.lower().startswith(("replace-", "change-me")):
                 raise ValueError("Production AUTH_SECRET must contain at least 32 characters")
             password = self.admin_password.get_secret_value() if self.admin_password else ""
-            if not self.admin_google_email and (
+            if not self.google_admin_configured and (
                 len(password.strip()) < 16 or password.lower().startswith(("replace-", "change-me"))
             ):
                 raise ValueError("Production ADMIN_PASSWORD must contain at least 16 characters")
