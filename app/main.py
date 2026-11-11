@@ -156,7 +156,7 @@ BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261111-booking-duration"
 ADMIN_ASSET_VERSION = "20261111-work-schedule"
-LANDING_ASSET_VERSION = "20261112-landing"
+LANDING_ASSET_VERSION = "20261112-landing-2"
 CATALOG_CATEGORIES = {
     "frames": "Оправи",
     "sunglasses": "Сонцезахисні",
