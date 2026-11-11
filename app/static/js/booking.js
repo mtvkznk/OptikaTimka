@@ -30,6 +30,11 @@ function formatDate(value) {
   return dateFormat.format(new Date(value + "T00:00:00Z"));
 }
 
+function timeInMinutes(value) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
 function bookingDetails() {
   const date = checked("preferred_date");
   const time = checked("preferred_time");
@@ -63,14 +68,15 @@ function showMonth(index) {
 async function refreshAvailability() {
   availabilityRequest?.abort();
   const date = checked("preferred_date");
+  const service = checked("service");
   timeGrid.replaceChildren();
   timeGrid.hidden = true;
   availabilityRetry.hidden = true;
   updateSelection();
 
-  if (!date) {
+  if (!date || !service) {
     availabilityStatus.textContent = dateRadios.length
-      ? "Оберіть дату, щоб побачити вільні години."
+      ? "Оберіть послугу й дату, щоб побачити вільний час."
       : "Зараз немає доступних дат для запису.";
     return;
   }
@@ -79,21 +85,24 @@ async function refreshAvailability() {
   availabilityRequest = request;
   availabilityStatus.textContent = "Завантажуємо вільні години…";
   try {
+    const query = new URLSearchParams({ preferred_date: date.value, service: service.value });
     const response = await fetch(
-      "/api/availability?preferred_date=" + encodeURIComponent(date.value),
+      "/api/availability?" + query,
       { signal: request.signal },
     );
     if (!response.ok) throw new Error("Availability request failed");
     const slots = await response.json();
     if (request.signal.aborted) return;
     if (!slots.length) {
-      availabilityStatus.textContent = "На цю дату немає вільних годин. Оберіть іншу дату.";
+      availabilityStatus.textContent = "На цю дату немає вільного часу для цієї послуги.";
       return;
     }
 
     const options = slots.map((slot) => {
       const label = timeOption.content.firstElementChild.cloneNode(true);
-      label.querySelector("input").value = slot.start_time;
+      const input = label.querySelector("input");
+      input.value = slot.start_time;
+      input.dataset.duration = timeInMinutes(slot.end_time) - timeInMinutes(slot.start_time);
       label.querySelector("span").textContent =
         slot.start_time.slice(0, 5) + " – " + slot.end_time.slice(0, 5);
       return label;
@@ -114,7 +123,7 @@ availabilityRetry.addEventListener("click", refreshAvailability);
 
 form.addEventListener("change", (event) => {
   setStatus("");
-  if (event.target.name === "preferred_date") {
+  if (event.target.name === "preferred_date" || event.target.name === "service") {
     refreshAvailability();
   } else {
     updateSelection();
@@ -174,12 +183,14 @@ form.addEventListener("submit", async (event) => {
         service: service.value,
         preferred_date: date.value,
         preferred_time: time.value,
+        expected_duration_minutes: Number(time.dataset.duration),
       }),
     });
 
     if (response.status === 409) {
+      const payload = await response.json().catch(() => null);
       refreshAvailability();
-      showError("Цю годину вже зайняли. Оберіть інший час.");
+      showError(payload?.detail ?? "Цей час уже зайнятий. Оберіть інший час.");
       return;
     }
     if (!response.ok) {

@@ -21,6 +21,16 @@ from sqlmodel import Session, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.admin_changes import AdminChanges, apply_admin_changes
+from app.booking import (
+    BookingTime,
+    available_starts,
+    check_booking_overlap,
+    check_reactivation,
+    lock_booking_writes,
+    minute_of,
+    occupied_intervals,
+    working_intervals,
+)
 from app.config import settings
 from app.database import get_session
 from app.models import (
@@ -144,7 +154,7 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261111-cabinet-admin"
+ASSET_VERSION = "20261111-booking-duration"
 ADMIN_ASSET_VERSION = "20261111-admin-calendar"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -217,6 +227,15 @@ def get_active_services(session: Session) -> list[BookingService]:
             .order_by(BookingService.sort_order, BookingService.id)
         ).all()
     )
+
+
+def get_booking_service(session: Session, name: str) -> BookingService:
+    service = session.exec(
+        select(BookingService).where(BookingService.name == name, BookingService.is_active)
+    ).first()
+    if service is None:
+        raise HTTPException(400, "Ця послуга недоступна для запису.")
+    return service
 
 
 def get_active_time_slots(session: Session) -> list[AvailableTimeSlot]:
@@ -1115,30 +1134,31 @@ def list_time_slots(session: SessionDep) -> list[AvailableTimeSlot]:
     return get_active_time_slots(session)
 
 
-@app.get("/api/availability", response_model=list[AvailableTimeSlotRead])
-def available_time_slots(preferred_date: date, session: SessionDep) -> list[AvailableTimeSlot]:
-    today, window_end = booking_window()
+@app.get("/api/availability", response_model=list[AvailableTimeSlotRead | BookingTime])
+def available_time_slots(
+    preferred_date: date,
+    session: SessionDep,
+    service: Annotated[str | None, Query(max_length=160)] = None,
+) -> list[AvailableTimeSlot] | list[BookingTime]:
+    now = kyiv_now()
+    today, window_end = booking_window(now)
     if not today <= preferred_date <= window_end:
         raise HTTPException(400, "Оберіть дату в межах доступного періоду.")
     if session.exec(select(ClosedDate).where(ClosedDate.closed_on == preferred_date)).first():
         return []
     ensure_seed_data(session)
-    booked = select(Appointment.preferred_time).where(
-        Appointment.preferred_date == preferred_date,
-        Appointment.status != AppointmentStatus.canceled,
-        Appointment.preferred_time.is_not(None),
-    )
-    statement = (
-        select(AvailableTimeSlot)
-        .where(
-            AvailableTimeSlot.is_active,
-            AvailableTimeSlot.start_time.not_in(booked),
-        )
-        .order_by(AvailableTimeSlot.sort_order, AvailableTimeSlot.id)
-    )
-    if preferred_date == today:
-        statement = statement.where(AvailableTimeSlot.start_time > kyiv_now().time())
-    return list(session.exec(statement).all())
+    slots = get_active_time_slots(session)
+    booked = occupied_intervals(session, preferred_date)
+    earliest = minute_of(now.time()) + 1 if preferred_date == today else 0
+    if service is not None:
+        duration = get_booking_service(session, service).duration_minutes
+        return available_starts(working_intervals(slots), booked, duration, earliest)
+    # Keep returning configured slots to clients that do not supply a service.
+    return [
+        slot for slot in slots
+        if (start := minute_of(slot.start_time)) >= earliest
+        and not any(booked_start <= start < booked_end for booked_start, booked_end in booked)
+    ]
 
 
 @app.get("/api/closed-dates", response_model=list[ClosedDateRead])
@@ -1175,58 +1195,35 @@ def create_product(payload: ProductCreate, session: SessionDep) -> Product:
 def create_appointment(
     request: Request, payload: AppointmentCreate, session: SessionDep
 ) -> Appointment:
-    rate_limit(session, request, "appointment-create", 10, 3600)
     ensure_seed_data(session)
+    rate_limit(session, request, "appointment-create", 10, 3600)
+    lock_booking_writes(session)
 
-    service = session.exec(
-        select(BookingService)
-        .where(BookingService.name == payload.service)
-        .where(BookingService.is_active)
-    ).first()
-    if service is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Оберіть активну послугу.",
-        )
-
-    if payload.preferred_time is not None:
-        slot = session.exec(
-            select(AvailableTimeSlot)
-            .where(AvailableTimeSlot.start_time == payload.preferred_time)
-            .where(AvailableTimeSlot.is_active)
-        ).first()
-        if slot is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Оберіть доступний час.",
-            )
-
-    if payload.preferred_date is not None:
-        today, window_end = booking_window()
-        if payload.preferred_date < today:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Оберіть майбутню дату.",
-            )
-
-        if payload.preferred_date > window_end:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Запис доступний не більше ніж на 30 днів вперед.",
-            )
-
-        closed_date = session.exec(
-            select(ClosedDate).where(ClosedDate.closed_on == payload.preferred_date)
-        ).first()
-        if closed_date is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="На цю дату запис закритий.",
-            )
+    service = get_booking_service(session, payload.service)
+    duration = service.duration_minutes
+    if payload.expected_duration_minutes is not None and payload.expected_duration_minutes != duration:
+        raise HTTPException(409, "Тривалість послуги змінилася. Виберіть час ще раз.")
+    now = kyiv_now()
+    today, window_end = booking_window(now)
+    day = payload.preferred_date
+    if day < today:
+        raise HTTPException(400, "Оберіть майбутню дату.")
+    if day > window_end:
+        raise HTTPException(400, "Запис доступний не більше ніж на 30 днів вперед.")
+    if day == today and payload.preferred_time <= now.time():
+        raise HTTPException(400, "Оберіть майбутній час прийому.")
+    if session.exec(select(ClosedDate).where(ClosedDate.closed_on == day)).first():
+        raise HTTPException(400, "На цю дату запис закритий.")
+    start = minute_of(payload.preferred_time)
+    if not any(
+        opens <= start and start + duration <= closes
+        for opens, closes in working_intervals(get_active_time_slots(session))
+    ):
+        raise HTTPException(400, "Для цієї послуги оберіть час у межах робочого графіка.")
+    check_booking_overlap(session, day, start, duration)
 
     appointment = Appointment.model_validate(payload)
-    if payload.preferred_date == current_date() and payload.preferred_time <= kyiv_now().time():
-        raise HTTPException(400, "Оберіть майбутній час прийому.")
+    appointment.duration_minutes = duration
     appointment.phone_normalized = normalize_phone(payload.phone)
     appointment.email_normalized = normalize_email(payload.email)
     customer = get_customer_by_session(request, session)
@@ -1268,18 +1265,22 @@ def update_appointment_status(
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:
+    lock_booking_writes(session)
     appointment = session.get(Appointment, appointment_id)
     if appointment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Запис не знайдено.")
 
     try:
-        appointment.status = AppointmentStatus(form_data.get("status", ""))
+        new_status = AppointmentStatus(form_data.get("status", ""))
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Некоректний статус.",
         ) from exc
 
+    if appointment.status == AppointmentStatus.canceled and new_status != AppointmentStatus.canceled:
+        check_reactivation(session, appointment)
+    appointment.status = new_status
     appointment.updated_at = utc_now()
     session.add(appointment)
     session.commit()
@@ -1288,6 +1289,7 @@ def update_appointment_status(
 
 @admin_router.post("/services")
 def create_service(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+    lock_booking_writes(session)
     sort_order = session.exec(select(func.max(BookingService.sort_order))).one() or 0
     payload = validated_form(
         BookingServiceCreate,
@@ -1318,6 +1320,7 @@ def update_service(
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:
+    lock_booking_writes(session)
     service = session.get(BookingService, service_id)
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Послугу не знайдено.")
@@ -1341,6 +1344,7 @@ def update_service(
 
 @admin_router.post("/time-slots")
 def create_time_slot(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+    lock_booking_writes(session)
     sort_order = session.exec(select(func.max(AvailableTimeSlot.sort_order))).one() or 0
     payload = validated_form(
         AvailableTimeSlotCreate,
@@ -1369,6 +1373,7 @@ def update_time_slot(
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:
+    lock_booking_writes(session)
     slot = session.get(AvailableTimeSlot, slot_id)
     if slot is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Годину не знайдено.")
@@ -1391,6 +1396,7 @@ def update_time_slot(
 
 @admin_router.post("/closed-dates")
 def create_closed_date(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+    lock_booking_writes(session)
     payload = validated_form(
         ClosedDateCreate,
         {
@@ -1410,6 +1416,7 @@ def update_closed_date(
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:
+    lock_booking_writes(session)
     closed_date = session.get(ClosedDate, closed_date_id)
     if closed_date is None:
         raise HTTPException(
@@ -1432,6 +1439,7 @@ def update_closed_date(
 
 @admin_router.post("/closed-dates/{closed_date_id}/delete")
 def delete_closed_date(closed_date_id: int, session: SessionDep) -> RedirectResponse:
+    lock_booking_writes(session)
     closed_date = session.get(ClosedDate, closed_date_id)
     if closed_date is None:
         raise HTTPException(

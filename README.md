@@ -67,10 +67,12 @@ dashboard button. Older sessions and phone logins do not grant administrator acc
   apply to responses. Production OpenAPI/Swagger/ReDoc endpoints are disabled.
 - Request bodies are limited to 64 KiB. Persistent database rate limits work across
   application processes. Raw IP addresses are not stored in rate-limit keys.
-- A date/time slot accepts one active appointment. A database unique index resolves
-  races; conflicts return 409. Canceling an appointment releases its slot.
-  `/api/availability?preferred_date=YYYY-MM-DD` returns available slots without
-  appointment details. Customer and administrator appointment lists use 50-row pages.
+- One active appointment can occupy any minute of the schedule. The service duration
+  is stored on each booking, and booking writes and reactivations check for overlap
+  under a database transaction lock. Canceling releases the reserved time.
+  `/api/availability?preferred_date=YYYY-MM-DD&service=NAME` returns start/end pairs
+  that fit the selected service, without appointment details. Customer and
+  administrator appointment lists use 50-row pages.
 
 ## Production preparation
 
@@ -126,6 +128,13 @@ WHERE status <> 'canceled'
   AND preferred_date IS NOT NULL AND preferred_time IS NOT NULL
 GROUP BY preferred_date, preferred_time HAVING COUNT(*) > 1;
 ```
+
+### Booking duration migration 20261111_0005
+
+This migration stores the duration for each existing booking. It keeps the
+original start time and uses the longer of the old schedule block and the
+current service duration. When the old block is missing, it uses 60 minutes
+as a minimum. New bookings store the selected service's duration at booking time.
 
 ## Checks
 

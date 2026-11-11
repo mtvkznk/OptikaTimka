@@ -31,7 +31,7 @@ def test_homepage_renders_booking_form(client: TestClient) -> None:
     assert "data-calendar-next" in response.text
     assert "calendar-board" in response.text
     assert "calendar-grid" in response.text
-    assert "Оберіть дату, щоб побачити вільні години." in response.text
+    assert "Оберіть послугу й дату, щоб побачити вільний час." in response.text
     assert "data-time-slots" in response.text
     assert 'name="preferred_date"' in response.text
     assert 'name="preferred_time"' in response.text

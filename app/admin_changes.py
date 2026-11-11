@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, PositiveInt, model_validator
 from sqlmodel import Session, select
 
+from app.booking import check_reactivation, lock_booking_writes
 from app.models import (
     Appointment,
     AppointmentStatus,
@@ -105,8 +106,11 @@ def apply_appointment_changes(session: Session, changes: list[AppointmentChange]
     session.flush()
     for change in changes:
         if change.status != AppointmentStatus.canceled:
-            rows[change.id].status = change.status
-            rows[change.id].updated_at = utc_now()
+            appointment = rows[change.id]
+            if appointment.status == AppointmentStatus.canceled:
+                check_reactivation(session, appointment)
+            appointment.status = change.status
+            appointment.updated_at = utc_now()
 
 
 def apply_catalog_changes(
@@ -226,6 +230,7 @@ def apply_closed_date_changes(
 
 
 def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
+    lock_booking_writes(session)
     apply_appointment_changes(session, changes.appointments)
     apply_catalog_changes(
         session, BookingService, changes.services, changes.service_order, changes.remove_services,

@@ -66,6 +66,11 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
     config, engine = migration_database
     command.upgrade(config, "20260916_0003")
     insert_legacy_data(engine)
+    with engine.begin() as connection:
+        connection.execute(sa.text(
+            "INSERT INTO availabletimeslot (start_time, end_time, is_active, sort_order, "
+            "created_at, updated_at) VALUES ('10:00:00', '11:15:00', TRUE, 1, :now, :now)"
+        ), {"now": "2026-11-10 12:00:00"})
     command.upgrade(config, "head")
     with engine.connect() as connection:
         row = connection.execute(sa.text("SELECT * FROM appointment")).mappings().one()
@@ -73,6 +78,7 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
         assert row["phone"] == "+38 (098) 000-00-01"
         assert row["phone_normalized"] == "+380980000001"
         assert row["email_normalized"] == "google@example.com"
+        assert row["duration_minutes"] == 75
         customers = connection.execute(sa.text("SELECT * FROM customer ORDER BY id")).mappings().all()
         assert customers[0]["phone"] is None
         assert customers[1]["email"] is None

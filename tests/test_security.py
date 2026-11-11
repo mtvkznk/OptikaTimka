@@ -553,15 +553,18 @@ def test_google_network_failure_is_a_controlled_error(monkeypatch: pytest.Monkey
         main.exchange_google_code(request, "test-code")
 
 
-def test_only_one_booking_can_win_a_race(raw_client: TestClient) -> None:
+@pytest.mark.parametrize("second_start", ["10:00:00", "10:15:00"])
+def test_only_one_booking_can_win_a_race(raw_client: TestClient, second_start: str) -> None:
     raw_client.get("/")
     headers = csrf_headers(raw_client)
 
-    def submit() -> int:
-        return raw_client.post("/api/appointments", json=booking(), headers=headers).status_code
+    def submit(start: str) -> int:
+        return raw_client.post(
+            "/api/appointments", json=booking(preferred_time=start), headers=headers,
+        ).status_code
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _: submit(), range(2)))
+        results = list(executor.map(submit, ["10:00:00", second_start]))
     assert sorted(results) == [201, 409]
 
 
@@ -580,7 +583,7 @@ def test_cancel_releases_slot_and_reactivation_cannot_double_book(client: TestCl
         ).status_code
         == 303
     )
-    assert client.post("/api/appointments", json=booking()).status_code == 201
+    assert client.post("/api/appointments", json=booking(preferred_time="10:15:00")).status_code == 201
     assert (
         client.post(
             f"/admin/appointments/{appointment_id}/status",
@@ -588,6 +591,53 @@ def test_cancel_releases_slot_and_reactivation_cannot_double_book(client: TestCl
         ).status_code
         == 409
     )
+
+
+def test_service_duration_controls_booking_and_preserves_existing_reservations(
+    client: TestClient,
+) -> None:
+    short = "Перевірка зору"
+    long = "Підбір окулярів"
+    day = booking()["preferred_date"]
+
+    def options(service: str) -> dict[str, str]:
+        response = client.get("/api/availability", params={"preferred_date": day, "service": service})
+        assert response.status_code == 200
+        return {slot["start_time"]: slot["end_time"] for slot in response.json()}
+
+    assert options(short)["12:30:00"] == "13:00:00"
+    assert "12:30:00" not in options(long)
+    assert options(long)["12:15:00"] == "13:00:00"
+    assert client.post("/api/appointments", json=booking(
+        service=long, preferred_time="12:30:00",
+    )).status_code == 400
+    assert client.post("/api/appointments", json=booking(service=short)).status_code == 201
+    assert "10:15:00" not in options(long)
+    assert options(long)["10:30:00"] == "11:15:00"
+    assert client.post("/api/appointments", json=booking(
+        service=long, preferred_time="10:15:00",
+    )).status_code == 409
+
+    item = next(row for row in client.get("/api/booking-services").json() if row["name"] == short)
+    assert client.post(
+        f"/admin/services/{item['id']}", data={"duration_minutes": 60, "is_active": "on"},
+        follow_redirects=False,
+    ).status_code == 303
+    assert options(long)["10:30:00"] == "11:15:00"
+    assert client.post("/api/appointments", json=booking(
+        service=short, preferred_time="11:00:00", expected_duration_minutes=30,
+    )).status_code == 409
+    assert client.post("/api/appointments", json=booking(
+        service=long, preferred_time="10:30:00", expected_duration_minutes=45,
+    )).status_code == 201
+    assert client.post(
+        f"/admin/services/{item['id']}", data={"duration_minutes": 33, "is_active": "on"},
+        follow_redirects=False,
+    ).status_code == 303
+    assert client.post("/api/appointments", json=booking(
+        service=short, preferred_time="14:00:00", expected_duration_minutes=33,
+    )).status_code == 201
+    assert options(long)["14:33:00"] == "15:18:00"
 
 
 @pytest.mark.parametrize(

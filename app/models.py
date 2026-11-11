@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, time
 from enum import Enum
 
 from pydantic import EmailStr, field_validator, model_validator
-from sqlalchemy import Index, UniqueConstraint, text
+from sqlalchemy import Column, Index, Integer, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 from app.validation import normalize_email, normalize_phone
@@ -186,6 +186,9 @@ class Appointment(AppointmentBase, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
+    duration_minutes: int = Field(
+        default=60, sa_column=Column(Integer, nullable=False, server_default="60"),
+    )
     customer_id: int | None = Field(default=None, foreign_key="customer.id", index=True)
     phone_normalized: str | None = Field(default=None, max_length=40, index=True)
     email_normalized: str | None = Field(default=None, max_length=255, index=True)
@@ -198,6 +201,7 @@ class AppointmentCreate(AppointmentBase):
     preferred_date: date
     preferred_time: time
     email: EmailStr | None = None
+    expected_duration_minutes: int | None = Field(default=None, ge=5, le=480)
 
     @field_validator("name", "service")
     @classmethod
