@@ -1,3 +1,5 @@
+import json
+import re
 from datetime import time, timedelta
 
 from fastapi.testclient import TestClient
@@ -6,6 +8,45 @@ from sqlmodel import Session
 
 from app.main import current_date
 from app.models import Appointment, AppointmentStatus
+
+
+def test_work_schedule_sets_hours_and_booking_uses_remaining_time(client: TestClient) -> None:
+    def schedule() -> dict:
+        page = client.get("/admin").text
+        return json.loads(re.search(r"data-work-schedule='([^']+)'", page)[1])
+
+    initial = schedule()
+    assert (initial["start_time"], initial["end_time"]) == ("09:00", "17:00")
+    assert initial["breaks"] == [{"start_time": "13:00", "end_time": "14:00"}]
+    workday = {"start_time": "08:30", "end_time": "18:00"}
+    lunch = {"start_time": "12:00", "end_time": "13:00"}
+    changes = {"version": initial["version"], "workday": workday, "breaks": [lunch]}
+    assert client.post("/admin/changes", json={"work_schedule": changes}).status_code == 200
+    assert client.post("/admin/changes", json={"work_schedule": changes}).status_code == 409
+    updated = schedule()
+    assert updated["breaks"] == [lunch]
+    assert client.post("/admin/changes", json={"work_schedule": {
+        **changes, "version": updated["version"],
+        "breaks": [lunch, {"start_time": "12:30", "end_time": "13:30"}],
+    }}).status_code == 422
+    assert schedule() == updated
+
+    day = (current_date() + timedelta(days=2)).isoformat()
+    service = "Підбір окулярів"
+    params = {"preferred_date": day, "service": service}
+    assert client.post("/api/appointments", json={
+        **params, "preferred_time": "08:30", "name": "Client", "phone": "+380501234567",
+    }).status_code == 201
+    starts = [row["start_time"] for row in client.get("/api/availability", params=params).json()]
+    assert starts[0] == "09:15:00"
+    assert "11:15:00" in starts and "11:30:00" not in starts
+    assert "13:00:00" in starts and starts[-1] == "17:15:00"
+
+    assert client.post("/admin/changes", json={
+        "work_schedule": {"version": updated["version"]},
+    }).status_code == 200
+    assert client.get("/api/availability", params=params).json() == []
+    assert schedule()["start_time"] == ""
 
 
 def test_batch_applies_booking_service_and_period_together(client: TestClient, app_db: Engine) -> None:

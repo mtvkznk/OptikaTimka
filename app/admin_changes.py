@@ -1,12 +1,20 @@
+import hashlib
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import date, time, timedelta
+from itertools import pairwise
 from typing import Any, Self
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, PositiveInt, model_validator
 from sqlmodel import Session, select
 
-from app.booking import check_reactivation, lock_booking_writes
+from app.booking import (
+    Interval,
+    check_reactivation,
+    lock_booking_writes,
+    minute_of,
+    working_intervals,
+)
 from app.models import (
     Appointment,
     AppointmentStatus,
@@ -40,6 +48,79 @@ class SlotChange(AvailableTimeSlotCreate):
     version: str | None = Field(default=None, max_length=48)
 
 
+class WorkScheduleChange(BaseModel):
+    version: str = Field(min_length=64, max_length=64)
+    workday: AvailableTimeSlotCreate | None = None
+    breaks: list[AvailableTimeSlotCreate] = Field(default_factory=list, max_length=100)
+
+    def intervals(self) -> list[Interval]:
+        if self.workday is None:
+            if self.breaks:
+                raise HTTPException(422, "Спочатку вкажіть початок і кінець робочого дня.")
+            return []
+
+        opens = minute_of(self.workday.start_time)
+        closes = minute_of(self.workday.end_time)
+        cursor = opens
+        intervals = []
+        for pause in sorted(self.breaks, key=lambda item: item.start_time):
+            start, end = minute_of(pause.start_time), minute_of(pause.end_time)
+            if start <= opens or end >= closes or start < cursor:
+                raise HTTPException(422, "Перерви мають бути всередині робочого дня й не перетинатися.")
+            if cursor < start:
+                intervals.append((cursor, start))
+            cursor = end
+        intervals.append((cursor, closes))
+        return intervals
+
+
+def schedule_version(intervals: list[Interval]) -> str:
+    return hashlib.sha256(repr(intervals).encode("ascii")).hexdigest()
+
+
+def schedule_for_admin(slots: list[AvailableTimeSlot]) -> dict[str, Any]:
+    intervals = working_intervals(slots)
+
+    def clock(minutes: int) -> str:
+        return time(*divmod(minutes, 60)).isoformat(timespec="minutes")
+
+    return {
+        "version": schedule_version(intervals),
+        "start_time": clock(intervals[0][0]) if intervals else "",
+        "end_time": clock(intervals[-1][1]) if intervals else "",
+        "breaks": [
+            {"start_time": clock(left[1]), "end_time": clock(right[0])}
+            for left, right in pairwise(intervals)
+        ],
+    }
+
+
+def apply_work_schedule(session: Session, change: WorkScheduleChange) -> None:
+    rows = {slot.start_time: slot for slot in session.exec(select(AvailableTimeSlot))}
+    intervals = working_intervals([slot for slot in rows.values() if slot.is_active])
+    if change.version != schedule_version(intervals):
+        raise HTTPException(409, "Графік уже змінили. Скиньте чернетку й перевірте актуальні години.")
+
+    desired = {
+        time(*divmod(start, 60)): (time(*divmod(end, 60)), order)
+        for order, (start, end) in enumerate(change.intervals(), start=1)
+    }
+    now = utc_now()
+    for start, slot in rows.items():
+        if start not in desired and slot.is_active:
+            slot.is_active = False
+            slot.updated_at = now
+    for start, (end, order) in desired.items():
+        slot = rows.get(start)
+        if slot is None:
+            session.add(AvailableTimeSlot(start_time=start, end_time=end, sort_order=order))
+        elif not slot.is_active or slot.end_time != end or slot.sort_order != order:
+            slot.is_active = True
+            slot.end_time = end
+            slot.sort_order = order
+            slot.updated_at = now
+
+
 class ClosedPeriodChange(BaseModel):
     previous: dict[PositiveInt, str] = Field(default_factory=dict, max_length=MAX_PERIOD_DAYS)
     start: date | None = None
@@ -69,6 +150,7 @@ class AdminChanges(BaseModel):
     appointments: list[AppointmentChange] = Field(default_factory=list, max_length=1000)
     services: list[ServiceChange] = Field(default_factory=list, max_length=500)
     time_slots: list[SlotChange] = Field(default_factory=list, max_length=500)
+    work_schedule: WorkScheduleChange | None = None
     closed_periods: list[ClosedPeriodChange] = Field(default_factory=list, max_length=25)
     closed_days: ClosedDayChanges = Field(default_factory=ClosedDayChanges)
     remove_services: list[RowVersion] = Field(default_factory=list, max_length=500)
@@ -231,6 +313,10 @@ def apply_closed_date_changes(
 
 def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
     lock_booking_writes(session)
+    if changes.work_schedule is not None and (
+        changes.time_slots or changes.remove_time_slots or changes.time_slot_order is not None
+    ):
+        raise HTTPException(422, "Збережіть робочий графік окремо від старого списку годин.")
     apply_appointment_changes(session, changes.appointments)
     apply_catalog_changes(
         session, BookingService, changes.services, changes.service_order, changes.remove_services,
@@ -239,4 +325,6 @@ def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
         session, AvailableTimeSlot, changes.time_slots, changes.time_slot_order,
         changes.remove_time_slots,
     )
+    if changes.work_schedule is not None:
+        apply_work_schedule(session, changes.work_schedule)
     apply_closed_date_changes(session, changes.closed_periods, changes.closed_days)

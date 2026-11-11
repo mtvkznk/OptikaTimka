@@ -2,15 +2,27 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const saveButton = document.querySelector("[data-admin-save]");
 const discardButton = document.querySelector("[data-admin-discard]");
 const saveMessage = document.querySelector("[data-save-message]");
-const storageKey = "optika.admin.changes.v3";
+const storageKey = "optika.admin.changes.v4";
 const blankDraft = (month = null) => ({
-  edits: {}, additions: [], forms: {}, orders: {}, removals: {}, days: {}, reason: "", month,
+  edits: {}, additions: [], forms: {}, orders: {}, removals: {}, days: {}, reason: "",
+  schedule: null, month,
 });
 let draft = blankDraft();
 let saving = false;
 
 try {
-  draft = JSON.parse(sessionStorage.getItem(storageKey)) ?? draft;
+  const current = sessionStorage.getItem(storageKey);
+  draft = { ...draft, ...JSON.parse(current ?? sessionStorage.getItem("optika.admin.changes.v3")) };
+  if (!current) {
+    delete draft.forms.time_slots;
+    delete draft.orders.time_slot_order;
+    draft.additions = draft.additions.filter((item) => item.kind !== "time_slots");
+    for (const entries of [draft.edits, draft.removals]) {
+      for (const [key, item] of Object.entries(entries)) {
+        if (item.kind === "time_slots") delete entries[key];
+      }
+    }
+  }
 } catch {
   // Editing still works within this page if browser storage is unavailable.
 }
@@ -33,14 +45,6 @@ function matches(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function updateValidity(form, kind, values) {
-  if (kind === "time_slots") {
-    const invalid = values.start_time && values.end_time && values.end_time <= values.start_time;
-    form.elements.end_time.setCustomValidity(invalid ? "Кінець має бути пізніше за початок." : "");
-  }
-  return form.checkValidity();
-}
-
 function activeEdits() {
   return Object.entries(draft.edits).filter(([key]) => !draft.removals[key]).map(([, edit]) => edit);
 }
@@ -48,7 +52,7 @@ function activeEdits() {
 function numberOfChanges() {
   return activeEdits().length + draft.additions.length + Object.keys(draft.forms).length
     + Object.keys(draft.orders).length + Object.keys(draft.removals).length
-    + Object.keys(draft.days).length;
+    + Object.keys(draft.days).length + Number(Boolean(draft.schedule));
 }
 
 function showSaveState(message, error = false) {
@@ -83,7 +87,7 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
 
   const rememberEdit = () => {
     const values = valuesOf(form);
-    const valid = updateValidity(form, kind, values);
+    const valid = form.checkValidity();
     if (matches(initial, values)) delete draft.edits[key];
     else draft.edits[key] = { kind, identity: draft.edits[key]?.identity ?? identity, values, valid };
     form.toggleAttribute("data-dirty", Boolean(draft.edits[key]));
@@ -114,10 +118,6 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
   });
 });
 
-function additionLabel(kind, values) {
-  return kind === "services" ? values.name : values.start_time + " – " + values.end_time;
-}
-
 function renderAdditions() {
   document.querySelectorAll("[data-pending-for]").forEach((list) => {
     const items = draft.additions.filter((item) => item.kind === list.dataset.pendingFor);
@@ -125,7 +125,7 @@ function renderAdditions() {
     list.replaceChildren(...items.map((item) => {
       const row = document.createElement("li");
       const label = document.createElement("span");
-      label.textContent = additionLabel(item.kind, item.values);
+      label.textContent = item.values.name;
       const remove = document.createElement("button");
       remove.className = "admin-button admin-button-small";
       remove.type = "button";
@@ -152,7 +152,7 @@ document.querySelectorAll("[data-admin-add]").forEach((form) => {
 
   form.addEventListener("input", () => {
     const values = valuesOf(form);
-    const valid = updateValidity(form, kind, values);
+    const valid = form.checkValidity();
     if (matches(initial, values)) delete draft.forms[kind];
     else draft.forms[kind] = { kind, values, valid };
     persistDraft();
@@ -160,7 +160,7 @@ document.querySelectorAll("[data-admin-add]").forEach((form) => {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const values = valuesOf(form);
-    if (!updateValidity(form, kind, values)) {
+    if (!form.checkValidity()) {
       form.reportValidity();
       return;
     }
@@ -215,10 +215,93 @@ document.querySelectorAll("[data-order]").forEach((list) => {
   });
 });
 
+const scheduleForm = document.querySelector("[data-work-schedule]");
+if (scheduleForm) {
+  const settings = JSON.parse(scheduleForm.dataset.workSchedule);
+  const { version, start_time, end_time } = settings;
+  const initial = { start_time, end_time, breaks: settings.breaks };
+  const start = scheduleForm.elements.start_time;
+  const end = scheduleForm.elements.end_time;
+  const breaks = scheduleForm.querySelector("[data-work-breaks]");
+  const template = scheduleForm.querySelector("[data-work-break]");
+  const clear = scheduleForm.querySelector("[data-clear-schedule]");
+
+  function addBreak(values) {
+    const row = template.content.firstElementChild.cloneNode(true);
+    row.querySelector("[name=break_start]").value = values?.start_time ?? "";
+    row.querySelector("[name=break_end]").value = values?.end_time ?? "";
+    breaks.append(row);
+    return row;
+  }
+
+  const shown = draft.schedule?.values ?? initial;
+  start.value = shown.start_time;
+  end.value = shown.end_time;
+  shown.breaks.forEach(addBreak);
+
+  function readSchedule() {
+    const pauses = [...breaks.children].map((row) => ({
+      start: row.querySelector("[name=break_start]"),
+      end: row.querySelector("[name=break_end]"),
+    }));
+    start.required = end.required = Boolean(start.value || end.value || pauses.length);
+    clear.disabled = !start.required;
+    end.setCustomValidity(start.value && end.value && end.value <= start.value
+      ? "Кінець робочого дня має бути пізніше за початок." : "");
+    let previousEnd = start.value;
+    for (const pause of [...pauses].sort((a, b) => a.start.value.localeCompare(b.start.value))) {
+      const from = pause.start.value;
+      const to = pause.end.value;
+      const invalid = from && to && (
+        from <= start.value || to >= end.value || from >= to || from < previousEnd
+      );
+      pause.end.setCustomValidity(invalid ? "Перерва має бути всередині робочого дня й не перетинатися з іншими." : "");
+      if (to > previousEnd) previousEnd = to;
+    }
+    return {
+      start_time: start.value,
+      end_time: end.value,
+      breaks: pauses.map((pause) => ({ start_time: pause.start.value, end_time: pause.end.value })),
+    };
+  }
+
+  function rememberSchedule() {
+    const values = readSchedule();
+    draft.schedule = matches(initial, values) ? null : {
+      version: draft.schedule?.version ?? version, values, valid: scheduleForm.checkValidity(),
+    };
+    persistDraft();
+  }
+
+  readSchedule();
+  scheduleForm.addEventListener("input", rememberSchedule);
+  scheduleForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveButton.focus();
+  });
+  scheduleForm.querySelector("[data-add-break]").addEventListener("click", () => {
+    const row = addBreak();
+    rememberSchedule();
+    row.querySelector("input").focus();
+  });
+  breaks.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-break]");
+    if (!button) return;
+    button.closest(".admin-work-break").remove();
+    rememberSchedule();
+    scheduleForm.querySelector("[data-add-break]").focus();
+  });
+  clear.addEventListener("click", () => {
+    start.value = end.value = "";
+    breaks.replaceChildren();
+    rememberSchedule();
+    start.focus();
+  });
+}
+
 function payloadOfDraft() {
   const payload = {
-    appointments: [], services: [], time_slots: [],
-    remove_services: [], remove_time_slots: [],
+    appointments: [], services: [], remove_services: [],
     closed_days: { close: [], reopen: {}, reason: draft.reason },
     ...draft.orders,
   };
@@ -231,6 +314,12 @@ function payloadOfDraft() {
     if (reopening) payload.closed_days.reopen[reopening.id] = reopening.version;
     else payload.closed_days.close.push(day);
   });
+  if (draft.schedule) {
+    const { start_time, end_time, breaks } = draft.schedule.values;
+    payload.work_schedule = {
+      version: draft.schedule.version, workday: start_time ? { start_time, end_time } : null, breaks,
+    };
+  }
   return payload;
 }
 
@@ -241,6 +330,11 @@ function clearDraft() {
 
 saveButton.addEventListener("click", async () => {
   if (saving || !numberOfChanges()) return;
+  if (draft.schedule?.valid === false) {
+    scheduleForm?.reportValidity();
+    showSaveState("Перевірте початок, кінець і перерви робочого дня.", true);
+    return;
+  }
   const invalid = [...activeEdits(), ...Object.values(draft.forms)]
     .find((entry) => entry.valid === false);
   if (invalid) {
@@ -252,7 +346,6 @@ saveButton.addEventListener("click", async () => {
     if (form) {
       const details = form.closest("details");
       if (details) details.open = true;
-      updateValidity(form, invalid.kind, invalid.values);
       form.reportValidity();
     }
     showSaveState("У чернетці є неповні або некоректні поля.", true);

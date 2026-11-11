@@ -496,8 +496,27 @@
   grid-template-columns: auto minmax(7rem, 1fr) 5.2rem 6rem auto;
 }
 
-.admin-slot {
-  grid-template-columns: auto repeat(2, minmax(0, 1fr)) auto;
+.admin-work-schedule {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 43rem;
+}
+
+.admin-work-times,
+.admin-work-break {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.admin-work-break {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  align-items: end;
+}
+
+.admin-work-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .admin-editor[data-dirty] {
@@ -556,10 +575,6 @@
 
 .admin-add-service {
   grid-template-columns: minmax(7rem, 1fr) 5.2rem 6rem auto;
-}
-
-.admin-add-slot {
-  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
 }
 
 .admin-order {
@@ -723,6 +738,19 @@
 }
 
 @media (max-width: 44rem) {
+  .admin-editor.admin-work-schedule {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-work-break {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-work-break button {
+    justify-self: start;
+    grid-column: 1 / -1;
+  }
+
   .admin-sidebar {
     gap: 0.3rem 0.5rem;
   }

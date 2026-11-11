@@ -92,36 +92,32 @@
 <section class="admin-panel" id="time-slots" aria-labelledby="slots-heading">
   <div class="admin-panel-heading">
     <div>
-      <h2 id="slots-heading">Доступні години</h2>
+      <h2 id="slots-heading">Робочий графік</h2>
+      <p>Графік діє на всі відкриті дати. Сайт сам підбирає вільний час для кожної послуги.</p>
     </div>
   </div>
-  <div class="admin-edit-list" data-order="time_slot_order">
-    {% for slot in time_slots %}
-    <form class="admin-editor admin-slot" action="/admin/time-slots/{{ slot.id }}" method="post" data-admin-edit="time_slots" data-id="{{ slot.id }}" data-version="{{ slot.updated_at.isoformat() }}">
-      {% include "csrf_field.html" %}
-      {{ order_buttons(format_time(slot.start_time)) }}
-      <label class="admin-field">Початок
-        <input type="time" name="start_time" value="{{ format_time(slot.start_time) }}" required />
+  <form class="admin-editor admin-work-schedule" data-work-schedule='{{ work_schedule | tojson }}'>
+    <div class="admin-work-times">
+      <label class="admin-field">Початок робочого дня
+        <input type="time" name="start_time" value="{{ work_schedule.start_time }}" />
       </label>
-      <label class="admin-field">Кінець
-        <input type="time" name="end_time" value="{{ format_time(slot.end_time) }}" required />
+      <label class="admin-field">Кінець робочого дня
+        <input type="time" name="end_time" value="{{ work_schedule.end_time }}" />
       </label>
-      {{ remove_button(format_time(slot.start_time)) }}
-    </form>
-    {% else %}
-    <p class="admin-list-empty">Годин у графіку поки немає.</p>
-    {% endfor %}
-  </div>
-  <ul class="admin-pending" data-pending-for="time_slots" hidden></ul>
-  <details class="admin-add">
-    <summary>Додати годину</summary>
-    <form class="admin-editor admin-add-slot" action="/admin/time-slots" method="post" data-admin-add="time_slots">
-      {% include "csrf_field.html" %}
-      <label class="admin-field">Початок <input type="time" name="start_time" required /></label>
-      <label class="admin-field">Кінець <input type="time" name="end_time" required /></label>
-      <button class="admin-button" type="submit">Додати до списку</button>
-    </form>
-  </details>
+    </div>
+    <div class="admin-edit-list" data-work-breaks></div>
+    <div class="admin-work-actions">
+      <button class="admin-button" type="button" data-add-break>Додати перерву</button>
+      <button class="admin-button admin-danger" type="button" data-clear-schedule>Прибрати графік</button>
+    </div>
+    <template data-work-break>
+      <div class="admin-work-break">
+        <label class="admin-field">Початок перерви <input type="time" name="break_start" required /></label>
+        <label class="admin-field">Кінець перерви <input type="time" name="break_end" required /></label>
+        <button class="admin-button admin-danger" type="button" data-remove-break>Видалити перерву</button>
+      </div>
+    </template>
+  </form>
 </section>
 
 <section class="admin-panel" id="closed-dates" aria-labelledby="closed-heading">

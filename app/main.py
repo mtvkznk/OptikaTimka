@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.admin_changes import AdminChanges, apply_admin_changes
+from app.admin_changes import AdminChanges, apply_admin_changes, schedule_for_admin
 from app.booking import (
     BookingTime,
     available_starts,
@@ -155,7 +155,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261111-booking-duration"
-ADMIN_ASSET_VERSION = "20261111-admin-calendar"
+ADMIN_ASSET_VERSION = "20261111-work-schedule"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -418,7 +418,6 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
     today = current_date()
 
     services = get_active_services(session)
-    time_slots = get_active_time_slots(session)
     closed_dates = list(
         session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
     )
@@ -436,7 +435,7 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         "admin_asset_version": ADMIN_ASSET_VERSION,
         "today": today,
         "services": services,
-        "time_slots": time_slots,
+        "work_schedule": schedule_for_admin(get_active_time_slots(session)),
         "closed_days": {
             item.closed_on.isoformat(): {
                 "id": item.id, "version": item.updated_at.isoformat(), "reason": item.reason,
