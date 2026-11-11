@@ -26,8 +26,9 @@ For a SQLite preview without Docker, set `DATABASE_URL=sqlite:///preview.db`, ru
 the same Alembic command, then start Uvicorn. SQLite previews do not replace
 PostgreSQL integration tests.
 
-Open `/` for booking and `/cabinet` for customer login. `/health` reports process
-health. `/api/status` describes the application stack.
+Open `/` for the home page, `/booking` for the appointment form, `/catalog` for
+products, and `/cabinet` for customer login. `/health` reports process health.
+`/api/status` describes the application stack.
 
 ### Enable Google sign-in
 

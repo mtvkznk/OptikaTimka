@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="csrf-token" content="{{ request.state.csrf_token }}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Онлайн-запис на прийом в Optika Timka." />
+    <title>Запис на прийом | {{ app_name }}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
+  </head>
+  <body class="public-site">
+    {% include "public_header.html" %}
+
+    <main class="booking-page">
+      <section class="booking-shell" aria-labelledby="booking-title">
+        <header class="booking-heading">
+          <h1 id="booking-title">Запис на прийом</h1>
+        </header>
+
+        <form class="booking-card" method="post" action="/api/appointments" data-appointment-form novalidate>
+          {% include "csrf_field.html" %}
+
+          <fieldset class="picker-field" data-service-picker>
+            <legend>Послуга</legend>
+            <div class="service-options">
+              {% for service in services %}
+              <label class="service-option" data-service-option>
+                <input type="radio" name="service" value="{{ service.name }}" required />
+                <span class="service-option-text">
+                  <span class="service-option-name">{{ service.name }}</span>
+                  <span class="service-option-meta">
+                    <strong>{{ service.price_uah }} грн</strong>
+                    <span>{{ service.duration_minutes }} хв</span>
+                  </span>
+                </span>
+              </label>
+              {% else %}
+              <p class="booking-hint">Зараз немає доступних послуг. Спробуйте пізніше.</p>
+              {% endfor %}
+            </div>
+          </fieldset>
+
+          <div class="booking-picker">
+            <fieldset class="picker-field">
+              <legend>Оберіть дату</legend>
+              <div class="calendar-board">
+                <div class="calendar-header">
+                  <p class="calendar-title" data-calendar-title aria-live="polite">{{ booking_months[0].title }}</p>
+                  <div class="calendar-nav" aria-label="Перемикання місяців">
+                    <button class="calendar-nav-button" type="button" data-calendar-prev aria-label="Попередній місяць" disabled>‹</button>
+                    <button class="calendar-nav-button" type="button" data-calendar-next aria-label="Наступний місяць" {% if booking_months|length == 1 %}disabled{% endif %}>›</button>
+                  </div>
+                </div>
+
+                {% for month in booking_months %}
+                <div class="calendar-grid" data-calendar-month data-month-title="{{ month.title }}" {% if not loop.first %}hidden{% endif %}>
+                  {% for weekday in weekday_labels %}
+                  <span class="calendar-weekday">{{ weekday }}</span>
+                  {% endfor %}
+                  {% for week in month.weeks %}
+                    {% for day in week %}
+                      {% if day.is_available %}
+                      <label class="calendar-day{% if day.is_today %} is-today{% endif %}">
+                        <input type="radio" name="preferred_date" value="{{ day.value }}"
+                          aria-label="{{ day.label }}{% if day.is_today %}, сьогодні{% endif %}" required />
+                        <span>{{ day.day }}</span>
+                      </label>
+                      {% else %}
+                      <span class="calendar-day is-muted{% if day.is_outside_month %} is-outside-month{% endif %}" aria-hidden="true">{{ day.day }}</span>
+                      {% endif %}
+                    {% endfor %}
+                  {% endfor %}
+                </div>
+                {% endfor %}
+              </div>
+              <details class="booking-window">
+                <summary>Коли відкриваються нові дати?</summary>
+                <p>Запис доступний на 30 днів уперед. Щодня об 11:00 за Києвом відкривається нова дата.</p>
+              </details>
+            </fieldset>
+
+            <fieldset class="picker-field time-picker">
+              <legend>Оберіть час</legend>
+              <div class="time-board">
+                <p class="booking-hint" data-availability-status role="status">Оберіть послугу й дату, щоб побачити вільний час.</p>
+                <div class="time-grid" data-time-slots hidden></div>
+                <template data-time-option>
+                  <label class="time-cell">
+                    <input type="radio" name="preferred_time" required />
+                    <span></span>
+                  </label>
+                </template>
+                <button type="button" class="secondary-button availability-retry" data-availability-retry hidden>Спробувати ще раз</button>
+              </div>
+            </fieldset>
+          </div>
+
+          <fieldset class="picker-field contact-fields">
+            <legend>Контактні дані</legend>
+            <div class="field-row">
+              <label class="field">
+                <span>Ім’я та прізвище</span>
+                <input name="name" type="text" autocomplete="name" maxlength="120" required />
+              </label>
+              <label class="field">
+                <span>Телефон із кодом країни</span>
+                <input name="phone" type="tel" inputmode="tel" autocomplete="tel" minlength="8" maxlength="40" required />
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="booking-footer">
+            <div class="booking-review">
+              <p data-booking-selection hidden></p>
+              <p class="booking-hint">Ми зателефонуємо для підтвердження.</p>
+            </div>
+            <button class="submit-button" type="submit" disabled>Надіслати заявку</button>
+            <p class="form-status" role="status" tabindex="-1" data-form-status></p>
+            <noscript><p class="booking-hint">Для онлайн-запису увімкніть JavaScript у браузері.</p></noscript>
+          </div>
+        </form>
+
+        <section class="booking-card booking-confirmation" data-booking-confirmation aria-labelledby="confirmation-title" hidden>
+          <h2 id="confirmation-title" tabindex="-1">Заявку прийнято</h2>
+          <p class="confirmation-details" data-confirmation-details></p>
+          <p class="booking-hint">Ми зателефонуємо для підтвердження.</p>
+          <button class="secondary-button" type="button" data-new-booking>Створити ще один запис</button>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/js/booking.js?v={{ asset_version }}" defer></script>
+  </body>
+</html>

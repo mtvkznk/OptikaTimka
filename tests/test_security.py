@@ -555,7 +555,7 @@ def test_google_network_failure_is_a_controlled_error(monkeypatch: pytest.Monkey
 
 @pytest.mark.parametrize("second_start", ["10:00:00", "10:15:00"])
 def test_only_one_booking_can_win_a_race(raw_client: TestClient, second_start: str) -> None:
-    raw_client.get("/")
+    raw_client.get("/booking")
     headers = csrf_headers(raw_client)
 
     def submit(start: str) -> int:

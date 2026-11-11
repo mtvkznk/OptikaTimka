@@ -156,6 +156,13 @@ BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261111-booking-duration"
 ADMIN_ASSET_VERSION = "20261111-work-schedule"
+LANDING_ASSET_VERSION = "20261112-landing"
+CATALOG_CATEGORIES = {
+    "frames": "Оправи",
+    "sunglasses": "Сонцезахисні",
+    "contact-lenses": "Контактні лінзи",
+    "kids-frames": "Дитячі оправи",
+}
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -794,12 +801,20 @@ def exchange_google_code(request: Request, code: str) -> dict[str, Any]:
 
 
 @app.get("/", response_class=HTMLResponse)
-def root(request: Request, session: SessionDep) -> HTMLResponse:
+def root(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request, "index.html",
+        {"landing_version": LANDING_ASSET_VERSION, "categories": CATALOG_CATEGORIES},
+    )
+
+
+@app.get("/booking", response_class=HTMLResponse)
+def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
     ensure_seed_data(session)
 
     return templates.TemplateResponse(
         request,
-        "index.html",
+        "booking.html",
         {
             "app_name": settings.app_name,
             "asset_version": ASSET_VERSION,
@@ -808,6 +823,47 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
             "weekday_labels": WEEKDAY_LABELS,
         },
     )
+
+
+@app.get("/catalog", response_class=HTMLResponse)
+@app.get("/catalog/{category}", response_class=HTMLResponse)
+def catalog_page(request: Request, session: SessionDep, category: str | None = None) -> HTMLResponse:
+    if category is not None and category not in CATALOG_CATEGORIES:
+        raise HTTPException(404, "Категорію каталогу не знайдено.")
+    statement = select(Product).where(Product.is_active).order_by(Product.sort_order, Product.id)
+    if category is not None:
+        statement = statement.where(func.lower(func.replace(Product.category, "_", "-")) == category)
+    return templates.TemplateResponse(
+        request, "catalog.html",
+        {
+            "landing_version": LANDING_ASSET_VERSION,
+            "categories": CATALOG_CATEGORIES,
+            "category": category,
+            "heading": CATALOG_CATEGORIES.get(category, "Каталог"),
+            "products": session.exec(statement).all(),
+            "catalog_image": catalog_image,
+            "catalog_price": catalog_price,
+        },
+    )
+
+
+def catalog_image(url: str | None) -> str | None:
+    if url and re.fullmatch(
+        r"/static/[A-Za-z0-9_/-]+\.(?:png|jpe?g|webp|avif|gif)", url, re.IGNORECASE,
+    ):
+        return url
+    return None
+
+
+def catalog_price(product: Product) -> str:
+    if not product.price_cents:
+        return "Ціну уточнюйте"
+    whole, fraction = divmod(product.price_cents, 100)
+    amount = f"{whole:,}".replace(",", " ")
+    if fraction:
+        amount += f",{fraction:02d}"
+    currency = "грн" if product.currency == "UAH" else product.currency
+    return f"{amount} {currency}"
 
 
 @app.get("/cabinet", response_class=HTMLResponse)

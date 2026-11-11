@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Оптика у Дрогобичі. Перевірка зору, підбір оправ і контактних лінз, виготовлення окулярів." />
+    <title>{% block title %}Optyka Timka — оптика у Дрогобичі{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/landing.css?v={{ landing_version }}" />
+    <script src="/static/js/landing.js?v={{ landing_version }}" defer></script>
+  </head>
+  <body class="landing-page">
+    <a class="landing-skip" href="#main">До вмісту</a>
+    <header class="landing-header" data-landing-header>
+      <div class="landing-container landing-header-inner">
+        <a class="landing-brand" href="/">
+          <span class="landing-glasses" aria-hidden="true"><span></span></span>
+          Optyka Timka
+        </a>
+        {% set location = 'about' if request.url.path == '/' else 'catalog' %}
+        <ul class="landing-location" aria-label="Поточний розділ сайту">
+          {% for key, text in [('catalog', 'Каталог'), ('services', 'Послуги'), ('about', 'Про нас'), ('contacts', 'Контакти')] %}
+          <li data-location="{{ key }}"{% if location == key %} aria-current="location"{% endif %}>{{ text }}</li>
+          {% endfor %}
+        </ul>
+        <a class="landing-button landing-primary" href="/booking">Записатися</a>
+      </div>
+    </header>
+
+    <main class="landing-container" id="main" tabindex="-1">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="landing-footer" id="contacts" data-landing-section="contacts" aria-label="Контакти">
+      <div class="landing-container landing-contact-grid">
+        <div>
+          <strong>Адреса</strong>
+          <a href="https://www.google.com/maps/search/?api=1&amp;query=%D0%94%D1%80%D0%BE%D0%B3%D0%BE%D0%B1%D0%B8%D1%87%2C%20%D0%B2%D1%83%D0%BB.%20%D0%A8%D0%B5%D0%B2%D1%87%D0%B5%D0%BD%D0%BA%D0%B0%2C%2036">Дрогобич, вул. Шевченка, 36</a>
+        </div>
+        <div>
+          <strong>Години роботи</strong>
+          <span>Пн–Сб 10:00–18:00</span>
+          <span>Нд по дзвінку</span>
+        </div>
+        <div class="landing-phones">
+          <strong>Телефон</strong>
+          <a href="tel:+380676733002">+380676733002</a>
+          <a href="tel:+380505304726">+380505304726</a>
+        </div>
+        <a class="landing-cabinet" href="/cabinet">Особистий кабінет</a>
+      </div>
+    </footer>
+  </body>
+</html>

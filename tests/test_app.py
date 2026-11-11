@@ -13,8 +13,8 @@ def test_health(client: TestClient) -> None:
     assert response.json()["status"] == "ok"
 
 
-def test_homepage_renders_booking_form(client: TestClient) -> None:
-    response = client.get("/")
+def test_booking_page_renders_booking_form(client: TestClient) -> None:
+    response = client.get("/booking")
 
     assert response.status_code == 200
     assert "Запис на прийом" in response.text
@@ -96,6 +96,11 @@ def test_create_and_list_product(client: TestClient) -> None:
 
     assert list_response.status_code == 200
     assert list_response.json()[0]["name"] == "Classic frame"
+    category = client.get("/catalog/frames")
+    assert category.status_code == 200
+    assert "Classic frame" in category.text and "1 200 грн" in category.text
+    assert "Classic frame" not in client.get("/catalog/sunglasses").text
+    assert client.get("/catalog/unknown").status_code == 404
 
 
 def test_create_appointment(client: TestClient) -> None:
@@ -136,7 +141,7 @@ def test_create_appointment_rejects_date_outside_booking_window(client: TestClie
     assert response.json()["detail"] == "Запис доступний не більше ніж на 30 днів вперед."
 
 
-def test_admin_can_add_service_that_homepage_uses(client: TestClient) -> None:
+def test_admin_can_add_service_that_booking_page_uses(client: TestClient) -> None:
     response = client.post(
         "/admin/services",
         data={
@@ -151,9 +156,9 @@ def test_admin_can_add_service_that_homepage_uses(client: TestClient) -> None:
 
     assert response.status_code == 303
 
-    homepage = client.get("/")
-    assert homepage.status_code == 200
-    assert "Ремонт окулярів" in homepage.text
+    booking_page = client.get("/booking")
+    assert booking_page.status_code == 200
+    assert "Ремонт окулярів" in booking_page.text
 
 
 def test_admin_can_add_time_slot_that_appears_in_availability(client: TestClient) -> None:
@@ -192,9 +197,9 @@ def test_closed_date_is_not_available_on_booking_form(client: TestClient) -> Non
 
     assert close_response.status_code == 303
 
-    homepage = client.get("/")
-    assert homepage.status_code == 200
-    assert f'value="{closed_on.isoformat()}"' not in homepage.text
+    booking_page = client.get("/booking")
+    assert booking_page.status_code == 200
+    assert f'value="{closed_on.isoformat()}"' not in booking_page.text
 
 
 def test_closed_date_blocks_appointment_booking(client: TestClient) -> None:
