@@ -18,11 +18,11 @@
           Optyka Timka
         </a>
         {% set location = 'about' if request.url.path == '/' else 'catalog' %}
-        <ul class="landing-location" aria-label="Поточний розділ сайту">
+        <nav class="landing-location" aria-label="Розділи сайту">
           {% for key, text in [('catalog', 'Каталог'), ('services', 'Послуги'), ('about', 'Про нас'), ('contacts', 'Контакти')] %}
-          <li data-location="{{ key }}"{% if location == key %} aria-current="location"{% endif %}>{{ text }}</li>
+          <a href="/#{{ key }}" data-location="{{ key }}"{% if location == key %} aria-current="location"{% endif %}>{{ text }}</a>
           {% endfor %}
-        </ul>
+        </nav>
         <a class="landing-button landing-primary" href="/booking">Записатися</a>
       </div>
     </header>
