@@ -103,3 +103,75 @@ def test_closed_period_overlap_and_reopening(client: TestClient) -> None:
     assert client.post("/admin/changes", json={
         "closed_periods": [{"start": days[3], "end": days[0]}],
     }).status_code == 422
+
+
+def test_delete_catalog_rows_keeps_empty_lists_and_allows_readding(
+    client: TestClient, app_db: Engine,
+) -> None:
+    services = client.get("/api/booking-services").json()
+    slots = client.get("/api/time-slots").json()
+    service, slot = services[0], slots[0]
+    with Session(app_db) as session:
+        appointment = Appointment(
+            name="Existing booking", phone="+380980000001", service=service["name"],
+            preferred_date=current_date() + timedelta(days=5), preferred_time=time(9),
+        )
+        session.add(appointment)
+        session.commit()
+        appointment_id = appointment.id
+
+    def versions(rows: list[dict]) -> list[dict]:
+        return [{"id": row["id"], "version": row["updated_at"]} for row in rows]
+
+    response = client.post("/admin/changes", json={
+        "remove_services": versions(services), "remove_time_slots": versions(slots),
+    })
+    assert response.status_code == 200, response.text
+    assert client.get("/api/booking-services").json() == []
+    assert client.get("/api/time-slots").json() == []
+    dashboard = client.get("/admin").text
+    assert service["name"] in dashboard  # The existing appointment still shows its original name.
+    assert 'data-admin-edit="services"' not in dashboard
+    assert 'data-admin-edit="time_slots"' not in dashboard
+    with Session(app_db) as session:
+        existing = session.get(Appointment, appointment_id)
+        assert existing.service == service["name"]
+        assert existing.preferred_time == time(9)
+
+    response = client.post("/admin/changes", json={
+        "services": [{"name": service["name"], "price_uah": 725}],
+        "time_slots": [{"start_time": slot["start_time"], "end_time": "10:30"}],
+    })
+    assert response.status_code == 200, response.text
+    restored = client.get("/api/booking-services").json()
+    assert [(row["name"], row["price_uah"]) for row in restored] == [(service["name"], 725)]
+    assert [row["end_time"] for row in client.get("/api/time-slots").json()] == ["10:30:00"]
+    assert client.post("/admin/changes", json={
+        "services": [{
+            "id": restored[0]["id"], "version": restored[0]["updated_at"],
+            "name": services[1]["name"], "price_uah": 725,
+        }],
+    }).status_code == 200
+    assert [row["name"] for row in client.get("/api/booking-services").json()] == [services[1]["name"]]
+
+
+def test_calendar_saves_nonconsecutive_dates_and_reopens_one_day(client: TestClient) -> None:
+    start = current_date() + timedelta(days=5)
+    days = [(start + timedelta(days=offset)).isoformat() for offset in range(6)]
+    assert client.post("/admin/changes", json={
+        "closed_days": {"close": [days[1], days[3]], "reason": "Existing note"},
+    }).status_code == 200
+    to_open, _ = client.get("/api/closed-dates").json()
+    response = client.post("/admin/changes", json={
+        "closed_days": {
+            "close": [days[0], days[3], days[5]],
+            "reopen": {to_open["id"]: to_open["updated_at"]},
+        },
+    })
+    assert response.status_code == 200, response.text
+    closed = client.get("/api/closed-dates").json()
+    assert [(row["closed_on"], row["reason"]) for row in closed] == [
+        (days[0], ""), (days[3], "Existing note"), (days[5], ""),
+    ]
+    assert client.get("/api/availability", params={"preferred_date": days[1]}).json()
+    assert client.get("/api/availability", params={"preferred_date": days[3]}).json() == []

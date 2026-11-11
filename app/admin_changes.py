@@ -20,9 +20,12 @@ from app.models import (
 MAX_PERIOD_DAYS = 366
 
 
-class AppointmentChange(BaseModel):
+class RowVersion(BaseModel):
     id: PositiveInt
     version: str = Field(max_length=48)
+
+
+class AppointmentChange(RowVersion):
     status: AppointmentStatus
 
 
@@ -55,37 +58,22 @@ class ClosedPeriodChange(BaseModel):
         return self
 
 
+class ClosedDayChanges(BaseModel):
+    close: list[date] = Field(default_factory=list, max_length=1000)
+    reopen: dict[PositiveInt, str] = Field(default_factory=dict, max_length=1000)
+    reason: str = Field(default="", max_length=160)
+
+
 class AdminChanges(BaseModel):
     appointments: list[AppointmentChange] = Field(default_factory=list, max_length=1000)
     services: list[ServiceChange] = Field(default_factory=list, max_length=500)
     time_slots: list[SlotChange] = Field(default_factory=list, max_length=500)
     closed_periods: list[ClosedPeriodChange] = Field(default_factory=list, max_length=25)
+    closed_days: ClosedDayChanges = Field(default_factory=ClosedDayChanges)
+    remove_services: list[RowVersion] = Field(default_factory=list, max_length=500)
+    remove_time_slots: list[RowVersion] = Field(default_factory=list, max_length=500)
     service_order: list[PositiveInt] | None = Field(default=None, max_length=1000)
     time_slot_order: list[PositiveInt] | None = Field(default=None, max_length=1000)
-
-
-def closed_periods_for_display(closed_dates: Sequence[ClosedDate]) -> list[dict[str, Any]]:
-    periods: list[dict[str, Any]] = []
-    for item in closed_dates:
-        previous = periods[-1] if periods else None
-        snapshot = {"id": item.id, "version": item.updated_at.isoformat()}
-        if (
-            previous
-            and previous["reason"] == item.reason
-            and (item.closed_on - previous["end"]).days == 1
-            and len(previous["days"]) < MAX_PERIOD_DAYS
-        ):
-            previous["end"] = item.closed_on
-            previous["days"][item.closed_on.isoformat()] = snapshot
-        else:
-            periods.append({
-                "id": item.id,
-                "start": item.closed_on,
-                "end": item.closed_on,
-                "reason": item.reason,
-                "days": {item.closed_on.isoformat(): snapshot},
-            })
-    return periods
 
 
 def verify_version(row: Any, version: str | None) -> None:
@@ -126,8 +114,9 @@ def apply_catalog_changes(
     model: type[Any],
     changes: Sequence[ServiceChange | SlotChange],
     order: list[int] | None,
+    removals: list[RowVersion],
 ) -> None:
-    if not changes and order is None:
+    if not changes and not removals and order is None:
         return
     rows = {
         row.id: row
@@ -141,8 +130,17 @@ def apply_catalog_changes(
             raise HTTPException(422, "Один рядок змінено кілька разів.")
         verify_version(rows.get(change.id), change.version)
         edited.add(change.id)
+    for removal in removals:
+        if removal.id in edited:
+            raise HTTPException(422, "Один рядок змінено кілька разів.")
+        verify_version(rows.get(removal.id), removal.version)
+        edited.add(removal.id)
     if order is not None:
-        if len(order) != len(rows) or set(order) != rows.keys():
+        visible_ids = {row.id for row in rows.values() if row.is_active}
+        ordered_ids = set(order)
+        if len(order) != len(ordered_ids) or (
+            ordered_ids != visible_ids and ordered_ids != rows.keys()
+        ):
             raise HTTPException(409, "Список змінився. Оновіть сторінку й перевірте порядок.")
         for index, item_id in enumerate(order, start=1):
             row = rows[item_id]
@@ -150,34 +148,66 @@ def apply_catalog_changes(
                 row.sort_order = index
                 row.updated_at = utc_now()
 
-    next_order = max((row.sort_order for row in rows.values()), default=0)
+    for removal in removals:
+        row = rows[removal.id]
+        # Retain deleted rows so an empty catalog is not mistaken for a fresh installation.
+        row.is_active = False
+        row.updated_at = utc_now()
+
+    key = "name" if model is BookingService else "start_time"
+    changing_ids = {change.id for change in changes}
+    retired = {
+        getattr(row, key): row
+        for row in rows.values()
+        if not row.is_active and row.id not in changing_ids
+    }
+    # Free an old value if an existing row is renamed to a previously deleted value.
+    reclaimed = {
+        getattr(change, key) for change in changes if change.id is not None
+    } & retired.keys()
+    for value in reclaimed:
+        session.delete(retired.pop(value))
+    if reclaimed:
+        session.flush()
+
+    next_order = max((row.sort_order for row in rows.values() if row.is_active), default=0)
     for change in changes:
         values = change.model_dump(exclude={"id", "version", "sort_order"})
         if change.id is None:
             next_order += 1
-            session.add(model.model_validate({**values, "sort_order": next_order}))
+            row = retired.pop(values[key], None)
+            values["sort_order"] = next_order
+            if row is None:
+                session.add(model.model_validate(values))
+            else:
+                row.sqlmodel_update(values)
+                row.updated_at = utc_now()
         else:
             row = rows[change.id]
             row.sqlmodel_update(values)
             row.updated_at = utc_now()
 
 
-def apply_closed_period_changes(session: Session, changes: list[ClosedPeriodChange]) -> None:
-    if not changes:
+def apply_closed_date_changes(
+    session: Session, periods: list[ClosedPeriodChange], days: ClosedDayChanges,
+) -> None:
+    if not periods and not days.close and not days.reopen:
         return
     rows = {
         row.id: row for row in session.exec(select(ClosedDate).order_by(ClosedDate.id).with_for_update())
     }
     removed: set[int] = set()
-    for change in changes:
-        for item_id, version in change.previous.items():
+    for previous in [days.reopen, *(period.previous for period in periods)]:
+        for item_id, version in previous.items():
             if item_id in removed:
                 raise HTTPException(422, "Періоди для редагування перетинаються.")
             verify_version(rows.get(item_id), version)
             removed.add(item_id)
 
     final = {row.closed_on: row.reason for item_id, row in rows.items() if item_id not in removed}
-    for change in changes:
+    for day in days.close:
+        final.setdefault(day, days.reason.strip())
+    for change in periods:
         if change.start is None or change.end is None:
             continue
         for offset in range((change.end - change.start).days + 1):
@@ -197,6 +227,11 @@ def apply_closed_period_changes(session: Session, changes: list[ClosedPeriodChan
 
 def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
     apply_appointment_changes(session, changes.appointments)
-    apply_catalog_changes(session, BookingService, changes.services, changes.service_order)
-    apply_catalog_changes(session, AvailableTimeSlot, changes.time_slots, changes.time_slot_order)
-    apply_closed_period_changes(session, changes.closed_periods)
+    apply_catalog_changes(
+        session, BookingService, changes.services, changes.service_order, changes.remove_services,
+    )
+    apply_catalog_changes(
+        session, AvailableTimeSlot, changes.time_slots, changes.time_slot_order,
+        changes.remove_time_slots,
+    )
+    apply_closed_date_changes(session, changes.closed_periods, changes.closed_days)

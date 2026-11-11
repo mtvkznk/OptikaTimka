@@ -5,6 +5,9 @@
   <button class="admin-button admin-button-small" type="button" data-move="1" aria-label="{{ name }} — нижче" title="Перемістити нижче" disabled>↓</button>
 </div>
 {% endmacro %}
+{% macro remove_button(name) %}
+<button class="admin-button admin-danger" type="button" data-remove data-label="{{ name }}" aria-label="Видалити: {{ name }}">Видалити</button>
+{% endmacro %}
 {% block content %}
 <header class="admin-page-heading">
   <div>
@@ -26,8 +29,8 @@
     <span class="admin-metric-hint">Очікують підтвердження</span>
   </a>
   <a class="admin-metric" href="#services">
-    <span>Активні послуги</span>
-    <strong>{{ metrics.active_services }} <small>/ {{ metrics.all_services }}</small></strong>
+    <span>Послуги</span>
+    <strong>{{ services | length }}</strong>
     <span class="admin-metric-hint">У формі запису</span>
   </a>
 </section>
@@ -44,7 +47,7 @@
   <div class="admin-panel-heading">
     <div>
       <h2 id="services-heading">Послуги</h2>
-      <p>Активні послуги клієнти бачать у формі запису.</p>
+      <p>Послуги, доступні для запису на сайті.</p>
     </div>
   </div>
   <div class="admin-edit-list" data-order="service_order">
@@ -61,8 +64,10 @@
       <label class="admin-field">Ціна, ₴
         <input type="number" name="price_uah" min="0" max="1000000" value="{{ service.price_uah }}" required />
       </label>
-      <label class="admin-check"><input type="checkbox" name="is_active"{% if service.is_active %} checked{% endif %} /> Активна</label>
+      {{ remove_button(service.name) }}
     </form>
+    {% else %}
+    <p class="admin-list-empty">Послуг поки немає.</p>
     {% endfor %}
   </div>
   <ul class="admin-pending" data-pending-for="services" hidden></ul>
@@ -79,7 +84,6 @@
       <label class="admin-field">Ціна, ₴
         <input type="number" name="price_uah" min="0" max="1000000" value="0" required />
       </label>
-      <label class="admin-check"><input type="checkbox" name="is_active" checked /> Активна</label>
       <button class="admin-button" type="submit">Додати до списку</button>
     </form>
   </details>
@@ -89,7 +93,6 @@
   <div class="admin-panel-heading">
     <div>
       <h2 id="slots-heading">Доступні години</h2>
-      <p>{{ metrics.active_time_slots }} активних годин у графіку.</p>
     </div>
   </div>
   <div class="admin-edit-list" data-order="time_slot_order">
@@ -103,8 +106,10 @@
       <label class="admin-field">Кінець
         <input type="time" name="end_time" value="{{ format_time(slot.end_time) }}" required />
       </label>
-      <label class="admin-check"><input type="checkbox" name="is_active"{% if slot.is_active %} checked{% endif %} /> Активна</label>
+      {{ remove_button(format_time(slot.start_time)) }}
     </form>
+    {% else %}
+    <p class="admin-list-empty">Годин у графіку поки немає.</p>
     {% endfor %}
   </div>
   <ul class="admin-pending" data-pending-for="time_slots" hidden></ul>
@@ -114,7 +119,6 @@
       {% include "csrf_field.html" %}
       <label class="admin-field">Початок <input type="time" name="start_time" required /></label>
       <label class="admin-field">Кінець <input type="time" name="end_time" required /></label>
-      <label class="admin-check"><input type="checkbox" name="is_active" checked /> Активна</label>
       <button class="admin-button" type="submit">Додати до списку</button>
     </form>
   </details>
@@ -124,31 +128,29 @@
   <div class="admin-panel-heading">
     <div>
       <h2 id="closed-heading">Закриті дати</h2>
-      <p>Обидві дати входять у період. Закриття блокує нові записи.</p>
+      <p>Натисніть на дати, щоб закрити або відкрити їх для запису.</p>
     </div>
   </div>
-  <div class="admin-edit-list">
-    {% for period in closed_periods %}
-    <form class="admin-editor admin-closed" method="post" data-admin-edit="closed_periods" data-id="{{ period.id }}" data-closed-days='{{ period.days | tojson }}'>
-      <label class="admin-field">Від <input type="date" name="start" value="{{ period.start }}" required /></label>
-      <label class="admin-field">До включно <input type="date" name="end" value="{{ period.end if period.end != period.start else '' }}" /></label>
-      <label class="admin-field">Причина <input name="reason" maxlength="160" value="{{ period.reason }}" /></label>
-      <button class="admin-button admin-danger" type="button" data-reopen>Відкрити вибрані дати</button>
-    </form>
-    {% else %}
-    <p class="admin-list-empty">Закритих дат поки немає.</p>
-    {% endfor %}
+  <div class="admin-calendar" data-admin-calendar data-today="{{ today.isoformat() }}" data-closed-days='{{ closed_days | tojson }}'>
+    <div class="admin-calendar-nav">
+      <button class="admin-button" type="button" data-calendar-move="-1" aria-label="Попередній місяць">←</button>
+      <h3 data-calendar-month aria-live="polite"></h3>
+      <button class="admin-button" type="button" data-calendar-move="1" aria-label="Наступний місяць">→</button>
+    </div>
+    <div class="admin-calendar-grid admin-calendar-week" aria-hidden="true">
+      <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Нд</span>
+    </div>
+    <div class="admin-calendar-grid" data-calendar-days role="group" aria-label="Дати місяця"></div>
+    <div class="admin-calendar-legend">
+      <span data-calendar-key="closed">Закрито</span>
+      <span data-calendar-key="closing">Буде закрито</span>
+      <span data-calendar-key="opening">Буде відкрито</span>
+    </div>
+    <p class="admin-calendar-count" data-calendar-count role="status"></p>
+    <label class="admin-field admin-calendar-reason" data-calendar-reason-field hidden>
+      Причина закриття (необов’язково)
+      <input type="text" maxlength="160" data-calendar-reason />
+    </label>
   </div>
-  <ul class="admin-pending" data-pending-for="closed_periods" hidden></ul>
-  <details class="admin-add">
-    <summary>Закрити період</summary>
-    <form class="admin-editor admin-closed" method="post" data-admin-add="closed_periods">
-      <label class="admin-field">Від <input type="date" name="start" required /></label>
-      <label class="admin-field">До включно <input type="date" name="end" aria-describedby="admin-period-help" /></label>
-      <label class="admin-field">Причина <input name="reason" maxlength="160" /></label>
-      <button class="admin-button" type="submit">Додати до списку</button>
-      <p class="admin-period-help" id="admin-period-help">Для одного дня залиште поле «До включно» порожнім.</p>
-    </form>
-  </details>
 </section>
 {% endblock %}

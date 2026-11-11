@@ -2,8 +2,10 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const saveButton = document.querySelector("[data-admin-save]");
 const discardButton = document.querySelector("[data-admin-discard]");
 const saveMessage = document.querySelector("[data-save-message]");
-const storageKey = "optika.admin.changes.v2";
-const blankDraft = () => ({ edits: {}, additions: [], forms: {}, orders: {}, reopened: {} });
+const storageKey = "optika.admin.changes.v3";
+const blankDraft = (month = null) => ({
+  edits: {}, additions: [], forms: {}, orders: {}, removals: {}, days: {}, reason: "", month,
+});
 let draft = blankDraft();
 let saving = false;
 
@@ -18,15 +20,12 @@ function editableFields(form) {
 }
 
 function valuesOf(form) {
-  return Object.fromEntries(editableFields(form).map((field) => [
-    field.name, field.type === "checkbox" ? field.checked : field.value,
-  ]));
+  return Object.fromEntries(editableFields(form).map((field) => [field.name, field.value]));
 }
 
 function fillFields(form, values) {
   editableFields(form).forEach((field) => {
-    if (field.type === "checkbox") field.checked = values[field.name];
-    else field.value = values[field.name];
+    field.value = values[field.name];
   });
 }
 
@@ -35,13 +34,6 @@ function matches(left, right) {
 }
 
 function updateValidity(form, kind, values) {
-  if (kind === "closed_periods") {
-    const days = (Date.parse(values.end) - Date.parse(values.start)) / 86400000;
-    let message = "";
-    if (days < 0) message = "Кінець періоду має бути в день початку або пізніше.";
-    else if (days >= 366) message = "Один період може містити до 366 днів.";
-    form.elements.end.setCustomValidity(message);
-  }
   if (kind === "time_slots") {
     const invalid = values.start_time && values.end_time && values.end_time <= values.start_time;
     form.elements.end_time.setCustomValidity(invalid ? "Кінець має бути пізніше за початок." : "");
@@ -50,12 +42,13 @@ function updateValidity(form, kind, values) {
 }
 
 function activeEdits() {
-  return Object.values(draft.edits);
+  return Object.entries(draft.edits).filter(([key]) => !draft.removals[key]).map(([, edit]) => edit);
 }
 
 function numberOfChanges() {
   return activeEdits().length + draft.additions.length + Object.keys(draft.forms).length
-    + Object.keys(draft.orders).length + Object.keys(draft.reopened).length;
+    + Object.keys(draft.orders).length + Object.keys(draft.removals).length
+    + Object.keys(draft.days).length;
 }
 
 function showSaveState(message, error = false) {
@@ -80,12 +73,9 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
   const kind = form.dataset.adminEdit;
   const key = kind + ":" + form.dataset.id;
   const initial = valuesOf(form);
-  const closedDays = kind === "closed_periods" ? Object.entries(JSON.parse(form.dataset.closedDays)) : [];
-  const identity = closedDays.length
-    ? { previous: Object.fromEntries(closedDays.map(([, day]) => [day.id, day.version])) }
-    : { id: Number(form.dataset.id), version: form.dataset.version };
+  const identity = { id: Number(form.dataset.id), version: form.dataset.version };
 
-  const existing = draft.reopened[key] ?? draft.edits[key];
+  const existing = draft.edits[key];
   if (existing) {
     fillFields(form, existing.values);
     form.dataset.dirty = "";
@@ -105,50 +95,27 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
     saveButton.focus();
   });
 
-  const reopen = form.querySelector("[data-reopen]");
-  if (!reopen) return;
-  const renderReopen = () => {
-    const willReopen = Boolean(draft.reopened[key]);
-    form.toggleAttribute("data-reopening", willReopen);
-    editableFields(form).forEach((field) => { field.disabled = willReopen; });
-    reopen.textContent = willReopen ? "Залишити закритим" : "Відкрити вибрані дати";
+  const remove = form.querySelector("[data-remove]");
+  if (!remove) return;
+  const renderRemoval = () => {
+    const pending = Boolean(draft.removals[key]);
+    form.toggleAttribute("data-removing", pending);
+    editableFields(form).forEach((field) => { field.disabled = pending; });
+    remove.textContent = pending ? "Скасувати" : "Видалити";
+    remove.setAttribute("aria-label", (pending ? "Скасувати видалення: " : "Видалити: ") + remove.dataset.label);
+    form.parentElement.dispatchEvent(new Event("admin-removals"));
   };
-  renderReopen();
-  reopen.addEventListener("click", () => {
-    if (draft.reopened[key]) {
-      delete draft.reopened[key];
-      fillFields(form, initial);
-      updateValidity(form, kind, initial);
-      form.removeAttribute("data-dirty");
-    } else {
-      const values = valuesOf(form);
-      if (!updateValidity(form, kind, values)) {
-        form.reportValidity();
-        return;
-      }
-      const selected = closedDays.filter(([day]) => values.start <= day && day <= (values.end || values.start));
-      if (!selected.length) {
-        showSaveState("У вибраному проміжку немає дат цього закритого періоду.", true);
-        return;
-      }
-      const versions = draft.edits[key]?.identity.previous ?? identity.previous;
-      const previous = Object.fromEntries(selected.map(([, day]) => [day.id, versions[day.id] ?? day.version]));
-      draft.reopened[key] = { identity: { previous }, values };
-      delete draft.edits[key];
-    }
-    renderReopen();
+  renderRemoval();
+  remove.addEventListener("click", () => {
+    if (draft.removals[key]) delete draft.removals[key];
+    else draft.removals[key] = { kind, identity: draft.edits[key]?.identity ?? identity };
+    renderRemoval();
     persistDraft();
   });
 });
 
 function additionLabel(kind, values) {
-  if (kind === "services") return values.name;
-  if (kind === "time_slots") return values.start_time + " – " + values.end_time;
-  const formatDate = (value) => value.split("-").reverse().join(".");
-  const dates = values.end && values.end !== values.start
-    ? formatDate(values.start) + " – " + formatDate(values.end)
-    : formatDate(values.start);
-  return values.reason ? dates + " · " + values.reason : dates;
+  return kind === "services" ? values.name : values.start_time + " – " + values.end_time;
 }
 
 function renderAdditions() {
@@ -208,6 +175,7 @@ document.querySelectorAll("[data-admin-add]").forEach((form) => {
 document.querySelectorAll("[data-order]").forEach((list) => {
   const orderKey = list.dataset.order;
   const getRows = () => [...list.querySelectorAll("[data-id]")];
+  const movableRows = () => getRows().filter((row) => !row.hasAttribute("data-removing"));
   const idsOf = (rows) => rows.map((row) => Number(row.dataset.id));
   const initial = idsOf(getRows());
   const pending = draft.orders[orderKey];
@@ -217,19 +185,22 @@ document.querySelectorAll("[data-order]").forEach((list) => {
   }
 
   const syncButtons = () => {
-    const rows = getRows();
-    rows.forEach((row, index) => {
-      row.querySelector('[data-move="-1"]').disabled = index === 0;
-      row.querySelector('[data-move="1"]').disabled = index === rows.length - 1;
+    const movable = movableRows();
+    getRows().forEach((row) => {
+      const index = movable.indexOf(row);
+      row.querySelector('[data-move="-1"]').disabled = index <= 0;
+      row.querySelector('[data-move="1"]').disabled = index < 0 || index === movable.length - 1;
     });
   };
   syncButtons();
+  list.addEventListener("admin-removals", syncButtons);
   list.addEventListener("click", (event) => {
     const button = event.target.closest("[data-move]");
     if (!button) return;
     const row = button.closest("[data-id]");
     const up = button.dataset.move === "-1";
-    const neighbor = up ? row.previousElementSibling : row.nextElementSibling;
+    const movable = movableRows();
+    const neighbor = movable[movable.indexOf(row) + (up ? -1 : 1)];
     if (!neighbor) return;
 
     if (up) list.insertBefore(row, neighbor);
@@ -245,24 +216,27 @@ document.querySelectorAll("[data-order]").forEach((list) => {
 });
 
 function payloadOfDraft() {
-  const payload = { appointments: [], services: [], time_slots: [], closed_periods: [], ...draft.orders };
+  const payload = {
+    appointments: [], services: [], time_slots: [],
+    remove_services: [], remove_time_slots: [],
+    closed_days: { close: [], reopen: {}, reason: draft.reason },
+    ...draft.orders,
+  };
   const entries = [...activeEdits(), ...draft.additions, ...Object.values(draft.forms)];
   entries.forEach(({ kind, identity, values }) => {
-    const item = { ...identity, ...values };
-    if (kind === "closed_periods" && !item.end) item.end = null;
-    payload[kind].push(item);
+    payload[kind].push({ ...identity, ...values });
   });
-  payload.closed_periods.push(...Object.values(draft.reopened).map((entry) => entry.identity));
+  Object.values(draft.removals).forEach(({ kind, identity }) => payload["remove_" + kind].push(identity));
+  Object.entries(draft.days).forEach(([day, reopening]) => {
+    if (reopening) payload.closed_days.reopen[reopening.id] = reopening.version;
+    else payload.closed_days.close.push(day);
+  });
   return payload;
 }
 
 function clearDraft() {
-  draft = blankDraft();
-  try {
-    sessionStorage.removeItem(storageKey);
-  } catch {
-    // Storage can be disabled by the browser.
-  }
+  draft = blankDraft(draft.month);
+  persistDraft();
 }
 
 saveButton.addEventListener("click", async () => {
@@ -321,6 +295,115 @@ discardButton.addEventListener("click", () => {
   clearDraft();
   location.reload();
 });
+
+const calendar = document.querySelector("[data-admin-calendar]");
+if (calendar) {
+  const closed = JSON.parse(calendar.dataset.closedDays);
+  const today = calendar.dataset.today;
+  const monthLabel = calendar.querySelector("[data-calendar-month]");
+  const daysGrid = calendar.querySelector("[data-calendar-days]");
+  const count = calendar.querySelector("[data-calendar-count]");
+  const reason = calendar.querySelector("[data-calendar-reason]");
+  const reasonField = calendar.querySelector("[data-calendar-reason-field]");
+  const monthFormat = new Intl.DateTimeFormat("uk-UA", { month: "long", year: "numeric", timeZone: "UTC" });
+  const dateFormat = new Intl.DateTimeFormat("uk-UA", { dateStyle: "full", timeZone: "UTC" });
+  const dateAt = (year, month, day = 1) => {
+    const date = new Date(0);
+    date.setUTCFullYear(year, month, day);
+    return date;
+  };
+  const fromISO = (iso) => new Date(iso + "T00:00:00Z");
+  const dateKey = (date) => date.toISOString().slice(0, 10);
+  const start = fromISO((draft.month ?? today.slice(0, 7)) + "-01");
+  let month = Number.isNaN(start.getTime()) ? fromISO(today.slice(0, 7) + "-01") : start;
+  reason.value = draft.reason;
+
+  function renderCalendar() {
+    const title = monthFormat.format(month);
+    if (monthLabel.textContent !== title) monthLabel.textContent = title;
+    const year = month.getUTCFullYear();
+    const monthIndex = month.getUTCMonth();
+    const offset = (month.getUTCDay() + 6) % 7;
+    const lastDay = dateAt(year, monthIndex + 1, 0).getUTCDate();
+    const cells = Array.from({ length: offset }, () => {
+      const empty = document.createElement("span");
+      empty.setAttribute("aria-hidden", "true");
+      return empty;
+    });
+    for (let day = 1; day <= lastDay; day++) {
+      const date = dateAt(year, monthIndex, day);
+      const iso = dateKey(date);
+      const current = closed[iso];
+      const pending = Object.hasOwn(draft.days, iso);
+      const state = pending ? (draft.days[iso] ? "opening" : "closing") : (current ? "closed" : "");
+      const label = { closed: "Закрито", closing: "Буде закрито", opening: "Буде відкрито" }[state];
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "admin-calendar-day";
+      button.dataset.calendarDay = iso;
+      button.dataset.state = state;
+      button.textContent = String(day);
+      button.setAttribute("aria-pressed", String(state === "closed" || state === "closing"));
+      if (iso === today) button.setAttribute("aria-current", "date");
+      button.setAttribute("aria-label", [dateFormat.format(date), label, current?.reason].filter(Boolean).join(". "));
+      if (current?.reason) button.title = current.reason;
+      cells.push(button);
+    }
+    daysGrid.replaceChildren(...cells);
+    const pending = Object.values(draft.days);
+    const opening = pending.filter(Boolean).length;
+    const closing = pending.length - opening;
+    count.textContent = [
+      closing ? "До закриття: " + closing : "",
+      opening ? "До відкриття: " + opening : "",
+    ].filter(Boolean).join(" · ");
+    reasonField.hidden = !closing;
+  }
+
+  function goTo(target) {
+    const year = target.getUTCFullYear();
+    if (year < 1 || year > 9999) return false;
+    month = dateAt(year, target.getUTCMonth());
+    draft.month = dateKey(month).slice(0, 7);
+    persistDraft();
+    renderCalendar();
+    return true;
+  }
+
+  calendar.querySelectorAll("[data-calendar-move]").forEach((button) => {
+    button.addEventListener("click", () => {
+      goTo(dateAt(month.getUTCFullYear(), month.getUTCMonth() + Number(button.dataset.calendarMove)));
+    });
+  });
+  const focusDate = (iso) => daysGrid.querySelector('[data-calendar-day="' + iso + '"]')?.focus();
+  daysGrid.addEventListener("click", (event) => {
+    const iso = event.target.closest("[data-calendar-day]")?.dataset.calendarDay;
+    if (!iso) return;
+    if (Object.hasOwn(draft.days, iso)) delete draft.days[iso];
+    else if (closed[iso]) {
+      const { id, version } = closed[iso];
+      draft.days[iso] = { id, version };
+    } else draft.days[iso] = null;
+    persistDraft();
+    renderCalendar();
+    focusDate(iso);
+  });
+  daysGrid.addEventListener("keydown", (event) => {
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[event.key];
+    const iso = event.target.dataset.calendarDay;
+    if (!step || !iso) return;
+    event.preventDefault();
+    const target = fromISO(iso);
+    target.setUTCDate(target.getUTCDate() + step);
+    if (target.getUTCMonth() !== month.getUTCMonth() && !goTo(target)) return;
+    focusDate(dateKey(target));
+  });
+  reason.addEventListener("input", () => {
+    draft.reason = reason.value;
+    persistDraft();
+  });
+  renderCalendar();
+}
 
 renderAdditions();
 showSaveState();

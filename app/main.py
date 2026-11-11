@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.admin_changes import AdminChanges, apply_admin_changes, closed_periods_for_display
+from app.admin_changes import AdminChanges, apply_admin_changes
 from app.config import settings
 from app.database import get_session
 from app.models import (
@@ -145,7 +145,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261111-cabinet-admin"
-ADMIN_ASSET_VERSION = "20261111-admin-changes"
+ADMIN_ASSET_VERSION = "20261111-admin-calendar"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -398,16 +398,8 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
     ensure_seed_data(session)
     today = current_date()
 
-    services = list(
-        session.exec(
-            select(BookingService).order_by(BookingService.sort_order, BookingService.id)
-        ).all()
-    )
-    time_slots = list(
-        session.exec(
-            select(AvailableTimeSlot).order_by(AvailableTimeSlot.sort_order, AvailableTimeSlot.id)
-        ).all()
-    )
+    services = get_active_services(session)
+    time_slots = get_active_time_slots(session)
     closed_dates = list(
         session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
     )
@@ -419,9 +411,6 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         ).all()
     )
 
-    active_time_slots = [slot for slot in time_slots if slot.is_active]
-    active_services = [service for service in services if service.is_active]
-
     return {
         "request": request,
         "app_name": settings.app_name,
@@ -429,7 +418,12 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         "today": today,
         "services": services,
         "time_slots": time_slots,
-        "closed_periods": closed_periods_for_display(closed_dates),
+        "closed_days": {
+            item.closed_on.isoformat(): {
+                "id": item.id, "version": item.updated_at.isoformat(), "reason": item.reason,
+            }
+            for item in closed_dates
+        },
         "status_options": STATUS_OPTIONS,
         "appointment_rows": build_appointment_rows(latest_appointments),
         "appointment_return_url": "/admin#appointments",
@@ -444,9 +438,6 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
                 Appointment,
                 Appointment.status == AppointmentStatus.new,
             ),
-            "active_services": len(active_services),
-            "all_services": len(services),
-            "active_time_slots": len(active_time_slots),
         },
         "format_date": format_date,
         "format_time": format_time,
