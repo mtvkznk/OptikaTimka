@@ -126,6 +126,43 @@ def test_last_category_removal_cleans_up_home_navigation(client: TestClient) -> 
     assert client.get("/booking").status_code == 200
 
 
+def test_new_category_and_its_products_share_one_save(
+    client: TestClient, anonymous_client: TestClient, app_db: Engine,
+) -> None:
+    slug = "category-0123456789abcdef0123456789abcdef"
+    url = "/catalog/" + slug
+    category = {"id": slug, "name": "Спортивні оправи"}
+    product = {"category": slug, "name": "Оправа для бігу", "price": 800}
+    changes = {"create_categories": [category], "products": [product]}
+
+    assert anonymous_client.post("/admin/changes", json=changes).status_code == 401
+    assert client.post("/admin/changes", json={
+        "create_categories": [{**category, "name": "  ОПРАВИ  "}],
+    }).status_code == 409
+    assert client.post("/admin/changes", json={
+        **changes, "products": [{**product, "category": "unknown"}],
+    }).status_code == 409
+    assert client.get(url).status_code == 404
+    assert client.post("/admin/changes", json=changes).status_code == 200
+    assert url in anonymous_client.get("/").text
+    assert "Оправа для бігу" in anonymous_client.get(url).text
+    assert client.get("/catalog/frames").status_code == 200
+
+    def version() -> dict:
+        with Session(app_db) as session:
+            return {"id": slug, "version": session.get(CatalogCategory, slug).updated_at.isoformat()}
+
+    assert client.post("/admin/changes", json={"categories": [{
+        **version(), "name": "Оправи для спорту",
+    }]}).status_code == 200
+    assert "Оправи для спорту" in anonymous_client.get(url).text
+    assert client.post("/admin/changes", json={"remove_categories": [version()]}).status_code == 200
+    assert anonymous_client.get(url).status_code == 404
+    assert anonymous_client.get("/api/products").json() == []
+    assert client.post("/admin/changes", json={"restore_categories": [version()]}).status_code == 200
+    assert "Оправа для бігу" in anonymous_client.get(url).text
+
+
 def test_photo_visibility_follows_category_removal_and_restoration(
     client: TestClient, anonymous_client: TestClient, app_db: Engine,
 ) -> None:

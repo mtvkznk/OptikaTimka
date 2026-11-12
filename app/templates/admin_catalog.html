@@ -4,7 +4,7 @@
   <input name="name" value="{{ product.name if product else '' }}" maxlength="160" required />
 </label>
 <label class="admin-field">Категорія
-  <select name="category" required>
+  <select name="category" data-product-category required>
     {% if selected not in categories %}
     <option value="" selected disabled>{{ 'Категорію видалено' if selected in removed_categories else 'Оберіть категорію' }}</option>
     {% endif %}
@@ -39,10 +39,20 @@
 </header>
 <section class="admin-panel" id="catalog" aria-labelledby="admin-catalog-heading">
   <h2 class="admin-catalog-heading">Категорії на головній</h2>
+  <details class="admin-add admin-add-inline">
+    <summary>Створити категорію</summary>
+    <form class="admin-editor admin-category-create" method="post" action="/admin/changes" data-admin-add="create_categories">
+      <label class="admin-field">Назва нової категорії
+        <input name="name" maxlength="80" required />
+      </label>
+      <button class="admin-button" type="submit">Додати до чернетки</button>
+    </form>
+  </details>
+  <ul class="admin-pending admin-pending-categories" data-pending-for="create_categories" hidden></ul>
   <div class="admin-category-grid">
     {% for slug, category in categories.items() %}
     <form class="admin-editor" method="post" action="/admin/changes" data-admin-edit="categories" data-id="{{ slug }}" data-version="{{ category.version }}">
-      <label class="admin-field">Назва плитки «{{ category.original_name }}»
+      <label class="admin-field">Назва категорії
         <input name="name" value="{{ category.name }}" maxlength="80" required />
       </label>
       {{ remove_button(category.name) }}
@@ -65,15 +75,13 @@
   </details>
   {% endif %}
   <h2 class="admin-catalog-heading">Товари</h2>
-  {% if categories %}
-  <details class="admin-add admin-add-product">
+  <details class="admin-add admin-add-inline" data-add-product{% if not categories %} hidden{% endif %}>
     <summary>Додати товар</summary>
     <form class="admin-editor admin-product" method="post" action="/admin/changes" data-admin-add="products">
       {{ product_fields() }}
       <button class="admin-button" type="submit">Додати до списку</button>
     </form>
   </details>
-  {% endif %}
   <ul class="admin-pending" data-pending-for="products" hidden></ul>
   <div class="admin-edit-list">
     {% for product in products %}

@@ -1,4 +1,4 @@
-<!doctype html>
+{% from "brand.html" import wordmark %}<!doctype html>
 <html lang="uk">
   <head>
     <meta charset="UTF-8" />
@@ -6,6 +6,7 @@
     <meta name="description" content="Оптика у Дрогобичі. Перевірка зору, підбір оправ і контактних лінз, виготовлення окулярів." />
     <title>{% block title %}Optyka Timka — оптика у Дрогобичі{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/brand.css?v={{ landing_version }}" />
     <link rel="stylesheet" href="/static/css/landing.css?v={{ landing_version }}" />
     <script src="/static/js/landing.js?v={{ landing_version }}" defer></script>
   </head>
@@ -13,9 +14,8 @@
     <a class="landing-skip" href="#main">До вмісту</a>
     <header class="landing-header" data-landing-header>
       <div class="landing-container landing-header-inner">
-        <a class="landing-brand" href="/">
-          <span class="landing-glasses" aria-hidden="true"><span></span></span>
-          Optyka Timka
+        <a class="brand-link landing-brand" href="/">
+          {{ wordmark() }}
         </a>
         {% set location = 'about' if request.url.path == '/' else 'catalog' %}
         <nav class="landing-location" aria-label="Розділи сайту">

@@ -1,13 +1,10 @@
-from typing import Literal
-
 from sqlalchemy import func
 from sqlmodel import Session, select
 from sqlmodel.sql.expression import SelectOfScalar
 
 from app.models import CatalogCategory, Product
 
-CategorySlug = Literal["frames", "sunglasses", "contact-lenses", "kids-frames"]
-DEFAULT_CATEGORIES: dict[CategorySlug, str] = {
+DEFAULT_CATEGORIES = {
     "frames": "Оправи",
     "sunglasses": "Сонцезахисні",
     "contact-lenses": "Контактні лінзи",
@@ -15,19 +12,20 @@ DEFAULT_CATEGORIES: dict[CategorySlug, str] = {
 }
 
 
-def category_overrides(session: Session) -> dict[str, CatalogCategory]:
-    return {
-        row.slug: row for row in session.exec(select(CatalogCategory))
-        if row.slug in DEFAULT_CATEGORIES
-    }
+def category_records(session: Session) -> dict[str, CatalogCategory | None]:
+    rows = {row.slug: row for row in session.exec(select(CatalogCategory))}
+    categories = {slug: rows.pop(slug, None) for slug in DEFAULT_CATEGORIES}
+    categories.update(
+        (row.slug, row) for row in sorted(rows.values(), key=lambda row: (row.name.casefold(), row.slug))
+    )
+    return categories
 
 
 def category_names(session: Session) -> dict[str, str]:
-    overrides = category_overrides(session)
     return {
-        slug: overrides[slug].name if slug in overrides else name
-        for slug, name in DEFAULT_CATEGORIES.items()
-        if slug not in overrides or not overrides[slug].is_removed
+        slug: row.name if row is not None else DEFAULT_CATEGORIES[slug]
+        for slug, row in category_records(session).items()
+        if row is None or not row.is_removed
     }
 
 

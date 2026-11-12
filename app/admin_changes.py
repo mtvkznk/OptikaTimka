@@ -16,7 +16,7 @@ from app.booking import (
     minute_of,
     working_intervals,
 )
-from app.catalog import DEFAULT_CATEGORIES, CategorySlug, category_names
+from app.catalog import DEFAULT_CATEGORIES, category_names
 from app.models import (
     Appointment,
     AppointmentStatus,
@@ -37,6 +37,10 @@ from app.product_photos import (
 )
 
 MAX_PERIOD_DAYS = 366
+CategorySlug = Annotated[
+    str, StringConstraints(max_length=80, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$"),
+]
+CategoryName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 
 
 class RowVersion(BaseModel):
@@ -64,7 +68,12 @@ class CategoryVersion(BaseModel):
 
 
 class CategoryChange(CategoryVersion):
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+    name: CategoryName
+
+
+class CategoryCreate(BaseModel):
+    id: Annotated[str, StringConstraints(pattern=r"^category-[0-9a-f]{32}$", max_length=41)]
+    name: CategoryName
 
 
 class ProductChange(BaseModel):
@@ -178,9 +187,10 @@ class ClosedDayChanges(BaseModel):
 class AdminChanges(BaseModel):
     appointments: list[AppointmentChange] = Field(default_factory=list, max_length=1000)
     services: list[ServiceChange] = Field(default_factory=list, max_length=500)
-    categories: list[CategoryChange] = Field(default_factory=list, max_length=4)
-    remove_categories: list[CategoryVersion] = Field(default_factory=list, max_length=4)
-    restore_categories: list[CategoryVersion] = Field(default_factory=list, max_length=4)
+    categories: list[CategoryChange] = Field(default_factory=list, max_length=500)
+    create_categories: list[CategoryCreate] = Field(default_factory=list, max_length=500)
+    remove_categories: list[CategoryVersion] = Field(default_factory=list, max_length=500)
+    restore_categories: list[CategoryVersion] = Field(default_factory=list, max_length=500)
     products: list[ProductChange] = Field(default_factory=list, max_length=500)
     remove_products: list[RowVersion] = Field(default_factory=list, max_length=500)
     time_slots: list[SlotChange] = Field(default_factory=list, max_length=500)
@@ -322,16 +332,16 @@ def apply_catalog_changes(
 
 def apply_category_changes(
     session: Session, changes: list[CategoryChange], removals: list[CategoryVersion],
-    restorations: list[CategoryVersion],
+    restorations: list[CategoryVersion], additions: list[CategoryCreate],
 ) -> None:
     edits = [*changes, *removals]
-    all_changes = [*edits, *restorations]
+    all_changes = [*edits, *restorations, *additions]
     if len({change.id for change in all_changes}) != len(all_changes):
         raise HTTPException(422, "Одну категорію змінено кілька разів.")
     for change in edits:
         removing = not isinstance(change, CategoryChange)
         category = session.get(CatalogCategory, change.id)
-        if category is None and not change.version:
+        if category is None and not change.version and change.id in DEFAULT_CATEGORIES:
             category = CatalogCategory(slug=change.id, name=DEFAULT_CATEGORIES[change.id])
             session.add(category)
         elif category is None or category.is_removed:
@@ -350,6 +360,16 @@ def apply_category_changes(
             raise HTTPException(409, "Категорія вже доступна. Оновіть сторінку.")
         category.is_removed = False
         category.updated_at = utc_now()
+    if additions:
+        names = {" ".join(name.casefold().split()) for name in category_names(session).values()}
+        for addition in additions:
+            name = " ".join(addition.name.casefold().split())
+            if name in names:
+                raise HTTPException(409, "Категорія з такою назвою вже є в каталозі.")
+            if session.get(CatalogCategory, addition.id) is not None:
+                raise HTTPException(409, "Категорію вже створено. Оновіть сторінку.")
+            names.add(name)
+            session.add(CatalogCategory(slug=addition.id, name=addition.name))
 
 
 def apply_product_changes(
@@ -443,6 +463,7 @@ def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
     apply_appointment_changes(session, changes.appointments)
     apply_category_changes(
         session, changes.categories, changes.remove_categories, changes.restore_categories,
+        changes.create_categories,
     )
     apply_product_changes(session, changes.products, changes.remove_products, photos)
     apply_catalog_changes(

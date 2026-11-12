@@ -109,6 +109,31 @@ function activeEdits() {
   return Object.entries(draft.edits).filter(([key]) => !draft.removals[key]).map(([, edit]) => edit);
 }
 
+function draftEntries() {
+  return [...activeEdits(), ...draft.additions, ...Object.values(draft.forms)];
+}
+
+function renderCategoryOptions() {
+  const additions = draft.additions.filter((item) => item.kind === "create_categories");
+  document.querySelectorAll("[data-product-category]").forEach((select) => {
+    const selected = select.value;
+    select.querySelectorAll("[data-pending-category]").forEach((option) => option.remove());
+    additions.forEach(({ identity, values }) => {
+      const option = new Option(values.name, identity.id);
+      option.dataset.pendingCategory = "";
+      select.add(option);
+    });
+    select.value = selected;
+  });
+  const addProduct = document.querySelector("[data-add-product]");
+  if (addProduct) {
+    const select = addProduct.querySelector("[data-product-category]");
+    addProduct.hidden = ![...select.options].some((option) => option.value);
+  }
+}
+
+renderCategoryOptions();
+
 function numberOfChanges() {
   return activeEdits().length + draft.additions.length + Object.keys(draft.forms).length
     + Object.keys(draft.orders).length + Object.keys(draft.removals).length
@@ -189,6 +214,7 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
 });
 
 function renderAdditions() {
+  renderCategoryOptions();
   document.querySelectorAll("[data-pending-for]").forEach((list) => {
     const items = draft.additions.filter((item) => item.kind === list.dataset.pendingFor);
     list.hidden = !items.length;
@@ -202,6 +228,12 @@ function renderAdditions() {
       remove.textContent = "Прибрати";
       remove.setAttribute("aria-label", "Прибрати зі змін: " + label.textContent);
       remove.addEventListener("click", () => {
+        if (item.kind === "create_categories" && draftEntries().some(
+          (entry) => entry.kind === "products" && entry.values.category === item.identity.id
+        )) {
+          showSaveState("Спершу змініть категорію в товарах, які її використовують.", true);
+          return;
+        }
         draft.additions = draft.additions.filter((entry) => entry !== item);
         renderAdditions();
         persistDraft();
@@ -215,6 +247,9 @@ function renderAdditions() {
 document.querySelectorAll("[data-admin-add]").forEach((form) => {
   const kind = form.dataset.adminAdd;
   const initial = valuesOf(form);
+  const identity = () => kind === "create_categories"
+    ? draft.forms[kind]?.identity ?? { id: "category-" + crypto.randomUUID().replaceAll("-", "") }
+    : undefined;
   if (draft.forms[kind]) {
     fillFields(form, draft.forms[kind].values);
     form.closest("details").open = true;
@@ -224,7 +259,7 @@ document.querySelectorAll("[data-admin-add]").forEach((form) => {
     const values = valuesOf(form);
     const valid = form.checkValidity();
     if (matches(initial, values)) delete draft.forms[kind];
-    else draft.forms[kind] = { kind, values, valid };
+    else draft.forms[kind] = { kind, identity: identity(), values, valid };
     persistDraft();
   });
   form.addEventListener("submit", (event) => {
@@ -235,7 +270,7 @@ document.querySelectorAll("[data-admin-add]").forEach((form) => {
       form.reportValidity();
       return;
     }
-    draft.additions.push({ kind, values });
+    draft.additions.push({ kind, identity: identity(), values });
     delete draft.forms[kind];
     form.reset();
     renderAdditions();
@@ -466,13 +501,12 @@ if (scheduleForm) {
 function payloadOfDraft() {
   const payload = {
     appointments: [], services: [], remove_services: [],
-    categories: [], remove_categories: [], products: [], remove_products: [],
+    categories: [], create_categories: [], remove_categories: [], products: [], remove_products: [],
     restore_categories: Object.values(draft.restorations),
     closed_days: { close: [], reopen: {}, reason: draft.reason },
     ...draft.orders,
   };
-  const entries = [...activeEdits(), ...draft.additions, ...Object.values(draft.forms)];
-  entries.forEach(({ kind, identity, values }) => {
+  draftEntries().forEach(({ kind, identity, values }) => {
     payload[kind].push({ ...identity, ...values });
   });
   Object.values(draft.removals).forEach(({ kind, identity }) => payload["remove_" + kind].push(identity));

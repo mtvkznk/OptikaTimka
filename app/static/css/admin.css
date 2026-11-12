@@ -38,28 +38,13 @@
   padding-block: 0.65rem;
 }
 
-.admin-brand {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  color: var(--admin-text);
-  font-size: 1.04rem;
-  font-weight: 750;
-  text-decoration: none;
-}
-
-.admin-brand img {
-  flex: 0 0 auto;
-  border-radius: 0.55rem;
-  background: #fff;
-}
-
 .admin-brand small {
   display: block;
   margin-top: 0.15rem;
   color: var(--admin-muted);
   font-size: 0.75rem;
   font-weight: 500;
+  letter-spacing: normal;
 }
 
 .admin-nav,
@@ -172,6 +157,7 @@
 .admin-save-actions [hidden],
 .admin-pending[hidden],
 .admin-photo [hidden],
+[data-add-product][hidden],
 [data-admin-view][hidden] {
   display: none;
 }
@@ -730,10 +716,19 @@
   padding-top: 0.7rem;
 }
 
-.admin-add-product {
+.admin-add-inline {
   margin: 0 0 0.75rem;
   border-top: 0;
   padding-top: 0;
+}
+
+.admin-category-create {
+  grid-template-columns: minmax(0, 22rem) auto;
+  justify-content: start;
+}
+
+.admin-pending-categories {
+  margin-bottom: 0.75rem;
 }
 
 .admin-add summary {
@@ -993,6 +988,10 @@
   .admin-editor,
   .admin-filter {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-category-create .admin-field {
+    grid-column: 1 / -1;
   }
 
   .admin-product > button {

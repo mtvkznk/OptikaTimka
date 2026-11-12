@@ -1,0 +1,4 @@
+{% macro wordmark(subtitle=none) -%}
+<span class="brand-glasses" aria-hidden="true"><span></span></span>
+<span class="brand-label">Optyka Timka{% if subtitle %}<small>{{ subtitle }}</small>{% endif %}</span>
+{%- endmacro %}

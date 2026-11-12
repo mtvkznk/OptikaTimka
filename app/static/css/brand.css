@@ -1,0 +1,63 @@
+.brand-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: fit-content;
+  color: #19221d;
+  font: 700 1.35rem/1.3 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: -0.035em;
+  text-decoration: none;
+}
+
+.brand-link .brand-glasses { color: #2a5f46; }
+
+.brand-glasses {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 2.35em;
+  height: 1em;
+  font-size: 1rem;
+}
+
+.brand-glasses::before,
+.brand-glasses::after {
+  position: absolute;
+  top: 0.08em;
+  width: 0.9em;
+  height: 0.9em;
+  border: 0.13em solid currentColor;
+  border-radius: 45% 45% 50% 50%;
+  content: "";
+}
+
+.brand-glasses::before { left: 0.08em; }
+.brand-glasses::after { right: 0.08em; }
+
+.brand-glasses span {
+  position: absolute;
+  top: 0.38em;
+  left: 0.91em;
+  width: 0.54em;
+  height: 0.28em;
+  border-top: 0.13em solid currentColor;
+  border-radius: 50%;
+}
+
+.brand-glasses span::before,
+.brand-glasses span::after {
+  position: absolute;
+  top: -0.35em;
+  width: 0.28em;
+  border-top: 0.13em solid currentColor;
+  border-radius: 2px;
+  content: "";
+}
+
+.brand-glasses span::before { left: -1em; transform: rotate(55deg); }
+.brand-glasses span::after { right: -1em; transform: rotate(-55deg); }
+
+@media (max-width: 35rem) {
+  .brand-link { font-size: 1.12rem; gap: 0.45rem; }
+  .brand-link .brand-glasses { transform: scale(0.87); }
+}

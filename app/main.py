@@ -36,7 +36,7 @@ from app.catalog import (
     DEFAULT_CATEGORIES,
     active_products,
     category_names,
-    category_overrides,
+    category_records,
     product_category,
     public_products,
     visible_category,
@@ -167,8 +167,8 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261112-booking-contact"
-ADMIN_ASSET_VERSION = "20261112-admin-workspace"
-LANDING_ASSET_VERSION = "20261112-product-photos"
+ADMIN_ASSET_VERSION = "20261112-create-category"
+LANDING_ASSET_VERSION = "20261112-shared-brand"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -396,7 +396,7 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
     today = current_date()
 
     services = get_active_services(session)
-    overrides = category_overrides(session)
+    records = category_records(session)
     closed_dates = list(
         session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
     )
@@ -418,14 +418,15 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         "all_weekdays": ALL_WEEKDAYS,
         "categories": {
             slug: {
-                "original_name": name,
-                "name": overrides[slug].name if slug in overrides else name,
-                "version": overrides[slug].updated_at.isoformat() if slug in overrides else "",
+                "name": row.name if row is not None else DEFAULT_CATEGORIES[slug],
+                "version": row.updated_at.isoformat() if row is not None else "",
             }
-            for slug, name in DEFAULT_CATEGORIES.items()
-            if slug not in overrides or not overrides[slug].is_removed
+            for slug, row in records.items()
+            if row is None or not row.is_removed
         },
-        "removed_categories": {slug: row for slug, row in overrides.items() if row.is_removed},
+        "removed_categories": {
+            slug: row for slug, row in records.items() if row is not None and row.is_removed
+        },
         "products": session.exec(active_products()).all(),
         "product_price": lambda product: Decimal(product.price_cents).scaleb(-2),
         "catalog_image": catalog_image,

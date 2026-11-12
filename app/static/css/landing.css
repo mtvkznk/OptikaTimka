@@ -76,19 +76,6 @@ body.landing-page {
   font-size: 1rem;
 }
 
-.landing-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.65rem;
-  width: fit-content;
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  text-decoration: none;
-}
-
-.landing-brand .landing-glasses { color: var(--landing-green); }
-
 .landing-location {
   display: flex;
   flex-wrap: wrap;
@@ -233,58 +220,7 @@ body.landing-page {
   background: var(--landing-mint);
 }
 
-.landing-glasses {
-  position: relative;
-  display: inline-block;
-  flex: none;
-  width: 2.35rem;
-  height: 1rem;
-}
-
-.landing-icon .landing-glasses {
-  font-size: 0.68rem;
-  width: 2.35em;
-  height: 1em;
-}
-
-.landing-brand .landing-glasses { font-size: 1rem; }
-
-.landing-glasses::before,
-.landing-glasses::after {
-  position: absolute;
-  top: 0.08em;
-  width: 0.9em;
-  height: 0.9em;
-  border: 0.13em solid currentColor;
-  border-radius: 45% 45% 50% 50%;
-  content: "";
-}
-
-.landing-glasses::before { left: 0.08em; }
-.landing-glasses::after { right: 0.08em; }
-
-.landing-glasses span {
-  position: absolute;
-  top: 0.38em;
-  left: 0.91em;
-  width: 0.54em;
-  height: 0.28em;
-  border-top: 0.13em solid currentColor;
-  border-radius: 50%;
-}
-
-.landing-glasses span::before,
-.landing-glasses span::after {
-  position: absolute;
-  top: -0.35em;
-  width: 0.28em;
-  border-top: 0.13em solid currentColor;
-  border-radius: 2px;
-  content: "";
-}
-
-.landing-glasses span::before { left: -1em; transform: rotate(55deg); }
-.landing-glasses span::after { right: -1em; transform: rotate(-55deg); }
+.landing-icon .brand-glasses { font-size: 0.68rem; }
 
 .landing-eye,
 .landing-lens {
@@ -543,8 +479,6 @@ body.landing-page {
 
 @media (max-width: 35rem) {
   .landing-container { width: calc(100% - 2rem); }
-  .landing-brand { font-size: 1.12rem; gap: 0.45rem; }
-  .landing-brand .landing-glasses { transform: scale(0.87); }
   .landing-header .landing-button { min-height: 2.75rem; padding-inline: 0.9rem; font-size: 0.9rem; }
   .landing-hero p { font-size: 1.06rem; }
   .landing-hero { padding-top: 2rem; padding-bottom: 3rem; }
