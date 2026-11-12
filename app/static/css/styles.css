@@ -390,9 +390,16 @@ label.calendar-day:hover {
   border-color: var(--green);
 }
 
-.calendar-day.is-muted {
+.calendar-day.is-muted,
+label.calendar-day:has(input:disabled) {
   color: #6d7b73;
   font-weight: 450;
+}
+
+label.calendar-day:has(input:disabled) {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
 }
 
 .calendar-day.is-outside-month {

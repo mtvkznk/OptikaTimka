@@ -10,6 +10,74 @@ from app.main import current_date
 from app.models import Appointment, AppointmentStatus
 
 
+def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:
+    service, other_service, *_ = client.get("/api/booking-services").json()
+    open_day = current_date() + timedelta(days=2)
+    excluded_day = open_day + timedelta(days=1)
+    mask = 1 << open_day.weekday()
+    edit = {
+        "id": service["id"], "version": service["updated_at"], "name": service["name"],
+        "weekdays_mask": mask,
+    }
+    assert client.post("/admin/changes", json={"services": [edit]}).status_code == 200
+    services = client.get("/api/booking-services").json()
+    assert next(row for row in services if row["id"] == service["id"])["weekdays_mask"] == mask
+
+    def availability(day, name: str) -> list:
+        response = client.get("/api/availability", params={"preferred_date": day, "service": name})
+        assert response.status_code == 200
+        return response.json()
+
+    assert availability(excluded_day, service["name"]) == []
+    assert availability(excluded_day, other_service["name"])
+    payload = {
+        "name": "Client", "phone": "+380501234567", "service": service["name"],
+        "preferred_time": availability(open_day, service["name"])[0]["start_time"],
+        "preferred_date": excluded_day.isoformat(),
+    }
+    response = client.post("/api/appointments", json=payload)
+    assert response.status_code == 400
+    assert "день тижня" in response.json()["detail"]
+    assert client.post(
+        "/api/appointments", json={**payload, "preferred_date": open_day.isoformat()},
+    ).status_code == 201
+
+
+def test_admin_catalog_changes_update_public_pages(
+    client: TestClient, anonymous_client: TestClient,
+) -> None:
+    category = {"id": "frames", "version": "", "name": "Оптичні оправи"}
+    product = {
+        "category": "frames", "name": "Тестова оправа", "description": "Металева",
+        "price": "1890.50",
+    }
+    batch = {"categories": [category], "products": [product]}
+    assert anonymous_client.post("/admin/changes", json=batch).status_code == 401
+    assert client.post("/admin/changes", json=batch).status_code == 200
+    assert "Оптичні оправи" in client.get("/").text
+    page = client.get("/catalog/frames").text
+    assert "Оптичні оправи" in page and "Тестова оправа" in page and "1 890,50 грн" in page
+
+    stored, = client.get("/api/products").json()
+    edit = {
+        **product, "id": stored["id"], "version": stored["updated_at"],
+        "category": "sunglasses", "name": "Тестові окуляри",
+    }
+    assert client.post("/admin/changes", json={
+        "categories": [category], "products": [edit],
+    }).status_code == 409
+    assert "Тестова оправа" in client.get("/catalog/frames").text
+
+    assert client.post("/admin/changes", json={"products": [edit]}).status_code == 200
+    assert "Тестова оправа" not in client.get("/catalog/frames").text
+    assert "Тестові окуляри" in client.get("/catalog/sunglasses").text
+    updated, = client.get("/api/products").json()
+    assert client.post("/admin/changes", json={"remove_products": [{
+        "id": updated["id"], "version": updated["updated_at"],
+    }]}).status_code == 200
+    assert client.get("/api/products").json() == []
+
+
 def test_work_schedule_sets_hours_and_booking_uses_remaining_time(client: TestClient) -> None:
     def schedule() -> dict:
         page = client.get("/admin").text

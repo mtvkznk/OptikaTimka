@@ -8,6 +8,14 @@
 {% macro remove_button(name) %}
 <button class="admin-button admin-danger" type="button" data-remove data-label="{{ name }}" aria-label="Видалити: {{ name }}">Видалити</button>
 {% endmacro %}
+{% macro service_weekdays(mask) %}
+<fieldset class="admin-weekdays" data-weekdays>
+  <legend>Доступні дні</legend>
+  {% for bit, label in weekdays %}
+  <label><input type="checkbox" value="{{ bit }}" data-weekday{% if mask // bit % 2 %} checked{% endif %} /> {{ label }}</label>
+  {% endfor %}
+</fieldset>
+{% endmacro %}
 {% block content %}
 <header class="admin-page-heading">
   <div>
@@ -47,7 +55,7 @@
   <div class="admin-panel-heading">
     <div>
       <h2 id="services-heading">Послуги</h2>
-      <p>Послуги, доступні для запису на сайті.</p>
+      <p>Позначте дні тижня для кожної послуги. Якщо зняти всі позначки, запис на неї буде закритий.</p>
     </div>
   </div>
   <div class="admin-edit-list" data-order="service_order">
@@ -65,6 +73,7 @@
         <input type="number" name="price_uah" min="0" max="1000000" value="{{ service.price_uah }}" required />
       </label>
       {{ remove_button(service.name) }}
+      {{ service_weekdays(service.weekdays_mask) }}
     </form>
     {% else %}
     <p class="admin-list-empty">Послуг поки немає.</p>
@@ -85,9 +94,12 @@
         <input type="number" name="price_uah" min="0" max="1000000" value="0" required />
       </label>
       <button class="admin-button" type="submit">Додати до списку</button>
+      {{ service_weekdays(all_weekdays) }}
     </form>
   </details>
 </section>
+
+{% include "admin_catalog.html" %}
 
 <section class="admin-panel" id="time-slots" aria-labelledby="slots-heading">
   <div class="admin-panel-heading">

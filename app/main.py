@@ -3,6 +3,7 @@ import hashlib
 import re
 import secrets
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
@@ -31,9 +32,11 @@ from app.booking import (
     occupied_intervals,
     working_intervals,
 )
+from app.catalog import DEFAULT_CATEGORIES, active_products, category_names, category_overrides
 from app.config import settings
 from app.database import get_session
 from app.models import (
+    ALL_WEEKDAYS,
     AnalyticsEvent,
     AnalyticsEventCreate,
     AnalyticsEventRead,
@@ -154,15 +157,9 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261111-booking-duration"
-ADMIN_ASSET_VERSION = "20261111-work-schedule"
+ASSET_VERSION = "20261112-service-days"
+ADMIN_ASSET_VERSION = "20261112-service-days-catalog"
 LANDING_ASSET_VERSION = "20261112-landing-3"
-CATALOG_CATEGORIES = {
-    "frames": "Оправи",
-    "sunglasses": "Сонцезахисні",
-    "contact-lenses": "Контактні лінзи",
-    "kids-frames": "Дитячі оправи",
-}
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -373,6 +370,7 @@ def build_booking_calendar(session: Session) -> list[dict[str, Any]]:
                     "value": cursor.isoformat(),
                     "label": format_date(cursor),
                     "day": str(cursor.day),
+                    "weekday_bit": 1 << cursor.weekday(),
                     "is_available": is_available,
                     "is_today": cursor == today,
                     "is_outside_month": not in_month,
@@ -425,6 +423,7 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
     today = current_date()
 
     services = get_active_services(session)
+    overrides = category_overrides(session)
     closed_dates = list(
         session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
     )
@@ -442,6 +441,18 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         "admin_asset_version": ADMIN_ASSET_VERSION,
         "today": today,
         "services": services,
+        "weekdays": [(1 << index, label) for index, label in enumerate(WEEKDAY_LABELS)],
+        "all_weekdays": ALL_WEEKDAYS,
+        "categories": {
+            slug: {
+                "original_name": name,
+                "name": overrides[slug].name if slug in overrides else name,
+                "version": overrides[slug].updated_at.isoformat() if slug in overrides else "",
+            }
+            for slug, name in DEFAULT_CATEGORIES.items()
+        },
+        "products": session.exec(active_products()).all(),
+        "product_price": lambda product: Decimal(product.price_cents).scaleb(-2),
         "work_schedule": schedule_for_admin(get_active_time_slots(session)),
         "closed_days": {
             item.closed_on.isoformat(): {
@@ -801,10 +812,10 @@ def exchange_google_code(request: Request, code: str) -> dict[str, Any]:
 
 
 @app.get("/", response_class=HTMLResponse)
-def root(request: Request) -> HTMLResponse:
+def root(request: Request, session: SessionDep) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "index.html",
-        {"landing_version": LANDING_ASSET_VERSION, "categories": CATALOG_CATEGORIES},
+        {"landing_version": LANDING_ASSET_VERSION, "categories": category_names(session)},
     )
 
 
@@ -828,18 +839,19 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
 @app.get("/catalog", response_class=HTMLResponse)
 @app.get("/catalog/{category}", response_class=HTMLResponse)
 def catalog_page(request: Request, session: SessionDep, category: str | None = None) -> HTMLResponse:
-    if category is not None and category not in CATALOG_CATEGORIES:
+    if category is not None and category not in DEFAULT_CATEGORIES:
         raise HTTPException(404, "Категорію каталогу не знайдено.")
-    statement = select(Product).where(Product.is_active).order_by(Product.sort_order, Product.id)
+    categories = category_names(session)
+    statement = active_products()
     if category is not None:
         statement = statement.where(func.lower(func.replace(Product.category, "_", "-")) == category)
     return templates.TemplateResponse(
         request, "catalog.html",
         {
             "landing_version": LANDING_ASSET_VERSION,
-            "categories": CATALOG_CATEGORIES,
+            "categories": categories,
             "category": category,
-            "heading": CATALOG_CATEGORIES.get(category, "Каталог"),
+            "heading": categories.get(category, "Каталог"),
             "products": session.exec(statement).all(),
             "catalog_image": catalog_image,
             "catalog_price": catalog_price,
@@ -1202,12 +1214,16 @@ def available_time_slots(
     if session.exec(select(ClosedDate).where(ClosedDate.closed_on == preferred_date)).first():
         return []
     ensure_seed_data(session)
+    booking_service = get_booking_service(session, service) if service is not None else None
+    if booking_service is not None and not booking_service.is_available_on(preferred_date):
+        return []
     slots = get_active_time_slots(session)
     booked = occupied_intervals(session, preferred_date)
     earliest = minute_of(now.time()) + 1 if preferred_date == today else 0
-    if service is not None:
-        duration = get_booking_service(session, service).duration_minutes
-        return available_starts(working_intervals(slots), booked, duration, earliest)
+    if booking_service is not None:
+        return available_starts(
+            working_intervals(slots), booked, booking_service.duration_minutes, earliest,
+        )
     # Keep returning configured slots to clients that do not supply a service.
     return [
         slot for slot in slots
@@ -1225,11 +1241,7 @@ def list_closed_dates(session: SessionDep) -> list[ClosedDate]:
 
 @app.get("/api/products", response_model=list[ProductRead])
 def list_products(session: SessionDep) -> list[Product]:
-    return list(
-        session.exec(
-            select(Product).where(Product.is_active).order_by(Product.sort_order, Product.id)
-        ).all()
-    )
+    return list(session.exec(active_products()))
 
 
 @app.post(
@@ -1269,6 +1281,8 @@ def create_appointment(
         raise HTTPException(400, "Оберіть майбутній час прийому.")
     if session.exec(select(ClosedDate).where(ClosedDate.closed_on == day)).first():
         raise HTTPException(400, "На цю дату запис закритий.")
+    if not service.is_available_on(day):
+        raise HTTPException(400, "Ця послуга недоступна в обраний день тижня.")
     start = minute_of(payload.preferred_time)
     if not any(
         opens <= start and start + duration <= closes
@@ -1352,6 +1366,7 @@ def create_service(session: SessionDep, form_data: FormDataDep) -> RedirectRespo
             "name": form_data.get("name", ""),
             "duration_minutes": form_int(form_data, "duration_minutes", 30),
             "price_uah": form_int(form_data, "price_uah", 0),
+            "weekdays_mask": form_int(form_data, "weekdays_mask", ALL_WEEKDAYS),
             "sort_order": form_int(form_data, "sort_order", sort_order + 1),
             "is_active": form_data.get("is_active") == "on",
         },
@@ -1386,6 +1401,7 @@ def update_service(
             "name": form_data.get("name", service.name),
             "duration_minutes": form_int(form_data, "duration_minutes", service.duration_minutes),
             "price_uah": form_int(form_data, "price_uah", service.price_uah),
+            "weekdays_mask": form_int(form_data, "weekdays_mask", service.weekdays_mask),
             "sort_order": form_int(form_data, "sort_order", service.sort_order),
             "is_active": form_data.get("is_active") == "on",
         },

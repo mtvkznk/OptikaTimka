@@ -67,17 +67,25 @@ function showMonth(index) {
 
 async function refreshAvailability() {
   availabilityRequest?.abort();
-  const date = checked("preferred_date");
   const service = checked("service");
+  for (const day of dateRadios) {
+    day.disabled = Boolean(service && !(Number(service.dataset.weekdays) & Number(day.dataset.weekday)));
+    if (day.disabled) day.checked = false;
+  }
+  const date = checked("preferred_date");
   timeGrid.replaceChildren();
   timeGrid.hidden = true;
   availabilityRetry.hidden = true;
   updateSelection();
 
   if (!date || !service) {
-    availabilityStatus.textContent = dateRadios.length
-      ? "Оберіть послугу й дату, щоб побачити вільний час."
-      : "Зараз немає доступних дат для запису.";
+    if (service && !dateRadios.some((day) => !day.disabled)) {
+      availabilityStatus.textContent = "У доступному періоді немає дат для цієї послуги.";
+    } else {
+      availabilityStatus.textContent = dateRadios.length
+        ? "Оберіть послугу й дату, щоб побачити вільний час."
+        : "Зараз немає доступних дат для запису.";
+    }
     return;
   }
 
@@ -147,7 +155,10 @@ form.addEventListener("submit", async (event) => {
     return;
   }
   if (!date) {
-    showError("Оберіть дату прийому.", calendarMonths[calendarIndex].querySelector("input") || statusNode);
+    showError(
+      "Оберіть доступну дату прийому.",
+      calendarMonths[calendarIndex].querySelector("input:not(:disabled)") || statusNode,
+    );
     return;
   }
   if (!time) {

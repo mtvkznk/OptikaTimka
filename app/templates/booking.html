@@ -26,7 +26,7 @@
             <div class="service-options">
               {% for service in services %}
               <label class="service-option" data-service-option>
-                <input type="radio" name="service" value="{{ service.name }}" required />
+                <input type="radio" name="service" value="{{ service.name }}" data-weekdays="{{ service.weekdays_mask }}" required />
                 <span class="service-option-text">
                   <span class="service-option-name">{{ service.name }}</span>
                   <span class="service-option-meta">
@@ -62,7 +62,7 @@
                     {% for day in week %}
                       {% if day.is_available %}
                       <label class="calendar-day{% if day.is_today %} is-today{% endif %}">
-                        <input type="radio" name="preferred_date" value="{{ day.value }}"
+                        <input type="radio" name="preferred_date" value="{{ day.value }}" data-weekday="{{ day.weekday_bit }}"
                           aria-label="{{ day.label }}{% if day.is_today %}, сьогодні{% endif %}" required />
                         <span>{{ day.day }}</span>
                       </label>

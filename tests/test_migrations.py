@@ -71,6 +71,10 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
             "INSERT INTO availabletimeslot (start_time, end_time, is_active, sort_order, "
             "created_at, updated_at) VALUES ('10:00:00', '11:15:00', TRUE, 1, :now, :now)"
         ), {"now": "2026-11-10 12:00:00"})
+        connection.execute(sa.text(
+            "INSERT INTO bookingservice (name, duration_minutes, price_uah, is_active, sort_order, "
+            "created_at, updated_at) VALUES ('Exam', 30, 500, TRUE, 1, :now, :now)"
+        ), {"now": "2026-11-10 12:00:00"})
     command.upgrade(config, "head")
     with engine.connect() as connection:
         row = connection.execute(sa.text("SELECT * FROM appointment")).mappings().one()
@@ -79,6 +83,7 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
         assert row["phone_normalized"] == "+380980000001"
         assert row["email_normalized"] == "google@example.com"
         assert row["duration_minutes"] == 75
+        assert connection.execute(sa.text("SELECT weekdays_mask FROM bookingservice")).scalar_one() == 127
         customers = connection.execute(sa.text("SELECT * FROM customer ORDER BY id")).mappings().all()
         assert customers[0]["phone"] is None
         assert customers[1]["email"] is None

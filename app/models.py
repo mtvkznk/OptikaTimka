@@ -72,10 +72,23 @@ class ProductRead(ProductBase):
     updated_at: datetime
 
 
+class CatalogCategory(SQLModel, table=True):
+    slug: str = Field(primary_key=True, max_length=80)
+    name: str = Field(max_length=80)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+ALL_WEEKDAYS = 127
+
+
 class BookingServiceBase(SQLModel):
     name: str = Field(max_length=160)
     duration_minutes: int = Field(default=30, ge=5, le=480)
     price_uah: int = Field(default=0, ge=0, le=1_000_000)
+    weekdays_mask: int = Field(
+        default=ALL_WEEKDAYS, ge=0, le=ALL_WEEKDAYS,
+        sa_column_kwargs={"server_default": str(ALL_WEEKDAYS)},
+    )
     is_active: bool = Field(default=True, index=True)
     sort_order: int = Field(default=0, index=True)
 
@@ -86,6 +99,9 @@ class BookingService(BookingServiceBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    def is_available_on(self, day: date) -> bool:
+        return bool(self.weekdays_mask & (1 << day.weekday()))
 
 
 class BookingServiceCreate(BookingServiceBase):

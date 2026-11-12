@@ -418,7 +418,8 @@
 }
 
 .admin-body input:not([type="checkbox"]):not([type="hidden"]),
-.admin-body select {
+.admin-body select,
+.admin-body textarea {
   width: 100%;
   min-width: 0;
   min-height: 2.55rem;
@@ -429,6 +430,11 @@
   background: #fff;
   font-size: 0.88rem;
   font-weight: 500;
+}
+
+.admin-body textarea {
+  resize: vertical;
+  font-family: inherit;
 }
 
 .admin-body .admin-status-form select {
@@ -494,6 +500,76 @@
 
 .admin-service {
   grid-template-columns: auto minmax(7rem, 1fr) 5.2rem 6rem auto;
+}
+
+.admin-weekdays {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.admin-weekdays legend {
+  margin-bottom: 0.3rem;
+  padding: 0;
+  color: var(--admin-muted);
+  font-size: 0.78rem;
+  font-weight: 670;
+}
+
+.admin-weekdays label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  border: 1px solid var(--admin-line);
+  border-radius: 0.45rem;
+  padding: 0.2rem 0.5rem;
+  background: #fff;
+  cursor: pointer;
+}
+
+.admin-weekdays label:has(input:checked) {
+  color: var(--admin-accent);
+  background: var(--admin-accent-soft);
+}
+
+.admin-weekdays input {
+  margin: 0;
+  accent-color: var(--admin-accent);
+}
+
+.admin-weekdays:disabled {
+  opacity: 0.65;
+}
+
+.admin-catalog-heading {
+  margin: 1rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.admin-category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.65rem;
+}
+
+.admin-category-grid .admin-field,
+.admin-product-description {
+  grid-column: 1 / -1;
+}
+
+.admin-product {
+  grid-template-columns: minmax(8rem, 2fr) minmax(8rem, 1.3fr) minmax(6rem, 0.7fr) auto;
+}
+
+.admin-product > button {
+  grid-column: 4;
+  grid-row: 1;
 }
 
 .admin-work-schedule {
@@ -840,6 +916,12 @@
   .admin-editor,
   .admin-filter {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-product > button {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    justify-self: start;
   }
 
   .admin-field:has(input[type="search"]),

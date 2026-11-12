@@ -28,17 +28,31 @@ try {
 }
 
 function editableFields(form) {
-  return [...form.querySelectorAll('input[name]:not([type="hidden"]), select[name]')];
+  return [...form.querySelectorAll('input[name]:not([type="hidden"]), select[name], textarea[name]')];
+}
+
+function weekdayFields(form) {
+  return [...form.querySelectorAll("[data-weekday]")];
 }
 
 function valuesOf(form) {
-  return Object.fromEntries(editableFields(form).map((field) => [field.name, field.value]));
+  const values = Object.fromEntries(editableFields(form).map((field) => [field.name, field.value]));
+  const days = weekdayFields(form);
+  if (days.length) {
+    values.weekdays_mask = days.reduce((mask, day) => mask | (day.checked ? Number(day.value) : 0), 0);
+  }
+  return values;
 }
 
 function fillFields(form, values) {
   editableFields(form).forEach((field) => {
-    field.value = values[field.name];
+    if (field.name in values) field.value = values[field.name];
   });
+  if ("weekdays_mask" in values) {
+    weekdayFields(form).forEach((day) => {
+      day.checked = Boolean(values.weekdays_mask & Number(day.value));
+    });
+  }
 }
 
 function matches(left, right) {
@@ -77,7 +91,10 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
   const kind = form.dataset.adminEdit;
   const key = kind + ":" + form.dataset.id;
   const initial = valuesOf(form);
-  const identity = { id: Number(form.dataset.id), version: form.dataset.version };
+  const identity = {
+    id: kind === "categories" ? form.dataset.id : Number(form.dataset.id),
+    version: form.dataset.version,
+  };
 
   const existing = draft.edits[key];
   if (existing) {
@@ -105,6 +122,8 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
     const pending = Boolean(draft.removals[key]);
     form.toggleAttribute("data-removing", pending);
     editableFields(form).forEach((field) => { field.disabled = pending; });
+    const weekdays = form.querySelector("[data-weekdays]");
+    if (weekdays) weekdays.disabled = pending;
     remove.textContent = pending ? "Скасувати" : "Видалити";
     remove.setAttribute("aria-label", (pending ? "Скасувати видалення: " : "Видалити: ") + remove.dataset.label);
     form.parentElement.dispatchEvent(new Event("admin-removals"));
@@ -302,6 +321,7 @@ if (scheduleForm) {
 function payloadOfDraft() {
   const payload = {
     appointments: [], services: [], remove_services: [],
+    categories: [], products: [], remove_products: [],
     closed_days: { close: [], reopen: {}, reason: draft.reason },
     ...draft.orders,
   };

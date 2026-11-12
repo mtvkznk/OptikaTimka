@@ -1,11 +1,12 @@
 import hashlib
 from collections.abc import Sequence
 from datetime import date, time, timedelta
+from decimal import Decimal
 from itertools import pairwise
-from typing import Any, Self
+from typing import Annotated, Any, Self
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, PositiveInt, model_validator
+from pydantic import BaseModel, Field, PositiveInt, StringConstraints, model_validator
 from sqlmodel import Session, select
 
 from app.booking import (
@@ -15,6 +16,7 @@ from app.booking import (
     minute_of,
     working_intervals,
 )
+from app.catalog import CategorySlug
 from app.models import (
     Appointment,
     AppointmentStatus,
@@ -22,7 +24,9 @@ from app.models import (
     AvailableTimeSlotCreate,
     BookingService,
     BookingServiceCreate,
+    CatalogCategory,
     ClosedDate,
+    Product,
     utc_now,
 )
 
@@ -46,6 +50,21 @@ class ServiceChange(BookingServiceCreate):
 class SlotChange(AvailableTimeSlotCreate):
     id: PositiveInt | None = None
     version: str | None = Field(default=None, max_length=48)
+
+
+class CategoryChange(BaseModel):
+    id: CategorySlug
+    version: str = Field(max_length=48)
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+
+
+class ProductChange(BaseModel):
+    id: PositiveInt | None = None
+    version: str | None = Field(default=None, max_length=48)
+    category: CategorySlug
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ""
+    price: Decimal = Field(ge=0, le=Decimal("21474836.47"), decimal_places=2)
 
 
 class WorkScheduleChange(BaseModel):
@@ -149,6 +168,9 @@ class ClosedDayChanges(BaseModel):
 class AdminChanges(BaseModel):
     appointments: list[AppointmentChange] = Field(default_factory=list, max_length=1000)
     services: list[ServiceChange] = Field(default_factory=list, max_length=500)
+    categories: list[CategoryChange] = Field(default_factory=list, max_length=4)
+    products: list[ProductChange] = Field(default_factory=list, max_length=500)
+    remove_products: list[RowVersion] = Field(default_factory=list, max_length=500)
     time_slots: list[SlotChange] = Field(default_factory=list, max_length=500)
     work_schedule: WorkScheduleChange | None = None
     closed_periods: list[ClosedPeriodChange] = Field(default_factory=list, max_length=25)
@@ -259,6 +281,8 @@ def apply_catalog_changes(
     next_order = max((row.sort_order for row in rows.values() if row.is_active), default=0)
     for change in changes:
         values = change.model_dump(exclude={"id", "version", "sort_order"})
+        if isinstance(change, ServiceChange) and "weekdays_mask" not in change.model_fields_set:
+            values.pop("weekdays_mask")
         if change.id is None:
             next_order += 1
             row = retired.pop(values[key], None)
@@ -268,6 +292,49 @@ def apply_catalog_changes(
             else:
                 row.sqlmodel_update(values)
                 row.updated_at = utc_now()
+        else:
+            row = rows[change.id]
+            row.sqlmodel_update(values)
+            row.updated_at = utc_now()
+
+
+def apply_category_changes(session: Session, changes: list[CategoryChange]) -> None:
+    if len({change.id for change in changes}) != len(changes):
+        raise HTTPException(422, "Одну категорію змінено кілька разів.")
+    for change in changes:
+        category = session.get(CatalogCategory, change.id)
+        if category is None and not change.version:
+            session.add(CatalogCategory(slug=change.id, name=change.name))
+        else:
+            verify_version(category, change.version)
+            category.name = change.name
+            category.updated_at = utc_now()
+
+
+def apply_product_changes(
+    session: Session, changes: list[ProductChange], removals: list[RowVersion],
+) -> None:
+    edits = [change for change in [*changes, *removals] if change.id is not None]
+    ids = {change.id for change in edits}
+    if len(ids) != len(edits):
+        raise HTTPException(422, "Один товар змінено кілька разів.")
+    rows = {
+        row.id: row for row in session.exec(
+            select(Product).where(Product.id.in_(ids), Product.is_active)
+            .order_by(Product.id).with_for_update()
+        )
+    } if ids else {}
+    for edit in edits:
+        verify_version(rows.get(edit.id), edit.version)
+
+    for removal in removals:
+        rows[removal.id].is_active = False
+        rows[removal.id].updated_at = utc_now()
+    for change in changes:
+        values = change.model_dump(include={"category", "name", "description"})
+        values["price_cents"] = int(change.price * 100)
+        if change.id is None:
+            session.add(Product.model_validate(values))
         else:
             row = rows[change.id]
             row.sqlmodel_update(values)
@@ -318,6 +385,8 @@ def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
     ):
         raise HTTPException(422, "Збережіть робочий графік окремо від старого списку годин.")
     apply_appointment_changes(session, changes.appointments)
+    apply_category_changes(session, changes.categories)
+    apply_product_changes(session, changes.products, changes.remove_products)
     apply_catalog_changes(
         session, BookingService, changes.services, changes.service_order, changes.remove_services,
     )
