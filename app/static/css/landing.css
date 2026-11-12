@@ -8,6 +8,7 @@
   --landing-mint: #e4ede7;
   --landing-stone: #e9ece9;
   --landing-anchor-offset: 7rem;
+  --landing-grid-gap: 1.3rem;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -183,10 +184,14 @@ body.landing-page {
 }
 
 .landing-services-grid,
-.landing-catalog-grid,
 .catalog-product-grid {
   display: grid;
-  gap: 1.3rem;
+}
+
+.landing-services-grid,
+.landing-catalog-grid,
+.catalog-product-grid {
+  gap: var(--landing-grid-gap);
   margin-top: 2.75rem;
 }
 
@@ -324,11 +329,20 @@ body.landing-page {
 
 .landing-catalog { margin-top: 5.35rem; }
 
-.landing-catalog-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.landing-catalog-grid {
+  --catalog-columns: 4;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
 
 .landing-category {
+  flex: 0 0 calc(
+    (100% - (var(--catalog-columns) - 1) * var(--landing-grid-gap)) / var(--catalog-columns)
+  );
   display: flex;
   align-items: flex-end;
+  min-width: 0;
   min-height: clamp(9.5rem, 19vw, 16rem);
   padding: 1.4rem;
   border-radius: 1.6rem;
@@ -336,6 +350,7 @@ body.landing-page {
   font-size: 1.15rem;
   font-weight: 600;
   letter-spacing: -0.027em;
+  overflow-wrap: anywhere;
   text-decoration: none;
 }
 
@@ -485,7 +500,10 @@ body.landing-page {
 }
 
 @media (max-width: 54rem) {
-  :root { --landing-anchor-offset: 8rem; }
+  :root {
+    --landing-anchor-offset: 8rem;
+    --landing-grid-gap: 0.8rem;
+  }
 
   .landing-container { width: calc(100% - 2.5rem); }
 
@@ -513,7 +531,6 @@ body.landing-page {
   .landing-services-grid,
   .landing-catalog-grid,
   .catalog-product-grid {
-    gap: 0.8rem;
     margin-top: 1.4rem;
   }
 
@@ -536,7 +553,7 @@ body.landing-page {
   .landing-services-grid { grid-template-columns: 1fr; }
   .landing-service { min-height: auto; border-radius: 1.25rem; }
   .landing-service h3 { margin-top: 0.8rem; }
-  .landing-catalog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .landing-catalog-grid { --catalog-columns: 2; }
   .landing-category { padding: 0.9rem; font-size: 1rem; border-radius: 1.25rem; }
 
   .landing-book {
