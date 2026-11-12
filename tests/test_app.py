@@ -1,4 +1,3 @@
-import re
 from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -334,56 +333,17 @@ def test_editing_seeded_service_and_time_keeps_only_the_edited_versions(client: 
     assert edited_slots[0]["start_time"] == "09:10:00"
 
 
-def test_cabinet_renders_passwordless_login_options(client: TestClient) -> None:
+def test_cabinet_without_google_offers_guest_booking(client: TestClient) -> None:
     response = client.get("/cabinet")
 
     assert response.status_code == 200
     assert "Особистий кабінет" in response.text
-    assert "Вхід телефоном" in response.text
+    assert "Вхід тимчасово недоступний" in response.text
+    assert 'href="/booking"' in response.text
     assert 'href="/auth/google"' not in response.text
-    assert 'action="/auth/phone/request"' in response.text
-    assert 'action="/auth/phone/verify"' not in response.text
-
-
-def test_phone_code_login_shows_matching_appointments(client: TestClient) -> None:
-    phone = "+48123456789"
-    preferred_date = current_date() + timedelta(days=8)
-    appointment_response = client.post(
-        "/api/appointments",
-        json={
-            "name": "Phone Cabinet Client",
-            "phone": phone,
-            "email": None,
-            "service": "Перевірка зору",
-            "preferred_date": preferred_date.isoformat(),
-            "preferred_time": "09:00:00",
-            "message": "",
-        },
-    )
-    assert appointment_response.status_code == 201
-
-    code_response = client.post("/auth/phone/request", data={"phone": phone})
-    assert code_response.status_code == 200
-    assert 'action="/auth/phone/verify"' in code_response.text
-    code_match = re.search(r"Тестовий код:\s*<strong>(\d{6})</strong>", code_response.text)
-    assert code_match is not None
-
-    login_response = client.post(
-        "/auth/phone/verify",
-        data={"phone": phone, "code": code_match.group(1)},
-        follow_redirects=False,
-    )
-    assert login_response.status_code == 303
-    assert login_response.headers["location"] == "/cabinet"
-
-    cabinet_response = client.get("/cabinet")
-    assert cabinet_response.status_code == 200
-    assert "Phone Cabinet Client" in cabinet_response.text
-    assert "Перевірка зору" in cabinet_response.text
-    assert "09:00" in cabinet_response.text
-
-    logout_response = client.post("/auth/logout", follow_redirects=False)
-    assert logout_response.status_code == 303
+    assert "/auth/phone/" not in response.text
+    for action in ("request", "verify"):
+        assert client.post(f"/auth/phone/{action}", data={"phone": "+380501234567"}).status_code == 404
 
 
 def test_google_login_redirects_to_cabinet_when_not_configured(client: TestClient) -> None:

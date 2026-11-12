@@ -2,10 +2,13 @@ from datetime import UTC, date, datetime, time
 from enum import Enum
 
 from pydantic import EmailStr, field_validator, model_validator
-from sqlalchemy import Column, Index, Integer, UniqueConstraint, text
+from sqlalchemy import Column, DateTime, Index, Integer, UniqueConstraint, text
+from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, SQLModel
 
 from app.validation import normalize_email, normalize_phone
+
+TIMESTAMP_WITH_TIME_ZONE = DateTime(timezone=True)
 
 
 def utc_now() -> datetime:
@@ -31,12 +34,8 @@ class ContentBlock(ContentBlockBase, table=True):
     __table_args__ = (UniqueConstraint("slug"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-
-
-class ContentBlockCreate(ContentBlockBase):
-    pass
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class ContentBlockRead(ContentBlockBase):
@@ -58,8 +57,8 @@ class ProductBase(SQLModel):
 
 class Product(ProductBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class ProductCreate(ProductBase):
@@ -98,8 +97,8 @@ class BookingService(BookingServiceBase, table=True):
     __table_args__ = (UniqueConstraint("name"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
     def is_available_on(self, day: date) -> bool:
         return bool(self.weekdays_mask & (1 << day.weekday()))
@@ -131,8 +130,8 @@ class AvailableTimeSlot(AvailableTimeSlotBase, table=True):
     __table_args__ = (UniqueConstraint("start_time"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class AvailableTimeSlotCreate(AvailableTimeSlotBase):
@@ -166,8 +165,8 @@ class ClosedDate(ClosedDateBase, table=True):
     __table_args__ = (UniqueConstraint("closed_on"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class ClosedDateCreate(ClosedDateBase):
@@ -209,9 +208,14 @@ class Appointment(AppointmentBase, table=True):
     customer_id: int | None = Field(default=None, foreign_key="customer.id", index=True)
     phone_normalized: str | None = Field(default=None, max_length=40, index=True)
     email_normalized: str | None = Field(default=None, max_length=255, index=True)
-    status: AppointmentStatus = Field(default=AppointmentStatus.new, index=True)
-    created_at: datetime = Field(default_factory=utc_now, index=True)
-    updated_at: datetime = Field(default_factory=utc_now)
+    status: AppointmentStatus = Field(
+        default=AppointmentStatus.new, index=True,
+        sa_type=SAEnum(AppointmentStatus, native_enum=False, length=30),
+    )
+    created_at: datetime = Field(
+        default_factory=utc_now, index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE,
+    )
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class AppointmentCreate(AppointmentBase):
@@ -269,19 +273,9 @@ class Customer(SQLModel, table=True):
     google_sub: str | None = Field(default=None, max_length=255, index=True)
     phone_verified: bool = False
     email_verified: bool = False
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-    last_login_at: datetime | None = Field(default=None)
-
-
-class PhoneAuthCode(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    phone: str = Field(max_length=40, index=True)
-    code_hash: str = Field(max_length=128, index=True)
-    attempts: int = Field(default=0)
-    expires_at: datetime = Field(index=True)
-    consumed_at: datetime | None = Field(default=None)
-    created_at: datetime = Field(default_factory=utc_now, index=True)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    last_login_at: datetime | None = Field(default=None, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class CustomerSession(SQLModel, table=True):
@@ -290,8 +284,10 @@ class CustomerSession(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     customer_id: int = Field(foreign_key="customer.id", index=True)
     token_hash: str = Field(max_length=128, index=True)
-    expires_at: datetime = Field(index=True)
-    created_at: datetime = Field(default_factory=utc_now, index=True)
+    expires_at: datetime = Field(index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    created_at: datetime = Field(
+        default_factory=utc_now, index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE,
+    )
 
 
 class AnalyticsEventBase(SQLModel):
@@ -301,7 +297,9 @@ class AnalyticsEventBase(SQLModel):
 
 class AnalyticsEvent(AnalyticsEventBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=utc_now, index=True)
+    created_at: datetime = Field(
+        default_factory=utc_now, index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE,
+    )
 
 
 class AnalyticsEventCreate(AnalyticsEventBase):

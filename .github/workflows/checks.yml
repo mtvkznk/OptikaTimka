@@ -54,6 +54,16 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql+psycopg://postgres:ci-only-test-password@localhost:5432/optika_ci
         run: python -m pytest -q -p no:cacheprovider
+      - name: Compare migrated schemas with application models
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://postgres:ci-only-test-password@localhost:5432/optika_ci
+        run: |
+          export DATABASE_URL="sqlite:///$RUNNER_TEMP/optika-schema.db"
+          python -m alembic upgrade head
+          python -m alembic check
+          export DATABASE_URL="$TEST_DATABASE_URL"
+          python -m alembic upgrade head
+          python -m alembic check
       - name: Audit locked dependencies
         run: python -m pip_audit -r requirements.lock --no-deps --disable-pip --progress-spinner off
       - name: Build and smoke-test production containers

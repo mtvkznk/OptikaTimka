@@ -47,35 +47,27 @@ def hash_session_token(token: str) -> str:
     return hash_secret(f"customer-session:{token}")
 
 
-def utc_expired(value: datetime) -> bool:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value < utc_now()
-
-
 def get_customer_by_session(request: Request, session: Session) -> Customer | None:
     token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "")
-    if not token or len(token) > 128:
+    if not token.startswith(GOOGLE_SESSION_PREFIX) or len(token) > 128:
         return None
-    customer_session = session.exec(
-        select(CustomerSession).where(CustomerSession.token_hash == hash_session_token(token))
+    return session.exec(
+        select(Customer)
+        .join(CustomerSession)
+        .where(
+            CustomerSession.token_hash == hash_session_token(token),
+            CustomerSession.expires_at >= utc_now(),
+            Customer.google_sub.is_not(None),
+            Customer.email_verified,
+        )
     ).first()
-    if customer_session is None or utc_expired(customer_session.expires_at):
-        return None
-    return session.get(Customer, customer_session.customer_id)
 
 
-def google_session(request: Request) -> bool:
-    # The prefix is part of the hashed session token, so adding it cannot elevate a phone session.
-    return request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "").startswith(GOOGLE_SESSION_PREFIX)
-
-
-def is_google_admin(request: Request, customer: Customer | None) -> bool:
+def is_google_admin(customer: Customer | None) -> bool:
     return bool(
         customer
         and customer.google_sub
         and customer.email_verified
-        and google_session(request)
         and (
             customer.google_sub in settings.admin_google_subjects
             or (settings.admin_google_email and customer.email == settings.admin_google_email)
@@ -283,13 +275,11 @@ def rate_limit(
     action: str,
     limit: int,
     seconds: int,
-    *,
-    identifier: str | None = None,
 ) -> None:
     """Atomic database buckets work across processes; raw IPs are never stored."""
     now = utc_now()
     window = int(now.timestamp()) // seconds
-    identity = identifier or (request.client.host if request.client else "unknown")
+    identity = request.client.host if request.client else "unknown"
     key = hash_secret(f"rate-limit:{action}:{identity}:{window}")
     table = SecurityRateLimit.__table__
     insert = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
@@ -325,8 +315,7 @@ def require_admin(
     credentials: Annotated[HTTPBasicCredentials | None, Depends(basic_auth)],
 ) -> None:
     if settings.google_admin_configured:
-        customer = get_customer_by_session(request, session) if google_session(request) else None
-        if is_google_admin(request, customer):
+        if is_google_admin(get_customer_by_session(request, session)):
             return
         raise HTTPException(403, "Увійдіть у кабінет через Google-акаунт адміністратора.")
     if not settings.admin_password:

@@ -1,6 +1,7 @@
 import os
 import uuid
 from collections.abc import Generator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -8,9 +9,10 @@ import sqlalchemy as sa
 from alembic.config import Config
 from sqlalchemy.engine import Engine
 from sqlalchemy.schema import CreateSchema, DropSchema
-from sqlmodel import create_engine
+from sqlmodel import Session, create_engine
 
 from alembic import command
+from app.models import Appointment, Customer, CustomerSession, utc_now
 
 
 @pytest.fixture
@@ -76,6 +78,7 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
             "created_at, updated_at) VALUES ('Exam', 30, 500, TRUE, 1, :now, :now)"
         ), {"now": "2026-11-10 12:00:00"})
     command.upgrade(config, "head")
+    assert not sa.inspect(engine).has_table("phoneauthcode")
     with engine.connect() as connection:
         row = connection.execute(sa.text("SELECT * FROM appointment")).mappings().one()
         assert row["name"] == "Existing appointment"
@@ -110,3 +113,32 @@ def test_migration_refuses_to_silently_cancel_duplicate_bookings(
         command.upgrade(config, "head")
     with engine.connect() as connection:
         assert connection.execute(sa.text("SELECT COUNT(*) FROM appointment")).scalar_one() == 2
+
+
+def test_remove_phone_login_preserves_customer_sessions_and_bookings(
+    migration_database: tuple[Config, Engine],
+) -> None:
+    config, engine = migration_database
+    command.upgrade(config, "20261112_0007")
+    with Session(engine) as session:
+        customer = Customer(
+            google_sub="existing-google-customer", email="client@example.com", email_verified=True,
+        )
+        session.add(customer)
+        session.flush()
+        login = CustomerSession(
+            customer_id=customer.id, token_hash="existing-session-hash",
+            expires_at=utc_now() + timedelta(days=1),
+        )
+        appointment = Appointment(
+            name="Existing Client", phone="+380671234567", service="Exam", customer_id=customer.id,
+        )
+        session.add_all([login, appointment])
+        session.flush()
+        customer_id, login_id, appointment_id = customer.id, login.id, appointment.id
+        session.commit()
+    command.upgrade(config, "head")
+    with Session(engine) as session:
+        assert session.get(CustomerSession, login_id).customer_id == customer_id
+        assert session.get(Appointment, appointment_id).phone == "+380671234567"
+    assert not sa.inspect(engine).has_table("phoneauthcode")

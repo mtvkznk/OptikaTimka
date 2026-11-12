@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     admin_google_email: str | None = None
     admin_google_subjects: Annotated[frozenset[str], NoDecode] = frozenset()
     public_base_url: str | None = None
-    phone_auth_debug: bool = False
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
     google_redirect_uri: str | None = None
@@ -121,8 +120,6 @@ class Settings(BaseSettings):
                 raise ValueError("Replace the shared development PostgreSQL password in production")
             if not self.public_base_url or not self.public_base_url.startswith("https://"):
                 raise ValueError("Production PUBLIC_BASE_URL must use HTTPS")
-            if self.phone_auth_debug:
-                raise ValueError("Debug phone authentication is forbidden in production")
             if self.google_client_id:
                 expected = f"{self.public_base_url}/auth/google/callback"
                 if self.google_redirect_uri and self.google_redirect_uri != expected:

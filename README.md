@@ -18,9 +18,8 @@ docker compose up -d db
 Set `ADMIN_PASSWORD` in your local `.env` before opening `/admin`. Administrator
 pages and product creation require HTTP Basic authentication; no default password
 or local authentication bypass exists. An unconfigured administrator receives 503.
-For local phone-code testing only, explicitly set `PHONE_AUTH_DEBUG=true`.
-Local debug codes are shown on the page. **There is no SMS delivery integration**;
-phone login is disabled in production until a real delivery provider is implemented.
+Customers sign in with Google. Appointment booking also works without signing in
+and uses the phone number for contact.
 
 For a SQLite preview without Docker, set `DATABASE_URL=sqlite:///preview.db`, run
 the same Alembic command, then start Uvicorn. SQLite previews do not replace
@@ -100,8 +99,8 @@ SQLite preview databases, or debug settings to production.
 docker compose --env-file C:/Deploy/OptikaTimka/prod.env -f docker-compose.prod.yml up -d --build
 ```
 
-`ENVIRONMENT=production` refuses weak/missing application secrets, missing HTTPS
-origin, and debug phone authentication. The container runs without root privileges,
+`ENVIRONMENT=production` refuses weak/missing application secrets and a missing HTTPS
+origin. The container runs without root privileges,
 with a read-only filesystem and dropped capabilities. Runtime dependencies are
 pinned and hash-verified in `requirements.lock`.
 

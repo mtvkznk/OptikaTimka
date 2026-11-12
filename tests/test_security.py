@@ -17,7 +17,6 @@ from app.models import (
     Appointment,
     Customer,
     CustomerSession,
-    PhoneAuthCode,
     SecurityRateLimit,
     utc_now,
 )
@@ -44,16 +43,10 @@ def csrf_headers(client: TestClient) -> dict[str, str]:
     return {"X-CSRF-Token": token.group(1)}
 
 
-def phone_code(client: TestClient, phone: str = "+380980000001") -> str:
-    response = client.post("/auth/phone/request", data={"phone": phone})
-    assert response.status_code == 200
-    match = re.search(r"Тестовий код:\s*<strong>([0-9]{6})</strong>", response.text)
-    assert match
-    return match.group(1)
-
-
-def sign_in_customer(client: TestClient, engine: Engine, customer: Customer) -> None:
-    token = "test-only-session-token-for-identity-checks"
+def sign_in_customer(
+    client: TestClient, engine: Engine, customer: Customer, *, prefix: str = GOOGLE_SESSION_PREFIX,
+) -> None:
+    token = prefix + "test-only-session-token-for-identity-checks"
     with Session(engine) as session:
         session.add(customer)
         session.flush()
@@ -147,21 +140,19 @@ def test_cross_site_mutation_rejected(raw_client: TestClient, headers: dict[str,
 def test_form_token_works_without_custom_header(raw_client: TestClient) -> None:
     token = csrf_headers(raw_client)["X-CSRF-Token"]
     response = raw_client.post(
-        "/auth/phone/request",
-        data={"phone": "+380980000001", "csrf_token": token},
-    )
-    assert response.status_code == 200
-
-
-def test_csrf_is_bound_to_login_session(anonymous_client: TestClient) -> None:
-    old_headers = csrf_headers(anonymous_client)
-    code = phone_code(anonymous_client)
-    response = anonymous_client.post(
-        "/auth/phone/verify",
-        data={"phone": "+380980000001", "code": code},
+        "/auth/logout",
+        data={"csrf_token": token},
         follow_redirects=False,
     )
     assert response.status_code == 303
+
+
+def test_csrf_is_bound_to_login_session(anonymous_client: TestClient, app_db: Engine) -> None:
+    old_headers = csrf_headers(anonymous_client)
+    sign_in_customer(
+        anonymous_client, app_db,
+        Customer(google_sub="csrf-sub", email="csrf@example.com", email_verified=True),
+    )
     # Bypass the browser fixture's automatic token refresh for this negative check.
     response = TestClient.request(
         anonymous_client,
@@ -207,7 +198,7 @@ def test_host_and_security_headers(raw_client: TestClient) -> None:
     assert oauth_redirect.headers["Referrer-Policy"] == "no-referrer"
 
 
-def test_production_has_secure_host_cookies_and_no_phone_login(
+def test_production_has_secure_host_cookies(
     raw_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -216,8 +207,6 @@ def test_production_has_secure_host_cookies_and_no_phone_login(
     assert "__Host-optika_csrf=" in response.headers["set-cookie"]
     assert "Secure" in response.headers["set-cookie"]
     assert "Strict-Transport-Security" in response.headers
-    assert "Тестовий код:" not in response.text
-    assert 'action="/auth/phone/request"' not in response.text
 
 
 def test_production_alias_redirects_before_creating_oauth_state(
@@ -247,7 +236,6 @@ def test_production_alias_redirects_before_creating_oauth_state(
         {"admin_password": "short"},
         {"public_base_url": "http://optika.example"},
         {"public_base_url": None},
-        {"phone_auth_debug": True},
         {"environment": "prodction"},
         {"public_base_url": "https://optika.example/path"},
         {"admin_google_email": "owner@example.com"},
@@ -261,7 +249,6 @@ def test_unsafe_production_configuration_rejected(changes: dict[str, object]) ->
         "auth_secret": "test-only-secret-" * 4,
         "admin_password": "test-only-admin-password-123",
         "public_base_url": "https://optika.example",
-        "phone_auth_debug": False,
         "database_url": "postgresql+psycopg://app:test-only-database-password@db/optika_timka",
         **changes,
     }
@@ -274,7 +261,6 @@ def test_valid_production_configuration_is_accepted() -> None:
         _env_file=None, environment="production", auth_secret="test-only-secret-" * 4,
         admin_password="test-only-admin-password-123", public_base_url="https://optika.example",
         database_url="postgresql+psycopg://app:test-only-database-password@db/optika_timka",
-        phone_auth_debug=False,
     )
     assert configured.environment == "production"
 
@@ -302,58 +288,6 @@ def test_google_subjects_only_can_configure_admin_access(monkeypatch: pytest.Mon
     )
     assert configured.admin_google_subjects == {"first-sub", "second-sub"}
     assert configured.google_admin_configured
-
-
-def test_wrong_phone_codes_exhaust_attempts(anonymous_client: TestClient, app_db: Engine) -> None:
-    code = phone_code(anonymous_client)
-    wrong = "000000" if code != "000000" else "000001"
-    for _ in range(main.PHONE_CODE_MAX_ATTEMPTS):
-        assert (
-            anonymous_client.post(
-                "/auth/phone/verify",
-                data={"phone": "+380980000001", "code": wrong},
-            ).status_code
-            == 400
-        )
-    assert (
-        anonymous_client.post(
-            "/auth/phone/verify",
-            data={"phone": "+380980000001", "code": code},
-        ).status_code
-        == 400
-    )
-    with Session(app_db) as session:
-        assert session.exec(select(PhoneAuthCode)).one().attempts == main.PHONE_CODE_MAX_ATTEMPTS
-        assert session.exec(select(CustomerSession)).first() is None
-
-
-def test_phone_code_request_cooldown_and_replay(anonymous_client: TestClient) -> None:
-    code = phone_code(anonymous_client)
-    assert (
-        anonymous_client.post(
-            "/auth/phone/request",
-            data={"phone": "+380980000001"},
-        ).status_code
-        == 429
-    )
-    data = {"phone": "+380980000001", "code": code}
-    assert (
-        anonymous_client.post("/auth/phone/verify", data=data, follow_redirects=False).status_code
-        == 303
-    )
-    anonymous_client.post("/auth/logout")
-    assert anonymous_client.post("/auth/phone/verify", data=data).status_code == 400
-
-
-def test_phone_login_requires_explicit_debug_flag(
-    anonymous_client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(settings, "phone_auth_debug", False)
-    for path in ("request", "verify"):
-        assert anonymous_client.post(
-            f"/auth/phone/{path}", data={"phone": "+380980000001"},
-        ).status_code == 503
 
 
 def test_booking_contacts_cannot_claim_another_customers_records(
@@ -417,9 +351,14 @@ def test_verified_contact_cannot_read_records_owned_by_another_account(
     sign_in_customer(
         anonymous_client,
         app_db,
-        Customer(phone="+380980000001", phone_verified=True),
+        Customer(
+            google_sub="legacy-google-sub", email="legacy@example.com", email_verified=True,
+            phone="+380980000001", phone_verified=True,
+        ),
     )
-    assert "Private service" not in anonymous_client.get("/cabinet").text
+    cabinet = anonymous_client.get("/cabinet").text
+    assert 'action="/auth/logout"' in cabinet
+    assert "Private service" not in cabinet
 
 
 @pytest.mark.parametrize(
@@ -494,15 +433,18 @@ def test_google_login_opens_customer_cabinet(
         assert anonymous_client.get("/admin").status_code == 403
 
 
-def test_google_admin_rejects_non_google_session_for_owner(
+def test_cabinet_and_admin_reject_non_google_session_for_owner(
     anonymous_client: TestClient, app_db: Engine, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "admin_google_email", "owner@example.com")
     sign_in_customer(
         anonymous_client, app_db,
         Customer(google_sub="owner", email="owner@example.com", email_verified=True),
+        prefix="",
     )
-    assert 'href="/admin"' not in anonymous_client.get("/cabinet").text
+    cabinet = anonymous_client.get("/cabinet")
+    assert "owner@example.com" not in cabinet.text
+    assert 'href="/admin"' not in cabinet.text
     assert anonymous_client.get("/admin").status_code == 403
     name = cookie_name(SESSION_COOKIE_NAME)
     anonymous_client.cookies.set(name, GOOGLE_SESSION_PREFIX + anonymous_client.cookies[name])

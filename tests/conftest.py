@@ -80,7 +80,6 @@ def app_db(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> Generator[Engine]
     monkeypatch.setattr(settings, "admin_password", SecretStr(ADMIN_AUTH[1]))
     monkeypatch.setattr(settings, "admin_google_email", None)
     monkeypatch.setattr(settings, "admin_google_subjects", frozenset())
-    monkeypatch.setattr(settings, "phone_auth_debug", True)
     monkeypatch.setattr(settings, "public_base_url", None)
     monkeypatch.setattr(settings, "google_client_id", None)
     monkeypatch.setattr(settings, "google_client_secret", None)

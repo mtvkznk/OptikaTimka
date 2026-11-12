@@ -541,15 +541,13 @@ label.calendar-day:has(input:disabled) {
   margin-top: 0.75rem;
 }
 
-.form-status[data-state="error"],
-.auth-note.is-error {
+.form-status[data-state="error"] {
   color: var(--error);
 }
 
 .booking-confirmation,
 .cabinet-login-card,
-.cabinet-empty,
-.cabinet-form {
+.cabinet-empty {
   gap: 0.8rem;
 }
 
@@ -560,7 +558,6 @@ label.calendar-day:has(input:disabled) {
 
 .booking-confirmation h2,
 .cabinet-topline h2,
-.cabinet-login-panel h2,
 .cabinet-empty h2,
 .cabinet-appointments h3 {
   margin: 0;
@@ -622,9 +619,7 @@ label.calendar-day:has(input:disabled) {
   min-width: 0;
 }
 
-.cabinet-empty,
-.cabinet-form,
-.cabinet-login-panel {
+.cabinet-empty {
   display: grid;
 }
 
@@ -632,30 +627,13 @@ label.calendar-day:has(input:disabled) {
   margin: 0;
 }
 
-.cabinet-login-panel {
-  gap: 0.9rem;
-}
-
-.google-button + .cabinet-login-panel {
-  border-top: 1px solid var(--line);
-  padding-top: 1rem;
-}
-
-.phone-request .cabinet-form {
-  margin-top: 0.55rem;
-}
-
-.auth-note,
-.debug-code {
+.auth-note {
   margin: 0;
   border-radius: 0.55rem;
   padding: 0.7rem 0.8rem;
-  background: var(--green-soft);
-  font-size: 0.9rem;
-}
-
-.auth-note.is-error {
+  color: var(--error);
   background: #fff0ee;
+  font-size: 0.9rem;
 }
 
 .public-nav {

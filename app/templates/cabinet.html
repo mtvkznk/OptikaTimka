@@ -72,51 +72,11 @@
         </section>
         {% else %}
         <section class="booking-card cabinet-login-card" aria-label="Вхід у кабінет">
-          {% if auth_message %}<p class="auth-note is-success" role="status">{{ auth_message }}</p>{% endif %}
-          {% if auth_error %}<p class="auth-note is-error" role="alert">{{ auth_error }}</p>{% endif %}
+          {% if auth_error %}<p class="auth-note" role="alert">{{ auth_error }}</p>{% endif %}
 
           {% if google_enabled %}
-          <a class="secondary-button google-button" href="/auth/google">Продовжити з Google</a>
-          {% endif %}
-
-          {% if phone_enabled %}
-          <section class="cabinet-login-panel" aria-labelledby="phone-login-title">
-            <h2 id="phone-login-title">Вхід телефоном</h2>
-
-            {% if awaiting_phone_code %}
-            <form class="cabinet-form" action="/auth/phone/verify" method="post">
-              {% include "csrf_field.html" %}
-              <input type="hidden" name="phone" value="{{ pending_phone }}" />
-              <p class="booking-hint">Номер для входу <strong>{{ pending_phone }}</strong></p>
-              {% if phone_code_hint and show_debug_phone_code %}
-              <p class="debug-code">Тестовий код: <strong>{{ phone_code_hint }}</strong></p>
-              {% endif %}
-              <label class="field">
-                <span>Код підтвердження</span>
-                <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
-                  maxlength="6" pattern="[0-9]{6}" required />
-              </label>
-              <button class="submit-button" type="submit">Увійти</button>
-            </form>
-            <details class="phone-request">
-              <summary>Змінити номер або запросити новий код</summary>
-            {% endif %}
-
-            <form class="cabinet-form" action="/auth/phone/request" method="post">
-              {% include "csrf_field.html" %}
-              <label class="field">
-                <span>Телефон із кодом країни</span>
-                <input name="phone" type="tel" inputmode="tel" autocomplete="tel"
-                  minlength="8" maxlength="40" value="{{ pending_phone }}" required />
-              </label>
-              <button class="submit-button" type="submit">Отримати код</button>
-            </form>
-
-            {% if awaiting_phone_code %}</details>{% endif %}
-          </section>
-          {% endif %}
-
-          {% if not google_enabled and not phone_enabled %}
+          <a class="secondary-button" href="/auth/google">Продовжити з Google</a>
+          {% else %}
           <div class="cabinet-empty">
             <h2>Вхід тимчасово недоступний</h2>
             <p class="booking-hint">Ви можете записатися на прийом без входу.</p>

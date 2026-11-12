@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import and_, delete, func, or_, update
+from sqlalchemy import and_, delete, func, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -65,7 +65,6 @@ from app.models import (
     ContentBlockRead,
     Customer,
     CustomerSession,
-    PhoneAuthCode,
     Product,
     ProductCreate,
     ProductRead,
@@ -78,13 +77,12 @@ from app.security import (
     SecurityMiddleware,
     cookie_name,
     get_customer_by_session,
-    hash_secret,
     hash_session_token,
     is_google_admin,
+    production,
     rate_limit,
     read_form_data,
     require_admin,
-    utc_expired,
 )
 from app.validation import normalize_email, normalize_phone
 
@@ -165,14 +163,12 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261112-service-days"
+ASSET_VERSION = "20261112-google-cabinet"
 ADMIN_ASSET_VERSION = "20261112-category-removal"
 LANDING_ASSET_VERSION = "20261112-catalog-centered"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
-PHONE_CODE_TTL_MINUTES = 10
-PHONE_CODE_MAX_ATTEMPTS = 5
 MONTH_TITLE_LABELS = {
     1: "Січень",
     2: "Лютий",
@@ -192,14 +188,6 @@ WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
 
 class ReorderPayload(BaseModel):
     ids: list[Annotated[int, Field(gt=0)]] = Field(min_length=1, max_length=1000)
-
-
-def secure_cookie_enabled() -> bool:
-    return settings.environment.lower() == "production"
-
-
-def hash_phone_code(phone: str, code: str) -> str:
-    return hash_secret(f"phone-code:{phone}:{code}")
 
 
 def google_auth_enabled() -> bool:
@@ -316,32 +304,6 @@ def build_appointment_rows(appointments: list[Appointment]) -> list[dict[str, An
         }
         for appointment in appointments
     ]
-
-
-def get_available_booking_dates(session: Session) -> list[dict[str, str]]:
-    today, window_end = booking_window()
-    closed_dates = set(
-        session.exec(
-            select(ClosedDate.closed_on)
-            .where(ClosedDate.closed_on >= today)
-            .where(ClosedDate.closed_on <= window_end)
-        ).all()
-    )
-    available_dates = []
-
-    for offset in range((window_end - today).days + 1):
-        day = today + timedelta(days=offset)
-        if day in closed_dates:
-            continue
-
-        available_dates.append(
-            {
-                "value": day.isoformat(),
-                "label": format_date(day),
-            }
-        )
-
-    return available_dates
 
 
 def next_month(value: date) -> date:
@@ -588,14 +550,10 @@ def issue_customer_session(
     session: Session,
     response: RedirectResponse,
     request: Request,
-    *,
-    via_google: bool = False,
 ) -> None:
-    clear_customer_session(request, session, response)
+    revoke_customer_session(request, session)
     session.execute(delete(CustomerSession).where(CustomerSession.expires_at < utc_now()))
-    token = secrets.token_urlsafe(32)
-    if via_google:
-        token = GOOGLE_SESSION_PREFIX + token
+    token = GOOGLE_SESSION_PREFIX + secrets.token_urlsafe(32)
     session.add(
         CustomerSession(
             customer_id=customer.id or 0,
@@ -609,58 +567,17 @@ def issue_customer_session(
         token,
         max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
         httponly=True,
-        secure=secure_cookie_enabled(),
+        secure=production(),
         samesite="lax",
     )
 
 
-def clear_customer_session(request: Request, session: Session, response: RedirectResponse) -> None:
-    token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME))
-    if token:
-        customer_session = session.exec(
-            select(CustomerSession).where(CustomerSession.token_hash == hash_session_token(token))
-        ).first()
-        if customer_session is not None:
-            session.delete(customer_session)
-            session.commit()
-
-    response.delete_cookie(
-        cookie_name(SESSION_COOKIE_NAME),
-        secure=secure_cookie_enabled(),
-        httponly=True,
-        samesite="lax",
-    )
-
-
-def upsert_phone_customer(session: Session, phone: str, name: str = "") -> Customer:
-    customer = session.exec(select(Customer).where(Customer.phone == phone)).first()
-    if customer is not None and customer.google_sub and not customer.phone_verified:
-        customer.phone = None
-        session.add(customer)
-        session.flush()
-        customer = None
-    if customer is None:
-        customer = Customer(phone=phone, name=name)
-    elif name and not customer.name:
-        customer.name = name
-
-    if not customer.name:
-        appointment = session.exec(
-            select(Appointment)
-            .where(Appointment.customer_id.is_(None), Appointment.phone_normalized == phone)
-            .order_by(Appointment.created_at.desc())
-            .limit(1)
-        ).first()
-        if appointment is not None:
-            customer.name = appointment.name
-
-    customer.phone_verified = True
-    customer.last_login_at = utc_now()
-    customer.updated_at = utc_now()
-    session.add(customer)
-    session.commit()
-    session.refresh(customer)
-    return customer
+def revoke_customer_session(request: Request, session: Session) -> None:
+    token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "")
+    if 0 < len(token) <= 128:
+        session.execute(
+            delete(CustomerSession).where(CustomerSession.token_hash == hash_session_token(token))
+        )
 
 
 def upsert_google_customer(session: Session, profile: dict[str, Any]) -> Customer:
@@ -737,11 +654,7 @@ def cabinet_context(
     session: Session,
     customer: Customer | None,
     *,
-    auth_message: str = "",
     auth_error: str = "",
-    pending_phone: str = "",
-    awaiting_phone_code: bool = False,
-    phone_code_hint: str = "",
     page: int = 1,
 ) -> dict[str, Any]:
     appointment_rows = []
@@ -758,18 +671,12 @@ def cabinet_context(
         "app_name": settings.app_name,
         "asset_version": ASSET_VERSION,
         "customer": customer,
-        "is_admin": is_google_admin(request, customer),
+        "is_admin": is_google_admin(customer),
         "appointment_rows": appointment_rows,
         "format_date": format_date,
         "format_time": format_time,
         "google_enabled": google_auth_enabled(),
-        "auth_message": auth_message,
         "auth_error": auth_error,
-        "pending_phone": pending_phone,
-        "awaiting_phone_code": awaiting_phone_code,
-        "phone_code_hint": phone_code_hint,
-        "show_debug_phone_code": settings.phone_auth_debug and settings.environment != "production",
-        "phone_enabled": settings.phone_auth_debug and settings.environment != "production",
         "pagination_path": "/cabinet",
         "page": page,
         "pages": pages,
@@ -908,154 +815,6 @@ def cabinet(
     )
 
 
-@app.post("/auth/phone/request", response_class=HTMLResponse)
-def request_phone_code(
-    request: Request,
-    session: SessionDep,
-    form_data: FormDataDep,
-) -> HTMLResponse:
-    if not settings.phone_auth_debug or settings.environment == "production":
-        raise HTTPException(503, "Вхід телефоном тимчасово недоступний.")
-    rate_limit(session, request, "phone-request-ip", 10, 600)
-    raw_phone = form_data.get("phone", "")
-    phone = normalize_phone(raw_phone)
-    if phone is None:
-        return templates.TemplateResponse(
-            request,
-            "cabinet.html",
-            cabinet_context(
-                request,
-                session,
-                None,
-                auth_error="Введіть коректний номер телефону.",
-                pending_phone=raw_phone,
-            ),
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-
-    rate_limit(session, request, "phone-request-number", 1, 60, identifier=phone)
-    rate_limit(session, request, "phone-request-hour", 5, 3600, identifier=phone)
-    now = utc_now()
-    session.execute(
-        update(PhoneAuthCode)
-        .where(
-            PhoneAuthCode.phone == phone,
-            PhoneAuthCode.consumed_at.is_(None),
-        )
-        .values(consumed_at=now)
-    )
-    session.execute(delete(PhoneAuthCode).where(PhoneAuthCode.expires_at < now))
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    session.add(
-        PhoneAuthCode(
-            phone=phone,
-            code_hash=hash_phone_code(phone, code),
-            expires_at=utc_now() + timedelta(minutes=PHONE_CODE_TTL_MINUTES),
-        )
-    )
-    session.commit()
-    return templates.TemplateResponse(
-        request,
-        "cabinet.html",
-        cabinet_context(
-            request,
-            session,
-            None,
-            auth_message="Введіть код підтвердження.",
-            pending_phone=phone,
-            awaiting_phone_code=True,
-            phone_code_hint=code,
-        ),
-    )
-
-
-@app.post("/auth/phone/verify", response_model=None)
-def verify_phone_code(
-    request: Request,
-    session: SessionDep,
-    form_data: FormDataDep,
-) -> RedirectResponse | HTMLResponse:
-    if not settings.phone_auth_debug or settings.environment == "production":
-        raise HTTPException(503, "Вхід телефоном тимчасово недоступний.")
-    rate_limit(session, request, "phone-verify-ip", 30, 600)
-    phone = normalize_phone(form_data.get("phone", ""))
-    code = form_data.get("code", "").strip()
-    if phone is None or not re.fullmatch(r"[0-9]{6}", code):
-        return templates.TemplateResponse(
-            request,
-            "cabinet.html",
-            cabinet_context(
-                request,
-                session,
-                None,
-                auth_error="Перевірте номер телефону і 6-значний код.",
-                pending_phone=form_data.get("phone", ""),
-                awaiting_phone_code=phone is not None,
-            ),
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-
-    auth_code = session.exec(
-        select(PhoneAuthCode)
-        .where(PhoneAuthCode.phone == phone)
-        .where(PhoneAuthCode.consumed_at.is_(None))
-        .order_by(PhoneAuthCode.created_at.desc(), PhoneAuthCode.id.desc())
-    ).first()
-    if (
-        auth_code is None
-        or utc_expired(auth_code.expires_at)
-        or auth_code.attempts >= PHONE_CODE_MAX_ATTEMPTS
-    ):
-        return templates.TemplateResponse(
-            request,
-            "cabinet.html",
-            cabinet_context(
-                request,
-                session,
-                None,
-                auth_error="Запросіть новий код підтвердження.",
-                pending_phone=phone,
-            ),
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-
-    correct = secrets.compare_digest(auth_code.code_hash, hash_phone_code(phone, code))
-    updated = session.execute(
-        update(PhoneAuthCode)
-        .where(
-            PhoneAuthCode.id == auth_code.id,
-            PhoneAuthCode.consumed_at.is_(None),
-            PhoneAuthCode.attempts < PHONE_CODE_MAX_ATTEMPTS,
-            PhoneAuthCode.expires_at > utc_now(),
-        )
-        .values(
-            attempts=PhoneAuthCode.attempts + 1,
-            consumed_at=utc_now() if correct else None,
-        )
-        .returning(PhoneAuthCode.id)
-        .execution_options(synchronize_session=False)
-    ).scalar_one_or_none()
-    session.commit()
-    if not correct or updated is None:
-        return templates.TemplateResponse(
-            request,
-            "cabinet.html",
-            cabinet_context(
-                request,
-                session,
-                None,
-                auth_error="Не вдалося підтвердити код. Перевірте його або запросіть новий.",
-                pending_phone=phone,
-                awaiting_phone_code=True,
-            ),
-            status_code=400,
-        )
-    customer = upsert_phone_customer(session, phone)
-    response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
-    issue_customer_session(customer, session, response, request)
-    return response
-
-
 @app.get("/auth/google")
 def google_login(request: Request) -> RedirectResponse:
     if not google_auth_enabled():
@@ -1086,7 +845,7 @@ def google_login(request: Request) -> RedirectResponse:
         state,
         max_age=10 * 60,
         httponly=True,
-        secure=secure_cookie_enabled(),
+        secure=production(),
         samesite="lax",
     )
     response.set_cookie(
@@ -1094,7 +853,7 @@ def google_login(request: Request) -> RedirectResponse:
         verifier,
         max_age=10 * 60,
         httponly=True,
-        secure=secure_cookie_enabled(),
+        secure=production(),
         samesite="lax",
     )
     return response
@@ -1118,14 +877,14 @@ def google_callback(request: Request, session: SessionDep) -> RedirectResponse:
             profile = exchange_google_code(request, code)
             customer = upsert_google_customer(session, profile)
             response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
-            issue_customer_session(customer, session, response, request, via_google=True)
+            issue_customer_session(customer, session, response, request)
         except (HTTPException, IntegrityError):
             session.rollback()
             response = RedirectResponse("/cabinet?auth_error=google_failed", status_code=303)
     for name in (OAUTH_STATE_COOKIE_NAME, OAUTH_VERIFIER_COOKIE_NAME):
         response.delete_cookie(
             cookie_name(name),
-            secure=secure_cookie_enabled(),
+            secure=production(),
             httponly=True,
             samesite="lax",
         )
@@ -1134,8 +893,12 @@ def google_callback(request: Request, session: SessionDep) -> RedirectResponse:
 
 @app.post("/auth/logout")
 def logout(request: Request, session: SessionDep) -> RedirectResponse:
+    revoke_customer_session(request, session)
+    session.commit()
     response = RedirectResponse(url="/cabinet", status_code=status.HTTP_303_SEE_OTHER)
-    clear_customer_session(request, session, response)
+    response.delete_cookie(
+        cookie_name(SESSION_COOKIE_NAME), secure=production(), httponly=True, samesite="lax",
+    )
     return response
 
 
