@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import time, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.engine import Engine
@@ -15,8 +15,9 @@ def test_service_weekdays_restrict_availability_and_booking(client: TestClient) 
     open_day = current_date() + timedelta(days=2)
     excluded_day = open_day + timedelta(days=1)
     mask = 1 << open_day.weekday()
+    version = datetime.fromisoformat(service["updated_at"]).replace(tzinfo=UTC).isoformat()
     edit = {
-        "id": service["id"], "version": service["updated_at"], "name": service["name"],
+        "id": service["id"], "version": version, "name": service["name"],
         "weekdays_mask": mask,
     }
     assert client.post("/admin/changes", json={"services": [edit]}).status_code == 200

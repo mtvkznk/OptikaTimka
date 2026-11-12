@@ -1,6 +1,6 @@
 import hashlib
 from collections.abc import Sequence
-from datetime import date, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from itertools import pairwise
 from typing import Annotated, Any, Self
@@ -186,8 +186,18 @@ class AdminChanges(BaseModel):
 
 
 def verify_version(row: Any, version: str | None) -> None:
-    if row is None or row.updated_at.isoformat() != version:
-        raise HTTPException(409, "Дані змінилися. Скиньте чернетку, щоб завантажити актуальні дані.")
+    if row is not None and version:
+        try:
+            submitted = datetime.fromisoformat(version)
+        except ValueError:
+            pass
+        else:
+            actual = row.updated_at
+            if submitted.replace(tzinfo=submitted.tzinfo or UTC) == actual.replace(
+                tzinfo=actual.tzinfo or UTC,
+            ):
+                return
+    raise HTTPException(409, "Дані змінилися. Скиньте чернетку, щоб завантажити актуальні дані.")
 
 
 def apply_appointment_changes(session: Session, changes: list[AppointmentChange]) -> None:

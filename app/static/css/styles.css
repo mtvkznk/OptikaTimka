@@ -424,13 +424,11 @@ label.calendar-day:has(input:disabled) {
   line-height: 1.5;
 }
 
-.booking-window,
-.phone-request {
+.booking-window {
   margin-top: 0.6rem;
 }
 
-.booking-window summary,
-.phone-request summary {
+.booking-window summary {
   width: fit-content;
   min-height: 2.1rem;
   padding-block: 0.35rem;
