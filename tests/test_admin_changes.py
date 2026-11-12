@@ -78,6 +78,50 @@ def test_admin_catalog_changes_update_public_pages(
     assert client.get("/api/products").json() == []
 
 
+def test_category_removal_hides_products_until_they_are_moved(client: TestClient) -> None:
+    category = {"id": "frames", "version": ""}
+    response = client.post("/api/products", json={"category": "FRAMES", "name": "Металева оправа"})
+    assert response.status_code == 201
+    product = response.json()
+    assert client.post("/admin/changes", json={
+        "remove_categories": [category],
+        "products": [{"category": "frames", "name": "Нова оправа", "price": 0}],
+    }).status_code == 409
+    assert client.get("/catalog/frames").status_code == 200
+
+    assert client.post("/admin/changes", json={"remove_categories": [category]}).status_code == 200
+    assert client.post("/admin/changes", json={"remove_categories": [category]}).status_code == 409
+    home = client.get("/").text
+    assert 'href="/catalog/frames"' not in home
+    assert 'href="/catalog/sunglasses"' in home
+    assert client.get("/catalog/frames").status_code == 404
+    assert "Металева оправа" not in client.get("/catalog").text
+    assert client.get("/api/products").json() == []
+    admin = client.get("/admin").text
+    assert "Металева оправа" in admin and "Категорію видалено" in admin
+    assert client.post("/api/products", json={
+        "category": "frames", "name": "Нова оправа",
+    }).status_code == 409
+
+    edit = {
+        "id": product["id"], "version": product["updated_at"], "category": "sunglasses",
+        "name": product["name"], "price": 0,
+    }
+    assert client.post("/admin/changes", json={"products": [edit]}).status_code == 200
+    assert "Металева оправа" in client.get("/catalog/sunglasses").text
+
+
+def test_last_category_removal_cleans_up_home_navigation(client: TestClient) -> None:
+    removals = [
+        {"id": slug, "version": ""}
+        for slug in ["frames", "sunglasses", "contact-lenses", "kids-frames"]
+    ]
+    assert client.post("/admin/changes", json={"remove_categories": removals}).status_code == 200
+    home = client.get("/").text
+    assert 'id="catalog"' not in home and 'href="/#catalog"' not in home
+    assert client.get("/booking").status_code == 200
+
+
 def test_work_schedule_sets_hours_and_booking_uses_remaining_time(client: TestClient) -> None:
     def schedule() -> dict:
         page = client.get("/admin").text

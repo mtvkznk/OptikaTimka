@@ -75,6 +75,7 @@ class ProductRead(ProductBase):
 class CatalogCategory(SQLModel, table=True):
     slug: str = Field(primary_key=True, max_length=80)
     name: str = Field(max_length=80)
+    is_removed: bool = Field(default=False, sa_column_kwargs={"server_default": text("false")})
     updated_at: datetime = Field(default_factory=utc_now)
 
 

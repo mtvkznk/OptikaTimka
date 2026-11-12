@@ -2,7 +2,11 @@
 {% block title %}{{ heading }} · Optyka Timka{% endblock %}
 {% block content %}
   <section class="catalog-page" data-landing-section="catalog" aria-labelledby="catalog-heading">
+    {% if categories %}
     <a class="catalog-back" href="/#catalog">← До каталогу на головній</a>
+    {% else %}
+    <a class="catalog-back" href="/">← На головну</a>
+    {% endif %}
     <h1 id="catalog-heading">{{ heading }}</h1>
     <nav class="catalog-filters" aria-label="Категорії товарів">
       <a class="landing-button landing-outline" href="/catalog"{% if not category %} aria-current="page"{% endif %}>Усі товари</a>

@@ -1,5 +1,6 @@
 from typing import Literal
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 from sqlmodel.sql.expression import SelectOfScalar
 
@@ -22,10 +23,22 @@ def category_overrides(session: Session) -> dict[str, CatalogCategory]:
 
 
 def category_names(session: Session) -> dict[str, str]:
-    names: dict[str, str] = dict(DEFAULT_CATEGORIES)
-    names.update((slug, row.name) for slug, row in category_overrides(session).items())
-    return names
+    overrides = category_overrides(session)
+    return {
+        slug: overrides[slug].name if slug in overrides else name
+        for slug, name in DEFAULT_CATEGORIES.items()
+        if slug not in overrides or not overrides[slug].is_removed
+    }
+
+
+def product_category():
+    return func.lower(func.replace(Product.category, "_", "-"))
 
 
 def active_products() -> SelectOfScalar[Product]:
     return select(Product).where(Product.is_active).order_by(Product.sort_order, Product.id)
+
+
+def public_products() -> SelectOfScalar[Product]:
+    removed = select(CatalogCategory.slug).where(CatalogCategory.is_removed)
+    return active_products().where(product_category().not_in(removed))

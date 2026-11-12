@@ -32,7 +32,14 @@ from app.booking import (
     occupied_intervals,
     working_intervals,
 )
-from app.catalog import DEFAULT_CATEGORIES, active_products, category_names, category_overrides
+from app.catalog import (
+    DEFAULT_CATEGORIES,
+    active_products,
+    category_names,
+    category_overrides,
+    product_category,
+    public_products,
+)
 from app.config import settings
 from app.database import get_session
 from app.models import (
@@ -50,6 +57,7 @@ from app.models import (
     BookingService,
     BookingServiceCreate,
     BookingServiceRead,
+    CatalogCategory,
     ClosedDate,
     ClosedDateCreate,
     ClosedDateRead,
@@ -158,7 +166,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261112-service-days"
-ADMIN_ASSET_VERSION = "20261112-service-days-catalog"
+ADMIN_ASSET_VERSION = "20261112-category-removal"
 LANDING_ASSET_VERSION = "20261112-landing-3"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -450,7 +458,9 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
                 "version": overrides[slug].updated_at.isoformat() if slug in overrides else "",
             }
             for slug, name in DEFAULT_CATEGORIES.items()
+            if slug not in overrides or not overrides[slug].is_removed
         },
+        "removed_categories": {slug for slug, row in overrides.items() if row.is_removed},
         "products": session.exec(active_products()).all(),
         "product_price": lambda product: Decimal(product.price_cents).scaleb(-2),
         "work_schedule": schedule_for_admin(get_active_time_slots(session)),
@@ -839,12 +849,12 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
 @app.get("/catalog", response_class=HTMLResponse)
 @app.get("/catalog/{category}", response_class=HTMLResponse)
 def catalog_page(request: Request, session: SessionDep, category: str | None = None) -> HTMLResponse:
-    if category is not None and category not in DEFAULT_CATEGORIES:
-        raise HTTPException(404, "Категорію каталогу не знайдено.")
     categories = category_names(session)
-    statement = active_products()
+    statement = public_products()
     if category is not None:
-        statement = statement.where(func.lower(func.replace(Product.category, "_", "-")) == category)
+        if category not in categories:
+            raise HTTPException(404, "Категорію каталогу не знайдено.")
+        statement = statement.where(product_category() == category)
     return templates.TemplateResponse(
         request, "catalog.html",
         {
@@ -1241,7 +1251,7 @@ def list_closed_dates(session: SessionDep) -> list[ClosedDate]:
 
 @app.get("/api/products", response_model=list[ProductRead])
 def list_products(session: SessionDep) -> list[Product]:
-    return list(session.exec(active_products()))
+    return list(session.exec(public_products()))
 
 
 @app.post(
@@ -1251,6 +1261,10 @@ def list_products(session: SessionDep) -> list[Product]:
     dependencies=[Depends(require_admin)],
 )
 def create_product(payload: ProductCreate, session: SessionDep) -> Product:
+    lock_booking_writes(session)
+    category = session.get(CatalogCategory, payload.category.lower().replace("_", "-"))
+    if category is not None and category.is_removed:
+        raise HTTPException(409, "Категорію вже видалено. Оберіть іншу категорію.")
     product = Product.model_validate(payload)
     session.add(product)
     session.commit()

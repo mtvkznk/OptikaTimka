@@ -16,7 +16,7 @@ from app.booking import (
     minute_of,
     working_intervals,
 )
-from app.catalog import CategorySlug
+from app.catalog import DEFAULT_CATEGORIES, CategorySlug, category_names
 from app.models import (
     Appointment,
     AppointmentStatus,
@@ -52,9 +52,12 @@ class SlotChange(AvailableTimeSlotCreate):
     version: str | None = Field(default=None, max_length=48)
 
 
-class CategoryChange(BaseModel):
+class CategoryVersion(BaseModel):
     id: CategorySlug
     version: str = Field(max_length=48)
+
+
+class CategoryChange(CategoryVersion):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 
 
@@ -169,6 +172,7 @@ class AdminChanges(BaseModel):
     appointments: list[AppointmentChange] = Field(default_factory=list, max_length=1000)
     services: list[ServiceChange] = Field(default_factory=list, max_length=500)
     categories: list[CategoryChange] = Field(default_factory=list, max_length=4)
+    remove_categories: list[CategoryVersion] = Field(default_factory=list, max_length=4)
     products: list[ProductChange] = Field(default_factory=list, max_length=500)
     remove_products: list[RowVersion] = Field(default_factory=list, max_length=500)
     time_slots: list[SlotChange] = Field(default_factory=list, max_length=500)
@@ -298,22 +302,36 @@ def apply_catalog_changes(
             row.updated_at = utc_now()
 
 
-def apply_category_changes(session: Session, changes: list[CategoryChange]) -> None:
-    if len({change.id for change in changes}) != len(changes):
+def apply_category_changes(
+    session: Session, changes: list[CategoryChange], removals: list[CategoryVersion],
+) -> None:
+    edits = [*changes, *removals]
+    if len({change.id for change in edits}) != len(edits):
         raise HTTPException(422, "Одну категорію змінено кілька разів.")
-    for change in changes:
+    for change in edits:
+        removing = not isinstance(change, CategoryChange)
         category = session.get(CatalogCategory, change.id)
         if category is None and not change.version:
-            session.add(CatalogCategory(slug=change.id, name=change.name))
+            category = CatalogCategory(slug=change.id, name=DEFAULT_CATEGORIES[change.id])
+            session.add(category)
+        elif category is None or category.is_removed:
+            raise HTTPException(409, "Категорію вже видалено. Оновіть сторінку.")
         else:
             verify_version(category, change.version)
+        if removing:
+            category.is_removed = True
+        else:
             category.name = change.name
-            category.updated_at = utc_now()
+        category.updated_at = utc_now()
 
 
 def apply_product_changes(
     session: Session, changes: list[ProductChange], removals: list[RowVersion],
 ) -> None:
+    if changes:
+        categories = category_names(session)
+        if any(change.category not in categories for change in changes):
+            raise HTTPException(409, "Оберіть для товару категорію, яка залишиться в каталозі.")
     edits = [change for change in [*changes, *removals] if change.id is not None]
     ids = {change.id for change in edits}
     if len(ids) != len(edits):
@@ -385,7 +403,7 @@ def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
     ):
         raise HTTPException(422, "Збережіть робочий графік окремо від старого списку годин.")
     apply_appointment_changes(session, changes.appointments)
-    apply_category_changes(session, changes.categories)
+    apply_category_changes(session, changes.categories, changes.remove_categories)
     apply_product_changes(session, changes.products, changes.remove_products)
     apply_catalog_changes(
         session, BookingService, changes.services, changes.service_order, changes.remove_services,

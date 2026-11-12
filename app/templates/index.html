@@ -5,7 +5,7 @@
     <p>Перевірка зору, консультація лікаря офтальмолога, підбір та виготовлення окулярів за 5 хвилин</p>
     <div class="landing-hero-actions">
       <a class="landing-button landing-primary" href="/booking">Записатися на перевірку</a>
-      <a class="landing-button landing-outline" href="#catalog">Переглянути каталог</a>
+      {% if categories %}<a class="landing-button landing-outline" href="#catalog">Переглянути каталог</a>{% endif %}
     </div>
   </section>
 
@@ -17,12 +17,12 @@
         <h3>Перевірка зору</h3>
         <p>Діагностика зору кваліфікованими спеціалістами</p>
       </a>
-      <a class="landing-service" href="/catalog/frames">
+      <a class="landing-service" href="{{ '/catalog/frames' if 'frames' in categories else '/booking' }}">
         <span class="landing-icon" aria-hidden="true"><span class="landing-glasses"><span></span></span></span>
         <h3>Підбір оправ</h3>
         <p>Підбір оправи та консультація</p>
       </a>
-      <a class="landing-service" href="/catalog/contact-lenses">
+      <a class="landing-service" href="{{ '/catalog/contact-lenses' if 'contact-lenses' in categories else '/booking' }}">
         <span class="landing-icon" aria-hidden="true"><span class="landing-lens"></span></span>
         <h3>Лінзи та окуляри</h3>
         <p>Виготовлення окулярів і підбір контактних лінз за вашим рецептом.</p>
@@ -30,6 +30,7 @@
     </div>
   </section>
 
+  {% if categories %}
   <section class="landing-catalog" id="catalog" data-landing-section="catalog" aria-labelledby="catalog-title">
     <h2 id="catalog-title">Каталог</h2>
     <div class="landing-catalog-grid">
@@ -38,6 +39,7 @@
       {% endfor %}
     </div>
   </section>
+  {% endif %}
 
   <section class="landing-book" aria-labelledby="book-title">
     <div>

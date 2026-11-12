@@ -6,7 +6,7 @@
 <label class="admin-field">Категорія
   <select name="category" required>
     {% if selected not in categories %}
-    <option value="" selected disabled>Оберіть категорію</option>
+    <option value="" selected disabled>{{ 'Категорію видалено' if selected in removed_categories else 'Оберіть категорію' }}</option>
     {% endif %}
     {% for slug, category in categories.items() %}
     <option value="{{ slug }}"{% if slug == selected %} selected{% endif %}>{{ category.name }}</option>
@@ -24,7 +24,7 @@
   <div class="admin-panel-heading">
     <div>
       <h2 id="admin-catalog-heading">Каталог</h2>
-      <p>Назви категорій відображаються на головній, а товари — на сторінках категорій.</p>
+      <p>Товари з видаленої категорії зникають із сайту. Тут їх можна перенести до іншої категорії.</p>
     </div>
     <a class="admin-button" href="/catalog">Переглянути каталог <span aria-hidden="true">→</span></a>
   </div>
@@ -35,7 +35,10 @@
       <label class="admin-field">Назва плитки «{{ category.original_name }}»
         <input name="name" value="{{ category.name }}" maxlength="80" required />
       </label>
+      {{ remove_button(category.name) }}
     </form>
+    {% else %}
+    <p class="admin-list-empty">Категорій у каталозі немає.</p>
     {% endfor %}
   </div>
   <h3 class="admin-catalog-heading">Товари</h3>
@@ -50,6 +53,7 @@
     {% endfor %}
   </div>
   <ul class="admin-pending" data-pending-for="products" hidden></ul>
+  {% if categories %}
   <details class="admin-add">
     <summary>Додати товар</summary>
     <form class="admin-editor admin-product" method="post" action="/admin/changes" data-admin-add="products">
@@ -57,4 +61,5 @@
       <button class="admin-button" type="submit">Додати до списку</button>
     </form>
   </details>
+  {% endif %}
 </section>

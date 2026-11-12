@@ -321,7 +321,7 @@ if (scheduleForm) {
 function payloadOfDraft() {
   const payload = {
     appointments: [], services: [], remove_services: [],
-    categories: [], products: [], remove_products: [],
+    categories: [], remove_categories: [], products: [], remove_products: [],
     closed_days: { close: [], reopen: {}, reason: draft.reason },
     ...draft.orders,
   };

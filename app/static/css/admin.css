@@ -563,6 +563,10 @@
   grid-column: 1 / -1;
 }
 
+.admin-category-grid .admin-button {
+  justify-self: start;
+}
+
 .admin-product {
   grid-template-columns: minmax(8rem, 2fr) minmax(8rem, 1.3fr) minmax(6rem, 0.7fr) auto;
 }
