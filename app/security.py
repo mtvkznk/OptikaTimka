@@ -23,6 +23,7 @@ SESSION_COOKIE_NAME = "optika_customer_session"
 GOOGLE_SESSION_PREFIX = "g."
 CSRF_COOKIE_NAME = "optika_csrf"
 MAX_BODY_BYTES = 65_536
+MAX_ADMIN_CHANGES_BYTES = 2 * 1024 * 1024
 CSRF_TTL_SECONDS = 24 * 60 * 60
 basic_auth = HTTPBasic(auto_error=False, realm="Optika Timka admin")
 
@@ -183,7 +184,10 @@ class SecurityMiddleware:
             except ValueError:
                 await reject(400, "Некоректна довжина запиту.")
                 return
-            if content_length < 0 or content_length > MAX_BODY_BYTES:
+            limit = (
+                MAX_ADMIN_CHANGES_BYTES if scope["path"] == "/admin/changes" else MAX_BODY_BYTES
+            )
+            if content_length < 0 or content_length > limit:
                 await reject(413, "Запит завеликий.")
                 return
             body = bytearray()
@@ -192,7 +196,7 @@ class SecurityMiddleware:
                 if message["type"] == "http.disconnect":
                     return
                 body.extend(message.get("body", b""))
-                if len(body) > MAX_BODY_BYTES:
+                if len(body) > limit:
                     await reject(413, "Запит завеликий.")
                     return
                 if not message.get("more_body", False):

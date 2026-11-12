@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, time
 from enum import Enum
 
 from pydantic import EmailStr, field_validator, model_validator
-from sqlalchemy import Column, DateTime, Index, Integer, UniqueConstraint, text
+from sqlalchemy import Column, DateTime, Index, Integer, LargeBinary, UniqueConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, SQLModel
 
@@ -69,6 +69,11 @@ class ProductRead(ProductBase):
     id: int
     created_at: datetime
     updated_at: datetime
+
+
+class ProductPhoto(SQLModel, table=True):
+    product_id: int = Field(primary_key=True, foreign_key="product.id", ondelete="CASCADE")
+    jpeg: bytes = Field(sa_type=LargeBinary)
 
 
 class CatalogCategory(SQLModel, table=True):

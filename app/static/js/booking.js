@@ -208,7 +208,7 @@ form.addEventListener("submit", async (event) => {
       const payload = await response.json().catch(() => null);
       if (Array.isArray(payload?.detail) && payload.detail.some((error) => error.loc?.includes("phone"))) {
         fieldsets.forEach((fieldset) => { fieldset.disabled = false; });
-        showError("Введіть номер із кодом країни, від 8 до 15 цифр.", form.elements.namedItem("phone"));
+        showError("Введіть номер у форматі 067 123 45 67 або +380 67 123 45 67.", form.elements.namedItem("phone"));
         return;
       }
       showError(typeof payload?.detail === "string"

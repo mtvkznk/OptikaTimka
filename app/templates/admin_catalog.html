@@ -19,16 +19,26 @@
 <label class="admin-field admin-product-description">Опис
   <textarea name="description" rows="2" maxlength="1000">{{ product.description if product else '' }}</textarea>
 </label>
-{% endmacro %}
-<section class="admin-panel" id="catalog" aria-labelledby="admin-catalog-heading">
-  <div class="admin-panel-heading">
-    <div>
-      <h2 id="admin-catalog-heading">Каталог</h2>
-      <p>Товари з видаленої категорії зникають із сайту. Тут їх можна перенести до іншої категорії.</p>
-    </div>
-    <a class="admin-button" href="/catalog">Переглянути каталог <span aria-hidden="true">→</span></a>
+{% set image = catalog_image(product, admin=true) if product else none %}
+<fieldset class="admin-photo" data-admin-photo>
+  <legend>Фото товару</legend>
+  <img data-photo-preview {% if image %}src="{{ image }}"{% else %}hidden{% endif %} alt="Фото товару" loading="lazy" />
+  <div class="admin-photo-controls">
+    <label class="admin-field">Вибрати фото
+      <input type="file" data-photo-file accept="image/jpeg,image/png,image/webp" />
+    </label>
+    <input type="hidden" name="photo" value="" data-admin-value />
+    <button class="admin-button admin-danger" type="button" data-photo-remove{% if not image %} hidden{% endif %}>Прибрати фото</button>
+    <p data-photo-message role="status"></p>
   </div>
-  <h3 class="admin-catalog-heading">Категорії на головній</h3>
+</fieldset>
+{% endmacro %}
+<header class="admin-page-heading">
+  <h1 id="admin-catalog-heading">Каталог</h1>
+  <a class="admin-button" href="/catalog">Переглянути каталог <span aria-hidden="true">→</span></a>
+</header>
+<section class="admin-panel" id="catalog" aria-labelledby="admin-catalog-heading">
+  <h2 class="admin-catalog-heading">Категорії на головній</h2>
   <div class="admin-category-grid">
     {% for slug, category in categories.items() %}
     <form class="admin-editor" method="post" action="/admin/changes" data-admin-edit="categories" data-id="{{ slug }}" data-version="{{ category.version }}">
@@ -41,20 +51,22 @@
     <p class="admin-list-empty">Категорій у каталозі немає.</p>
     {% endfor %}
   </div>
-  <h3 class="admin-catalog-heading">Товари</h3>
-  <div class="admin-edit-list">
-    {% for product in products %}
-    <form class="admin-editor admin-product" method="post" action="/admin/changes" data-admin-edit="products" data-id="{{ product.id }}" data-version="{{ product.updated_at.isoformat() }}">
-      {{ product_fields(product) }}
-      <button class="admin-button admin-danger" type="button" data-remove data-label="{{ product.name }}" aria-label="Видалити: {{ product.name }}">Видалити</button>
-    </form>
-    {% else %}
-    <p class="admin-list-empty">Товарів поки немає.</p>
-    {% endfor %}
-  </div>
-  <ul class="admin-pending" data-pending-for="products" hidden></ul>
-  {% if categories %}
+  {% if removed_categories %}
   <details class="admin-add">
+    <summary>Видалені категорії ({{ removed_categories | length }})</summary>
+    <ul class="admin-pending">
+      {% for slug, category in removed_categories.items() %}
+      <li>
+        <span>{{ category.name }}</span>
+        <button type="button" class="admin-button" data-restore-category="{{ slug }}" data-version="{{ category.updated_at.isoformat() }}" data-label="{{ category.name }}">Відновити</button>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  <h2 class="admin-catalog-heading">Товари</h2>
+  {% if categories %}
+  <details class="admin-add admin-add-product">
     <summary>Додати товар</summary>
     <form class="admin-editor admin-product" method="post" action="/admin/changes" data-admin-add="products">
       {{ product_fields() }}
@@ -62,4 +74,19 @@
     </form>
   </details>
   {% endif %}
+  <ul class="admin-pending" data-pending-for="products" hidden></ul>
+  <div class="admin-edit-list">
+    {% for product in products %}
+    {% set category = categories.get(product.category.lower().replace("_", "-")) %}
+    <details class="admin-product-card">
+      <summary><strong>{{ product.name }}</strong><span>{{ category.name if category else 'Приховано з каталогу' }}</span></summary>
+    <form class="admin-editor admin-product" method="post" action="/admin/changes" data-admin-edit="products" data-id="{{ product.id }}" data-version="{{ product.updated_at.isoformat() }}">
+      {{ product_fields(product) }}
+      <button class="admin-button admin-danger" type="button" data-remove data-label="{{ product.name }}" aria-label="Видалити: {{ product.name }}">Видалити</button>
+    </form>
+    </details>
+    {% else %}
+    <p class="admin-list-empty">Товарів поки немає.</p>
+    {% endfor %}
+  </div>
 </section>

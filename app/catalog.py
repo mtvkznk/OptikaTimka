@@ -40,5 +40,9 @@ def active_products() -> SelectOfScalar[Product]:
 
 
 def public_products() -> SelectOfScalar[Product]:
+    return active_products().where(visible_category())
+
+
+def visible_category():
     removed = select(CatalogCategory.slug).where(CatalogCategory.is_removed)
-    return active_products().where(product_category().not_in(removed))
+    return product_category().not_in(removed)

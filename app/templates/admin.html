@@ -17,10 +17,10 @@
 </fieldset>
 {% endmacro %}
 {% block content %}
+<div data-admin-view="appointments" data-admin-anchor="#appointments">
 <header class="admin-page-heading">
   <div>
-    <h1>Огляд</h1>
-    <p>Записи на прийом, послуги й графік роботи.</p>
+    <h1>Записи</h1>
   </div>
   <time class="admin-today" datetime="{{ today.isoformat() }}">{{ format_date(today) }}</time>
 </header>
@@ -50,7 +50,15 @@
   </div>
   {% include "admin_appointment_list.html" %}
 </section>
+</div>
 
+<div data-admin-view="schedule" data-admin-anchor="#services">
+<header class="admin-page-heading"><h1>Послуги й графік</h1></header>
+<nav class="admin-section-nav" aria-label="Налаштування запису">
+  <a class="admin-button" href="#services">Послуги</a>
+  <a class="admin-button" href="#time-slots">Робочий графік</a>
+  <a class="admin-button" href="#closed-dates">Закриті дати</a>
+</nav>
 <section class="admin-panel" id="services" aria-labelledby="services-heading">
   <div class="admin-panel-heading">
     <div>
@@ -98,8 +106,6 @@
     </form>
   </details>
 </section>
-
-{% include "admin_catalog.html" %}
 
 <section class="admin-panel" id="time-slots" aria-labelledby="slots-heading">
   <div class="admin-panel-heading">
@@ -161,4 +167,9 @@
     </label>
   </div>
 </section>
+</div>
+
+<div data-admin-view="catalog" data-admin-anchor="#catalog">
+  {% include "admin_catalog.html" %}
+</div>
 {% endblock %}

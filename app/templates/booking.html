@@ -16,6 +16,9 @@
       <section class="booking-shell" aria-labelledby="booking-title">
         <header class="booking-heading">
           <h1 id="booking-title">Запис на прийом</h1>
+          {% if offer_google_sign_in %}
+          <p class="booking-hint"><a href="/cabinet">Увійдіть через Google</a> перед записом, щоб бачити його статус у кабінеті.</p>
+          {% endif %}
         </header>
 
         <form class="booking-card" method="post" action="/api/appointments" data-appointment-form novalidate>
@@ -104,8 +107,8 @@
                 <input name="name" type="text" autocomplete="name" maxlength="120" required />
               </label>
               <label class="field">
-                <span>Телефон із кодом країни</span>
-                <input name="phone" type="tel" inputmode="tel" autocomplete="tel" minlength="8" maxlength="40" required />
+                <span>Контактний телефон</span>
+                <input name="phone" type="tel" inputmode="tel" autocomplete="tel" minlength="8" maxlength="40" placeholder="067 123 45 67" required />
               </label>
             </div>
           </fieldset>

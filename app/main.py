@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, ValidationError
@@ -39,6 +39,7 @@ from app.catalog import (
     category_overrides,
     product_category,
     public_products,
+    visible_category,
 )
 from app.config import settings
 from app.database import get_session
@@ -67,9 +68,11 @@ from app.models import (
     CustomerSession,
     Product,
     ProductCreate,
+    ProductPhoto,
     ProductRead,
     utc_now,
 )
+from app.product_photos import product_photo_url
 from app.security import (
     GOOGLE_SESSION_PREFIX,
     SESSION_COOKIE_NAME,
@@ -84,7 +87,7 @@ from app.security import (
     read_form_data,
     require_admin,
 )
-from app.validation import normalize_email, normalize_phone
+from app.validation import normalize_email
 
 IS_PRODUCTION = settings.environment == "production"
 app = FastAPI(
@@ -163,9 +166,9 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261112-google-cabinet"
-ADMIN_ASSET_VERSION = "20261112-category-removal"
-LANDING_ASSET_VERSION = "20261112-catalog-centered"
+ASSET_VERSION = "20261112-booking-contact"
+ADMIN_ASSET_VERSION = "20261112-admin-workspace"
+LANDING_ASSET_VERSION = "20261112-product-photos"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30
@@ -422,9 +425,10 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
             for slug, name in DEFAULT_CATEGORIES.items()
             if slug not in overrides or not overrides[slug].is_removed
         },
-        "removed_categories": {slug for slug, row in overrides.items() if row.is_removed},
+        "removed_categories": {slug: row for slug, row in overrides.items() if row.is_removed},
         "products": session.exec(active_products()).all(),
         "product_price": lambda product: Decimal(product.price_cents).scaleb(-2),
+        "catalog_image": catalog_image,
         "work_schedule": schedule_for_admin(get_active_time_slots(session)),
         "closed_days": {
             item.closed_on.isoformat(): {
@@ -749,6 +753,9 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
             "services": get_active_services(session),
             "booking_months": build_booking_calendar(session),
             "weekday_labels": WEEKDAY_LABELS,
+            "offer_google_sign_in": (
+                google_auth_enabled() and get_customer_by_session(request, session) is None
+            ),
         },
     )
 
@@ -776,12 +783,36 @@ def catalog_page(request: Request, session: SessionDep, category: str | None = N
     )
 
 
-def catalog_image(url: str | None) -> str | None:
+def catalog_image(product: Product, *, admin: bool = False) -> str | None:
+    url = product.image_url
+    if url == product_photo_url(product.id):
+        return "/admin" + url if admin else url
     if url and re.fullmatch(
         r"/static/[A-Za-z0-9_/-]+\.(?:png|jpe?g|webp|avif|gif)", url, re.IGNORECASE,
     ):
         return url
     return None
+
+
+def photo_response(jpeg: bytes | None) -> Response:
+    if jpeg is None:
+        raise HTTPException(404, "Фото не знайдено.")
+    return Response(content=jpeg, media_type="image/jpeg")
+
+
+@app.get("/catalog/photos/{product_id}.jpg", response_class=Response)
+def public_catalog_photo(product_id: int, session: SessionDep) -> Response:
+    jpeg = session.exec(
+        select(ProductPhoto.jpeg).join(Product)
+        .where(ProductPhoto.product_id == product_id, Product.is_active, visible_category())
+    ).first()
+    return photo_response(jpeg)
+
+
+@admin_router.get("/catalog/photos/{product_id}.jpg", response_class=Response)
+def admin_catalog_photo(product_id: int, session: SessionDep) -> Response:
+    photo = session.get(ProductPhoto, product_id)
+    return photo_response(photo.jpeg if photo else None)
 
 
 def catalog_price(product: Product) -> str:
@@ -1070,7 +1101,7 @@ def create_appointment(
 
     appointment = Appointment.model_validate(payload)
     appointment.duration_minutes = duration
-    appointment.phone_normalized = normalize_phone(payload.phone)
+    appointment.phone_normalized = payload.phone
     appointment.email_normalized = normalize_email(payload.email)
     customer = get_customer_by_session(request, session)
     if customer is not None:

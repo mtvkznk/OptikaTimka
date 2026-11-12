@@ -4,11 +4,15 @@ const discardButton = document.querySelector("[data-admin-discard]");
 const saveMessage = document.querySelector("[data-save-message]");
 const storageKey = "optika.admin.changes.v4";
 const blankDraft = (month = null) => ({
-  edits: {}, additions: [], forms: {}, orders: {}, removals: {}, days: {}, reason: "",
+  edits: {}, additions: [], forms: {}, orders: {}, removals: {}, restorations: {}, days: {}, reason: "",
   schedule: null, month,
 });
 let draft = blankDraft();
 let saving = false;
+const processingPhotos = new Set();
+const adminViews = [...document.querySelectorAll("[data-admin-view]")];
+const adminLinks = [...document.querySelectorAll("[data-admin-nav]")];
+let activeAdminView = adminViews[0];
 
 try {
   const current = sessionStorage.getItem(storageKey);
@@ -28,7 +32,49 @@ try {
 }
 
 function editableFields(form) {
-  return [...form.querySelectorAll('input[name]:not([type="hidden"]), select[name], textarea[name]')];
+  return [...form.querySelectorAll(
+    'input[name]:not([type="hidden"]), select[name], textarea[name], [data-admin-value]'
+  )];
+}
+
+function selectAdminView(view) {
+  activeAdminView = view;
+  adminViews.forEach((panel) => { panel.hidden = panel !== view; });
+  adminLinks.forEach((link) => {
+    if (link.dataset.adminNav === view.dataset.adminView) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+}
+
+function syncAdminView() {
+  const target = document.getElementById(location.hash.slice(1));
+  if (location.hash === "#admin-content") {
+    selectAdminView(activeAdminView);
+    return;
+  }
+  const view = target?.closest("[data-admin-view]") ?? adminViews[0];
+  selectAdminView(view);
+  if (location.hash) {
+    requestAnimationFrame(() => {
+      if (target && location.hash !== view.dataset.adminAnchor) target.scrollIntoView();
+      else window.scrollTo(0, 0);
+    });
+  }
+}
+
+if (adminViews.length) {
+  syncAdminView();
+  window.addEventListener("hashchange", syncAdminView);
+}
+
+function revealEditor(form) {
+  const view = form.closest("[data-admin-view]");
+  if (view && view.hidden) {
+    history.replaceState(null, "", view.dataset.adminAnchor);
+    selectAdminView(view);
+  }
+  const details = form.closest("details");
+  if (details) details.open = true;
 }
 
 function weekdayFields(form) {
@@ -66,12 +112,13 @@ function activeEdits() {
 function numberOfChanges() {
   return activeEdits().length + draft.additions.length + Object.keys(draft.forms).length
     + Object.keys(draft.orders).length + Object.keys(draft.removals).length
+    + Object.keys(draft.restorations).length
     + Object.keys(draft.days).length + Number(Boolean(draft.schedule));
 }
 
 function showSaveState(message, error = false) {
   const count = numberOfChanges();
-  saveButton.disabled = saving || !count;
+  saveButton.disabled = saving || processingPhotos.size > 0 || !count;
   discardButton.hidden = !count;
   discardButton.disabled = saving;
   saveMessage.toggleAttribute("data-error", error);
@@ -100,6 +147,8 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
   if (existing) {
     fillFields(form, existing.values);
     form.dataset.dirty = "";
+    const card = form.closest(".admin-product-card");
+    if (card) card.open = true;
   }
 
   const rememberEdit = () => {
@@ -124,6 +173,8 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
     editableFields(form).forEach((field) => { field.disabled = pending; });
     const weekdays = form.querySelector("[data-weekdays]");
     if (weekdays) weekdays.disabled = pending;
+    const photo = form.querySelector("[data-admin-photo]");
+    if (photo) photo.disabled = pending;
     remove.textContent = pending ? "Скасувати" : "Видалити";
     remove.setAttribute("aria-label", (pending ? "Скасувати видалення: " : "Видалити: ") + remove.dataset.label);
     form.parentElement.dispatchEvent(new Event("admin-removals"));
@@ -178,6 +229,7 @@ document.querySelectorAll("[data-admin-add]").forEach((form) => {
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (processingPhotos.has(form)) return;
     const values = valuesOf(form);
     if (!form.checkValidity()) {
       form.reportValidity();
@@ -188,6 +240,99 @@ document.querySelectorAll("[data-admin-add]").forEach((form) => {
     form.reset();
     renderAdditions();
     persistDraft();
+  });
+});
+
+document.querySelectorAll("[data-restore-category]").forEach((button) => {
+  const id = button.dataset.restoreCategory;
+  const update = () => {
+    const pending = Boolean(draft.restorations[id]);
+    button.textContent = pending ? "Скасувати" : "Відновити";
+    button.setAttribute("aria-label",
+      (pending ? "Скасувати відновлення: " : "Відновити: ") + button.dataset.label);
+    if (pending) button.closest("details").open = true;
+  };
+  update();
+  button.addEventListener("click", () => {
+    if (draft.restorations[id]) delete draft.restorations[id];
+    else draft.restorations[id] = { id, version: button.dataset.version };
+    update();
+    persistDraft();
+  });
+});
+
+async function encodeProductPhoto(file) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, 1100 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.82, 0.68, 0.52, 0.38]) {
+      const url = canvas.toDataURL("image/jpeg", quality);
+      const payload = url.split(",")[1];
+      if (payload && payload.length <= 192 * 1024) return payload;
+    }
+    throw new Error("Photo too large");
+  } finally {
+    bitmap.close();
+  }
+}
+
+document.querySelectorAll("[data-admin-photo]").forEach((editor) => {
+  const form = editor.closest("form");
+  const file = editor.querySelector("[data-photo-file]");
+  const value = editor.querySelector("[data-admin-value]");
+  const preview = editor.querySelector("[data-photo-preview]");
+  const remove = editor.querySelector("[data-photo-remove]");
+  const message = editor.querySelector("[data-photo-message]");
+  const original = preview.getAttribute("src");
+  let generation = 0;
+
+  const render = () => {
+    const photo = value.value === "remove" ? "" : value.value;
+    const url = photo ? "data:image/jpeg;base64," + photo : value.value === "remove" ? "" : original;
+    if (url) preview.src = url;
+    else preview.removeAttribute("src");
+    preview.hidden = !url;
+    remove.hidden = !url;
+    message.textContent = value.value === "remove" ? "Фото буде прибрано після збереження." : "";
+  };
+  const change = (payload) => {
+    value.value = payload;
+    value.dispatchEvent(new Event("input", { bubbles: true }));
+    render();
+  };
+
+  render();
+  form.addEventListener("reset", () => queueMicrotask(render));
+  remove.addEventListener("click", () => change(original ? "remove" : ""));
+  file.addEventListener("change", async () => {
+    const selected = file.files[0];
+    if (!selected) return;
+    const request = ++generation;
+    processingPhotos.add(form);
+    remove.disabled = true;
+    showSaveState();
+    message.textContent = "Готуємо фото…";
+    try {
+      if (selected.size > 12 * 1024 * 1024) throw new Error("File too large");
+      const payload = await encodeProductPhoto(selected);
+      if (request === generation) change(payload);
+    } catch {
+      if (request === generation) message.textContent = "Виберіть менше або інше фото JPG, PNG чи WebP.";
+    } finally {
+      if (request === generation) {
+        processingPhotos.delete(form);
+        remove.disabled = false;
+        file.value = "";
+        showSaveState();
+      }
+    }
   });
 });
 
@@ -322,6 +467,7 @@ function payloadOfDraft() {
   const payload = {
     appointments: [], services: [], remove_services: [],
     categories: [], remove_categories: [], products: [], remove_products: [],
+    restore_categories: Object.values(draft.restorations),
     closed_days: { close: [], reopen: {}, reason: draft.reason },
     ...draft.orders,
   };
@@ -349,8 +495,9 @@ function clearDraft() {
 }
 
 saveButton.addEventListener("click", async () => {
-  if (saving || !numberOfChanges()) return;
+  if (saving || processingPhotos.size || !numberOfChanges()) return;
   if (draft.schedule?.valid === false) {
+    if (scheduleForm) revealEditor(scheduleForm);
     scheduleForm?.reportValidity();
     showSaveState("Перевірте початок, кінець і перерви робочого дня.", true);
     return;
@@ -364,8 +511,7 @@ saveButton.addEventListener("click", async () => {
       && matches(valuesOf(candidate), invalid.values)
     ));
     if (form) {
-      const details = form.closest("details");
-      if (details) details.open = true;
+      revealEditor(form);
       form.reportValidity();
     }
     showSaveState("У чернетці є неповні або некоректні поля.", true);
@@ -373,10 +519,10 @@ saveButton.addEventListener("click", async () => {
   }
 
   const main = document.querySelector(".admin-main");
-  const sidebar = document.querySelector(".admin-sidebar");
+  const header = document.querySelector(".admin-header");
   saving = true;
   main.inert = true;
-  sidebar.inert = true;
+  header.inert = true;
   showSaveState("Зберігаємо зміни…");
   const fallback = "Не вдалося зберегти зміни. Чернетка залишилася в цій вкладці.";
   try {
@@ -397,7 +543,7 @@ saveButton.addEventListener("click", async () => {
   } finally {
     saving = false;
     main.inert = false;
-    sidebar.inert = false;
+    header.inert = false;
     saveButton.disabled = !numberOfChanges();
     discardButton.disabled = false;
   }
@@ -524,17 +670,3 @@ showSaveState();
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) location.reload();
 });
-
-if (location.pathname === "/admin") {
-  const links = document.querySelectorAll(".admin-nav a");
-  const markCurrentSection = () => {
-    links.forEach((link) => {
-      if (link.hash && link.hash === location.hash) link.setAttribute("aria-current", "location");
-      else if (!link.hash && link.pathname === location.pathname && !location.hash) {
-        link.setAttribute("aria-current", "page");
-      } else link.removeAttribute("aria-current");
-    });
-  };
-  markCurrentSection();
-  window.addEventListener("hashchange", markCurrentSection);
-}

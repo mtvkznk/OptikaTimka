@@ -29,6 +29,12 @@ from app.models import (
     Product,
     utc_now,
 )
+from app.product_photos import (
+    MAX_PHOTO_PAYLOAD,
+    prepare_photo,
+    product_photo_url,
+    update_product_photo,
+)
 
 MAX_PERIOD_DAYS = 366
 
@@ -68,6 +74,7 @@ class ProductChange(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ""
     price: Decimal = Field(ge=0, le=Decimal("21474836.47"), decimal_places=2)
+    photo: str = Field(default="", max_length=MAX_PHOTO_PAYLOAD)
 
 
 class WorkScheduleChange(BaseModel):
@@ -173,6 +180,7 @@ class AdminChanges(BaseModel):
     services: list[ServiceChange] = Field(default_factory=list, max_length=500)
     categories: list[CategoryChange] = Field(default_factory=list, max_length=4)
     remove_categories: list[CategoryVersion] = Field(default_factory=list, max_length=4)
+    restore_categories: list[CategoryVersion] = Field(default_factory=list, max_length=4)
     products: list[ProductChange] = Field(default_factory=list, max_length=500)
     remove_products: list[RowVersion] = Field(default_factory=list, max_length=500)
     time_slots: list[SlotChange] = Field(default_factory=list, max_length=500)
@@ -314,9 +322,11 @@ def apply_catalog_changes(
 
 def apply_category_changes(
     session: Session, changes: list[CategoryChange], removals: list[CategoryVersion],
+    restorations: list[CategoryVersion],
 ) -> None:
     edits = [*changes, *removals]
-    if len({change.id for change in edits}) != len(edits):
+    all_changes = [*edits, *restorations]
+    if len({change.id for change in all_changes}) != len(all_changes):
         raise HTTPException(422, "Одну категорію змінено кілька разів.")
     for change in edits:
         removing = not isinstance(change, CategoryChange)
@@ -333,10 +343,18 @@ def apply_category_changes(
         else:
             category.name = change.name
         category.updated_at = utc_now()
+    for change in restorations:
+        category = session.get(CatalogCategory, change.id)
+        verify_version(category, change.version)
+        if not category.is_removed:
+            raise HTTPException(409, "Категорія вже доступна. Оновіть сторінку.")
+        category.is_removed = False
+        category.updated_at = utc_now()
 
 
 def apply_product_changes(
     session: Session, changes: list[ProductChange], removals: list[RowVersion],
+    photos: dict[str, bytes],
 ) -> None:
     if changes:
         categories = category_names(session)
@@ -356,17 +374,23 @@ def apply_product_changes(
         verify_version(rows.get(edit.id), edit.version)
 
     for removal in removals:
-        rows[removal.id].is_active = False
-        rows[removal.id].updated_at = utc_now()
+        row = rows[removal.id]
+        row.is_active = False
+        row.updated_at = utc_now()
+        if row.image_url == product_photo_url(row.id):
+            update_product_photo(session, row, None)
     for change in changes:
         values = change.model_dump(include={"category", "name", "description"})
         values["price_cents"] = int(change.price * 100)
         if change.id is None:
-            session.add(Product.model_validate(values))
+            row = Product.model_validate(values)
+            session.add(row)
         else:
             row = rows[change.id]
             row.sqlmodel_update(values)
             row.updated_at = utc_now()
+        if change.photo:
+            update_product_photo(session, row, photos.get(change.photo))
 
 
 def apply_closed_date_changes(
@@ -407,14 +431,20 @@ def apply_closed_date_changes(
 
 
 def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
+    photos = {
+        payload: prepare_photo(payload)
+        for payload in {change.photo for change in changes.products} - {"", "remove"}
+    }
     lock_booking_writes(session)
     if changes.work_schedule is not None and (
         changes.time_slots or changes.remove_time_slots or changes.time_slot_order is not None
     ):
         raise HTTPException(422, "Збережіть робочий графік окремо від старого списку годин.")
     apply_appointment_changes(session, changes.appointments)
-    apply_category_changes(session, changes.categories, changes.remove_categories)
-    apply_product_changes(session, changes.products, changes.remove_products)
+    apply_category_changes(
+        session, changes.categories, changes.remove_categories, changes.restore_categories,
+    )
+    apply_product_changes(session, changes.products, changes.remove_products, photos)
     apply_catalog_changes(
         session, BookingService, changes.services, changes.service_order, changes.remove_services,
     )

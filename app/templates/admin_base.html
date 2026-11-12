@@ -13,32 +13,33 @@
   <body class="admin-body">
     <a class="admin-skip" href="#admin-content">До вмісту</a>
     <div class="admin-layout">
-      <aside class="admin-sidebar">
-        <a class="admin-brand" href="/admin">
-          <img src="/static/favicon.svg" alt="" width="34" height="34" />
-          <span>{{ app_name }}<small>Адмінпанель</small></span>
-        </a>
-        <nav class="admin-nav" aria-label="Розділи адмінпанелі">
-          <a href="/admin"{% if request.url.path == '/admin' %} aria-current="page"{% endif %}>Огляд</a>
-          <a href="/admin/appointments"{% if request.url.path == '/admin/appointments' %} aria-current="page"{% endif %}>Усі записи</a>
-          <a href="/admin#services">Послуги</a>
-          <a href="/admin#catalog">Каталог</a>
-          <a href="/admin#time-slots">Графік</a>
-          <a href="/admin#closed-dates">Закриті дати</a>
-        </nav>
-        <nav class="admin-exits" aria-label="Повернення на сайт">
-          <a href="/cabinet">До кабінету <span aria-hidden="true">↗</span></a>
-          <a href="/">На сайт <span aria-hidden="true">↗</span></a>
-        </nav>
-      </aside>
+      <header class="admin-header">
+        <div class="admin-header-inner">
+          <a class="admin-brand" href="/admin">
+            <img src="/static/favicon.svg" alt="" width="34" height="34" />
+            <span>{{ app_name }}<small>Адмінпанель</small></span>
+          </a>
+          <nav class="admin-nav" aria-label="Розділи адмінпанелі">
+            <a href="/admin" data-admin-nav="appointments" aria-current="page">Записи</a>
+            <a href="/admin#services" data-admin-nav="schedule">Послуги й графік</a>
+            <a href="/admin#catalog" data-admin-nav="catalog">Каталог</a>
+          </nav>
+          <nav class="admin-exits" aria-label="Повернення на сайт">
+            <a href="/cabinet">Кабінет <span aria-hidden="true">↗</span></a>
+            <a href="/">На сайт <span aria-hidden="true">↗</span></a>
+          </nav>
+        </div>
+      </header>
       <main class="admin-main" id="admin-content" tabindex="-1">
         {% block content %}{% endblock %}
       </main>
       <div class="admin-save-bar">
-        <p data-save-message role="status">Усі зміни збережено.</p>
-        <div class="admin-save-actions">
-          <button class="admin-button" type="button" data-admin-discard hidden>Скинути зміни</button>
-          <button class="admin-button admin-primary" type="button" data-admin-save disabled>Зберегти зміни</button>
+        <div class="admin-save-inner">
+          <p data-save-message role="status">Усі зміни збережено.</p>
+          <div class="admin-save-actions">
+            <button class="admin-button" type="button" data-admin-discard hidden>Скинути зміни</button>
+            <button class="admin-button admin-primary" type="button" data-admin-save disabled>Зберегти зміни</button>
+          </div>
         </div>
       </div>
     </div>

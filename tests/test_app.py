@@ -108,7 +108,7 @@ def test_create_appointment(client: TestClient) -> None:
         "/api/appointments",
         json={
             "name": "Ivan Petrenko",
-            "phone": "+380980000000",
+            "phone": "(098) 000-00-00",
             "email": "ivan@example.com",
             "service": "Перевірка зору",
             "preferred_date": preferred_date.isoformat(),
@@ -119,6 +119,7 @@ def test_create_appointment(client: TestClient) -> None:
 
     assert response.status_code == 201
     assert response.json()["status"] == "new"
+    assert response.json()["phone"] == "+380980000000"
 
 
 def test_create_appointment_rejects_date_outside_booking_window(client: TestClient) -> None:

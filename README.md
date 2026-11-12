@@ -66,8 +66,11 @@ see the administrator dashboard button in their Google-authenticated cabinet.
 - Production cookies are Secure, HttpOnly, and host-prefixed. Dynamic responses
   use `Cache-Control: no-store`; CSP, frame restrictions, and other security headers
   apply to responses. Production OpenAPI/Swagger/ReDoc endpoints are disabled.
-- Request bodies are limited to 64 KiB. Persistent database rate limits work across
-  application processes. Raw IP addresses are not stored in rate-limit keys.
+- Request bodies are limited to 64 KiB. The administrator's batch save accepts up
+  to 2 MiB so it can include product photos. Photos are resized in the browser,
+  validated and re-encoded on the server, and stored with the catalog in PostgreSQL.
+  Persistent database rate limits work across application processes. Raw IP
+  addresses are not stored in rate-limit keys.
 - One active appointment can occupy any minute of the schedule. The service duration
   is stored on each booking, and booking writes and reactivations check for overlap
   under a database transaction lock. Canceling releases the reserved time.

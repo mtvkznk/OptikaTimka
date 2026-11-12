@@ -1,13 +1,16 @@
 import json
 import re
+from base64 import b64encode
 from datetime import UTC, datetime, time, timedelta
+from io import BytesIO
 
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
 from app.main import current_date
-from app.models import Appointment, AppointmentStatus
+from app.models import Appointment, AppointmentStatus, CatalogCategory
 
 
 def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:
@@ -121,6 +124,45 @@ def test_last_category_removal_cleans_up_home_navigation(client: TestClient) -> 
     home = client.get("/").text
     assert 'id="catalog"' not in home and 'href="/#catalog"' not in home
     assert client.get("/booking").status_code == 200
+
+
+def test_photo_visibility_follows_category_removal_and_restoration(
+    client: TestClient, anonymous_client: TestClient, app_db: Engine,
+) -> None:
+    buffer = BytesIO()
+    with Image.new("RGB", (32, 24), "white") as image:
+        image.save(buffer, "JPEG")
+    photo = b64encode(buffer.getvalue()).decode("ascii")
+    product = {"category": "frames", "name": "Оправи з фото", "price": 500, "photo": photo}
+    assert client.post("/admin/changes", json={"products": [
+        {**product, "photo": b64encode(b"not a photo").decode("ascii")},
+    ]}).status_code == 422
+    assert client.get("/api/products").json() == []
+    assert client.post("/admin/changes", json={"products": [product]}).status_code == 200
+    saved, = client.get("/api/products").json()
+    url = saved["image_url"]
+    response = anonymous_client.get(url)
+    assert response.status_code == 200 and response.headers["content-type"] == "image/jpeg"
+    with Image.open(BytesIO(response.content)) as image:
+        assert image.size == (32, 24)
+    assert url in anonymous_client.get("/catalog/frames").text
+    assert anonymous_client.get("/admin" + url).status_code == 401
+    assert client.post("/admin/changes", json={"remove_categories": [{
+        "id": "frames", "version": "",
+    }]}).status_code == 200
+    assert anonymous_client.get(url).status_code == 404
+    assert client.get("/admin" + url).status_code == 200
+    with Session(app_db) as session:
+        category = session.get(CatalogCategory, "frames")
+        restore = {"id": "frames", "version": category.updated_at.isoformat()}
+    assert client.post("/admin/changes", json={"restore_categories": [restore]}).status_code == 200
+    assert client.post("/admin/changes", json={"restore_categories": [restore]}).status_code == 409
+    assert anonymous_client.get(url).status_code == 200
+    assert client.post("/admin/changes", json={"products": [{
+        **product, "id": saved["id"], "version": saved["updated_at"], "photo": "remove",
+    }]}).status_code == 200
+    assert anonymous_client.get(url).status_code == 404
+    assert url not in anonymous_client.get("/catalog/frames").text
 
 
 def test_work_schedule_sets_hours_and_booking_uses_remaining_time(client: TestClient) -> None:

@@ -13,6 +13,8 @@ def normalize_phone(value: str | None) -> str | None:
     raw = re.sub(r"[\s().-]", "", value.strip())
     if raw.startswith("00"):
         raw = "+" + raw[2:]
+    elif re.fullmatch(r"0[1-9][0-9]{8}", raw):
+        raw = "+38" + raw
     if not re.fullmatch(r"\+?[1-9][0-9]{7,14}", raw):
         return None
     return "+" + raw.lstrip("+")

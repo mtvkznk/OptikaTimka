@@ -1,9 +1,8 @@
 .admin-body {
-  --admin-bg: #f4f7fa;
-  --admin-text: #1a2a3d;
-  --admin-muted: #506075;
-  --admin-line: #dbe3ed;
-  --admin-nav: #14283f;
+  --admin-bg: #f5f7f5;
+  --admin-text: #1c2c25;
+  --admin-muted: #52645b;
+  --admin-line: #dbe4de;
   --admin-accent: #086447;
   --admin-accent-soft: #e4f4ec;
   color: var(--admin-text);
@@ -11,30 +10,39 @@
 }
 
 .admin-layout {
-  display: grid;
-  grid-template-columns: 13.5rem minmax(0, 1fr);
   min-height: 100vh;
 }
 
-.admin-sidebar {
+.admin-header {
   position: sticky;
   top: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2.3rem;
-  align-self: start;
-  min-height: 100dvh;
-  padding: 1.5rem 1rem;
-  color: #d4dfed;
-  background: var(--admin-nav);
+  z-index: 2;
+  border-bottom: 1px solid var(--admin-line);
+  background: #fff;
+}
+
+.admin-header-inner,
+.admin-main,
+.admin-save-inner {
+  width: 100%;
+  max-width: 78rem;
+  margin-inline: auto;
+  padding-inline: clamp(0.8rem, 3vw, 2rem);
+}
+
+.admin-header-inner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem 1rem;
+  padding-block: 0.65rem;
 }
 
 .admin-brand {
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  padding: 0.25rem 0.45rem;
-  color: #fff;
+  color: var(--admin-text);
   font-size: 1.04rem;
   font-weight: 750;
   text-decoration: none;
@@ -49,21 +57,20 @@
 .admin-brand small {
   display: block;
   margin-top: 0.15rem;
-  color: #b6c8df;
+  color: var(--admin-muted);
   font-size: 0.75rem;
   font-weight: 500;
 }
 
 .admin-nav,
 .admin-exits {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
 }
 
-.admin-exits {
-  margin-top: auto;
-  border-top: 1px solid #354960;
-  padding-top: 1rem;
+.admin-nav {
+  justify-content: center;
 }
 
 .admin-nav a,
@@ -82,14 +89,13 @@
 
 .admin-nav a:hover,
 .admin-exits a:hover {
-  color: #fff;
-  background: #203853;
+  background: var(--admin-bg);
 }
 
 .admin-nav a[aria-current="page"],
 .admin-nav a[aria-current="location"] {
-  color: #fff;
-  background: #2a435e;
+  color: var(--admin-accent);
+  background: var(--admin-accent-soft);
 }
 
 .admin-skip {
@@ -112,30 +118,37 @@
   outline-offset: 3px;
 }
 
-.admin-sidebar :focus-visible {
-  outline-color: #a4e7cc;
+.admin-main {
+  padding-block: clamp(1.25rem, 3.2vw, 2.5rem) 7rem;
 }
 
-.admin-main {
-  width: 100%;
-  max-width: 83rem;
-  margin-inline: auto;
-  padding: clamp(1.25rem, 3.2vw, 3rem) clamp(1rem, 3.25vw, 3rem) 7rem;
+.admin-section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.admin-panel {
+  scroll-margin-top: 7.5rem;
 }
 
 .admin-save-bar {
   position: fixed;
-  inset: auto 0 0 13.5rem;
+  inset: auto 0 0;
   z-index: 3;
+  border-top: 1px solid var(--admin-line);
+  background: #fff;
+  box-shadow: 0 -6px 24px rgb(20 40 63 / 7%);
+}
+
+.admin-save-inner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem 1rem;
-  border-top: 1px solid var(--admin-line);
-  padding: 0.7rem clamp(1rem, 3.25vw, 3rem) max(0.7rem, env(safe-area-inset-bottom));
-  background: #fff;
-  box-shadow: 0 -6px 24px rgb(20 40 63 / 7%);
+  padding-block: 0.7rem max(0.7rem, env(safe-area-inset-bottom));
 }
 
 .admin-save-bar p {
@@ -157,7 +170,9 @@
 }
 
 .admin-save-actions [hidden],
-.admin-pending[hidden] {
+.admin-pending[hidden],
+.admin-photo [hidden],
+[data-admin-view][hidden] {
   display: none;
 }
 
@@ -552,6 +567,10 @@
   font-size: 1rem;
 }
 
+.admin-catalog-heading:first-child {
+  margin-top: 0;
+}
+
 .admin-category-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
@@ -575,6 +594,74 @@
   grid-column: 4;
   grid-row: 1;
 }
+
+.admin-product-card > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.8rem;
+  border: 1px solid var(--admin-line);
+  border-radius: 0.65rem;
+  padding: 0.65rem 0.8rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.admin-product-card summary span {
+  color: var(--admin-muted);
+  font-size: 0.82rem;
+}
+
+.admin-product-card > summary::after {
+  margin-left: auto;
+  color: var(--admin-accent);
+  content: "+";
+}
+
+.admin-product-card[open] > summary::after { content: "−"; }
+.admin-product-card[open] > form { margin-top: 0.35rem; }
+
+.admin-photo {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--admin-line);
+  border-radius: 0.55rem;
+  padding: 0.55rem 0.65rem 0.7rem;
+}
+
+.admin-photo legend {
+  color: var(--admin-muted);
+  font-size: 0.78rem;
+  font-weight: 670;
+}
+
+.admin-photo img {
+  width: 6rem;
+  height: 5rem;
+  border-radius: 0.4rem;
+  background: #fff;
+  object-fit: contain;
+}
+
+.admin-photo-controls {
+  display: grid;
+  gap: 0.45rem;
+  align-content: start;
+  justify-items: start;
+  min-width: 0;
+}
+
+.admin-photo-controls p {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 0.82rem;
+}
+
+.admin-photo-controls p:empty { display: none; }
 
 .admin-work-schedule {
   grid-template-columns: minmax(0, 1fr);
@@ -641,6 +728,12 @@
   margin-top: 0.8rem;
   border-top: 1px solid #e6ecf3;
   padding-top: 0.7rem;
+}
+
+.admin-add-product {
+  margin: 0 0 0.75rem;
+  border-top: 0;
+  padding-top: 0;
 }
 
 .admin-add summary {
@@ -786,34 +879,21 @@
 }
 
 @media (max-width: 56rem) {
-  .admin-layout {
-    display: block;
+  .admin-header-inner {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .admin-save-bar {
-    left: 0;
-  }
-
-  .admin-sidebar {
-    position: static;
-    flex-flow: row wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.65rem 1rem;
-    min-height: 0;
-    padding: 0.85rem 1rem;
-  }
-
-  .admin-nav,
-  .admin-exits {
-    display: flex;
-    flex-wrap: wrap;
+  .admin-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: start;
+    border-top: 1px solid var(--admin-line);
+    padding-top: 0.35rem;
   }
 
   .admin-exits {
-    margin: 0;
-    border: 0;
-    padding: 0;
+    grid-column: 2;
+    grid-row: 1;
   }
 }
 
@@ -831,15 +911,8 @@
     grid-column: 1 / -1;
   }
 
-  .admin-sidebar {
-    gap: 0.3rem 0.5rem;
-  }
-
-  .admin-nav {
-    order: 3;
-    width: 100%;
-    border-top: 1px solid #354960;
-    padding-top: 0.35rem;
+  .admin-header-inner {
+    column-gap: 0.5rem;
   }
 
   .admin-nav a,

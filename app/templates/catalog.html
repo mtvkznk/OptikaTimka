@@ -18,7 +18,7 @@
     <div class="catalog-product-grid">
       {% for product in products %}
       <article class="catalog-product">
-        {% set image = catalog_image(product.image_url) %}
+        {% set image = catalog_image(product) %}
         {% if image %}<img src="{{ image }}" alt="" loading="lazy" />{% endif %}
         <h2>{{ product.name }}</h2>
         {% if product.description %}<p>{{ product.description }}</p>{% endif %}
