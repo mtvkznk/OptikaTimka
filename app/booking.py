@@ -8,7 +8,6 @@ from sqlmodel import Session, select
 from app.models import Appointment, AppointmentStatus, AvailableTimeSlot, ServiceClosedDate
 
 Interval = tuple[int, int]
-START_STEP_MINUTES = 15
 
 
 class BookingTime(BaseModel):
@@ -90,16 +89,11 @@ def available_starts(
         cursor = max(start, earliest)
         for blocked_start, blocked_end in [*occupied, (end, end)]:
             last_start = min(end, blocked_start) - duration
-            if cursor <= last_start:
-                # Offer the first minute of a gap, then the regular quarter-hour starts.
-                rounded = ((cursor + START_STEP_MINUTES - 1) // START_STEP_MINUTES) * START_STEP_MINUTES
-                starts = range(rounded, last_start + 1, START_STEP_MINUTES)
-                for candidate in ([cursor, *starts] if cursor != rounded else starts):
-                    finish = candidate + duration
-                    options.append(BookingTime(
-                        start_time=time(*divmod(candidate, 60)),
-                        end_time=time(*divmod(finish, 60)),
-                    ))
+            for candidate in range(cursor, last_start + 1, duration):
+                options.append(BookingTime(
+                    start_time=time(*divmod(candidate, 60)),
+                    end_time=time(*divmod(candidate + duration, 60)),
+                ))
             cursor = max(cursor, blocked_end)
             if cursor >= end:
                 break

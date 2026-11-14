@@ -570,9 +570,12 @@ def test_service_duration_controls_booking_and_preserves_existing_reservations(
         assert response.status_code == 200
         return {slot["start_time"]: slot["end_time"] for slot in response.json()}
 
+    assert list(options(short).items())[:3] == [
+        ("09:00:00", "09:30:00"), ("09:30:00", "10:00:00"), ("10:00:00", "10:30:00"),
+    ]
     assert options(short)["12:30:00"] == "13:00:00"
-    assert "12:30:00" not in options(long)
-    assert options(long)["12:15:00"] == "13:00:00"
+    assert options(long)["12:00:00"] == "12:45:00"
+    assert "12:15:00" not in options(long)
     assert client.post("/api/appointments", json=booking(
         service=long, preferred_time="12:30:00",
     )).status_code == 400

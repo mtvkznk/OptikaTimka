@@ -237,9 +237,10 @@ def test_work_schedule_sets_hours_and_booking_uses_remaining_time(client: TestCl
         **params, "preferred_time": "08:30", "name": "Client", "phone": "+380501234567",
     }).status_code == 201
     starts = [row["start_time"] for row in client.get("/api/availability", params=params).json()]
-    assert starts[0] == "09:15:00"
-    assert "11:15:00" in starts and "11:30:00" not in starts
-    assert "13:00:00" in starts and starts[-1] == "17:15:00"
+    assert starts == [
+        "09:15:00", "10:00:00", "10:45:00",
+        "13:00:00", "13:45:00", "14:30:00", "15:15:00", "16:00:00", "16:45:00",
+    ]
 
     assert client.post("/admin/changes", json={
         "work_schedule": {"version": updated["version"]},

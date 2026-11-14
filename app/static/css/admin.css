@@ -107,13 +107,6 @@
   padding-block: clamp(1.25rem, 3.2vw, 2.5rem) 7rem;
 }
 
-.admin-section-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
 .admin-panel {
   scroll-margin-top: 7.5rem;
 }
