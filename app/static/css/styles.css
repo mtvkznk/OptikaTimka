@@ -444,6 +444,17 @@ label.calendar-day:has(input:disabled) {
   margin-top: 0.7rem;
 }
 
+.time-column {
+  display: grid;
+  align-content: start;
+  gap: inherit;
+  min-width: 0;
+}
+
+.time-column:only-child {
+  grid-column: 1 / -1;
+}
+
 .time-cell {
   align-items: center;
   gap: 0.45rem;
@@ -694,7 +705,8 @@ label.calendar-day:has(input:disabled) {
 }
 
 @media (max-width: 350px) {
-  .service-options {
+  .service-options,
+  .time-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

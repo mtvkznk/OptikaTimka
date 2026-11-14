@@ -118,7 +118,16 @@ async function refreshAvailability() {
         slot.start_time.slice(0, 5) + " – " + slot.end_time.slice(0, 5);
       return label;
     });
-    timeGrid.replaceChildren(...options);
+    const middle = Math.ceil(options.length / 2);
+    const columns = [options.slice(0, middle), options.slice(middle)]
+      .filter((cells) => cells.length)
+      .map((cells) => {
+        const column = document.createElement("div");
+        column.className = "time-column";
+        column.append(...cells);
+        return column;
+      });
+    timeGrid.replaceChildren(...columns);
     timeGrid.hidden = false;
     availabilityStatus.textContent = formatDate(date.value);
   } catch {
