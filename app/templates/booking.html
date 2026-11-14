@@ -63,18 +63,19 @@
                   {% for weekday in weekday_labels %}
                   <span class="calendar-weekday">{{ weekday }}</span>
                   {% endfor %}
-                  {% for week in month.weeks %}
-                    {% for day in week %}
-                      {% if day.is_available %}
-                      <label class="calendar-day{% if day.is_today %} is-today{% endif %}">
-                        <input type="radio" name="preferred_date" value="{{ day.value }}" data-weekday="{{ day.weekday_bit }}"
-                          aria-label="{{ day.label }}{% if day.is_today %}, сьогодні{% endif %}" required />
-                        <span>{{ day.day }}</span>
-                      </label>
-                      {% else %}
-                      <span class="calendar-day is-muted{% if day.is_outside_month %} is-outside-month{% endif %}" aria-hidden="true">{{ day.day }}</span>
-                      {% endif %}
-                    {% endfor %}
+                  {% for _ in range(month.offset) %}
+                  <span aria-hidden="true"></span>
+                  {% endfor %}
+                  {% for day in month.days %}
+                    {% if day.is_available %}
+                    <label class="calendar-day{% if day.is_today %} is-today{% endif %}">
+                      <input type="radio" name="preferred_date" value="{{ day.value }}" data-weekday="{{ day.weekday_bit }}"
+                        aria-label="{{ day.label }}{% if day.is_today %}, сьогодні{% endif %}" required />
+                      <span>{{ day.day }}</span>
+                    </label>
+                    {% else %}
+                    <span class="calendar-day is-muted" aria-hidden="true">{{ day.day }}</span>
+                    {% endif %}
                   {% endfor %}
                 </div>
                 {% endfor %}

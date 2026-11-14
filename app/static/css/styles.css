@@ -402,10 +402,6 @@ label.calendar-day:has(input:disabled) {
   cursor: default;
 }
 
-.calendar-day.is-outside-month {
-  color: #a1aea6;
-}
-
 .calendar-day.is-today {
   border-color: var(--green);
 }

@@ -175,7 +175,7 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261114-service-schedules"
+ASSET_VERSION = "20261114-month-calendar"
 ADMIN_ASSET_VERSION = "20261114-compact-schedule"
 LANDING_ASSET_VERSION = "20261112-shared-brand"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
@@ -345,41 +345,32 @@ def build_booking_calendar(
     month_start = date(today.year, today.month, 1)
 
     while month_start <= window_end:
-        month_end = next_month(month_start) - timedelta(days=1)
-        grid_start = month_start - timedelta(days=month_start.weekday())
-        grid_end = month_end + timedelta(days=6 - month_end.weekday())
-        weeks: list[list[dict[str, Any]]] = []
-        week: list[dict[str, Any]] = []
-        cursor = grid_start
+        following_month = next_month(month_start)
+        days = []
+        cursor = month_start
 
-        while cursor <= grid_end:
-            in_month = cursor.month == month_start.month
-            is_available = in_month and today <= cursor <= window_end and cursor not in closed_dates
-            week.append(
+        while cursor < following_month:
+            days.append(
                 {
                     "value": cursor.isoformat(),
                     "label": format_date(cursor),
                     "day": str(cursor.day),
                     "weekday_bit": 1 << cursor.weekday(),
-                    "is_available": is_available,
+                    "is_available": today <= cursor <= window_end and cursor not in closed_dates,
                     "is_today": cursor == today,
-                    "is_outside_month": not in_month,
                 }
             )
-
-            if len(week) == 7:
-                weeks.append(week)
-                week = []
 
             cursor += timedelta(days=1)
 
         months.append(
             {
                 "title": f"{MONTH_TITLE_LABELS[month_start.month]} {month_start.year}",
-                "weeks": weeks,
+                "offset": month_start.weekday(),
+                "days": days,
             }
         )
-        month_start = next_month(month_start)
+        month_start = following_month
 
     return months
 
