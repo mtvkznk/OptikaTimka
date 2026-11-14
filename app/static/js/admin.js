@@ -5,7 +5,7 @@ const saveMessage = document.querySelector("[data-save-message]");
 const storageKey = "optika.admin.changes.v4";
 const blankDraft = (month = null) => ({
   edits: {}, additions: [], forms: {}, orders: {}, removals: {}, restorations: {}, days: {}, reason: "",
-  schedule: null, month,
+  schedule: null, serviceAvailability: {}, availabilityScope: "", month,
 });
 let draft = blankDraft();
 let saving = false;
@@ -138,7 +138,15 @@ function numberOfChanges() {
   return activeEdits().length + draft.additions.length + Object.keys(draft.forms).length
     + Object.keys(draft.orders).length + Object.keys(draft.removals).length
     + Object.keys(draft.restorations).length
-    + Object.keys(draft.days).length + Number(Boolean(draft.schedule));
+    + Object.keys(draft.days).length + Number(Boolean(draft.schedule))
+    + activeServiceAvailability().reduce(
+      (count, [, entry]) => count + Number(Boolean(entry.schedule)) + Object.keys(entry.days).length,
+      0,
+    );
+}
+
+function activeServiceAvailability() {
+  return Object.entries(draft.serviceAvailability).filter(([id]) => !draft.removals["services:" + id]);
 }
 
 function showSaveState(message, error = false) {
@@ -415,15 +423,77 @@ document.querySelectorAll("[data-order]").forEach((list) => {
 });
 
 const scheduleForm = document.querySelector("[data-work-schedule]");
+const scopePicker = document.querySelector("[data-availability-scope]");
+const serviceAvailability = scheduleForm ? JSON.parse(scheduleForm.dataset.serviceAvailability) : {};
+const availabilityPanel = scheduleForm?.closest(".admin-panel");
+const globalSchedule = scheduleForm ? JSON.parse(scheduleForm.dataset.workSchedule) : null;
+const globalDays = document.querySelector("[data-admin-calendar]");
+const globalClosedDays = globalDays ? JSON.parse(globalDays.dataset.closedDays) : {};
+
+function availabilityDraft() {
+  const id = scopePicker.value;
+  if (!id) return draft;
+  return draft.serviceAvailability[id] ??= { schedule: null, days: {}, reason: "" };
+}
+
+function chooseAvailability(id) {
+  scopePicker.value = id;
+  if (scopePicker.selectedIndex < 0 || scopePicker.selectedOptions[0].disabled) scopePicker.value = "";
+  draft.availabilityScope = scopePicker.value;
+  availabilityPanel.dispatchEvent(new Event("availability-scope"));
+  persistDraft();
+}
+
+if (scopePicker) {
+  const weekdaysPanel = availabilityPanel.querySelector("[data-service-weekdays]");
+  const serviceList = document.querySelector('[data-order="service_order"]');
+  const updateChoices = () => {
+    for (const option of scopePicker.options) {
+      const form = option.value && serviceList.querySelector('[data-id="' + option.value + '"]');
+      if (!form) continue;
+      option.disabled = form.hasAttribute("data-removing");
+      option.textContent = form.elements.name.value;
+    }
+    if (scopePicker.selectedOptions[0]?.disabled) chooseAvailability("");
+  };
+  serviceList.addEventListener("admin-removals", updateChoices);
+  serviceList.addEventListener("input", updateChoices);
+  serviceList.querySelectorAll("[data-service-schedule]").forEach((link) => {
+    link.addEventListener("click", () => {
+      chooseAvailability(link.dataset.serviceSchedule);
+      scopePicker.focus({ preventScroll: true });
+    });
+  });
+  availabilityPanel.addEventListener("availability-scope", () => {
+    const form = scopePicker.value && serviceList.querySelector('[data-id="' + scopePicker.value + '"]');
+    weekdaysPanel.replaceChildren();
+    if (!form) return;
+    const source = form.querySelector("[data-weekdays]");
+    const copy = source.cloneNode(true);
+    copy.hidden = false;
+    const sourceDays = weekdayFields(source);
+    weekdayFields(copy).forEach((field, index) => {
+      field.checked = sourceDays[index].checked;
+      field.addEventListener("input", () => {
+        sourceDays[index].checked = field.checked;
+        sourceDays[index].dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    });
+    weekdaysPanel.append(copy);
+  });
+  scopePicker.addEventListener("change", () => chooseAvailability(scopePicker.value));
+  serviceList.querySelectorAll("[data-weekdays]").forEach((fieldset) => { fieldset.hidden = true; });
+  queueMicrotask(updateChoices);
+}
+
 if (scheduleForm) {
-  const settings = JSON.parse(scheduleForm.dataset.workSchedule);
-  const { version, start_time, end_time } = settings;
-  const initial = { start_time, end_time, breaks: settings.breaks };
   const start = scheduleForm.elements.start_time;
   const end = scheduleForm.elements.end_time;
   const breaks = scheduleForm.querySelector("[data-work-breaks]");
   const template = scheduleForm.querySelector("[data-work-break]");
   const clear = scheduleForm.querySelector("[data-clear-schedule]");
+  const custom = scheduleForm.querySelector("[data-custom-schedule]");
+  const fields = scheduleForm.querySelector("[data-schedule-fields]");
 
   function addBreak(values) {
     const row = template.content.firstElementChild.cloneNode(true);
@@ -433,10 +503,27 @@ if (scheduleForm) {
     return row;
   }
 
-  const shown = draft.schedule?.values ?? initial;
-  start.value = shown.start_time;
-  end.value = shown.end_time;
-  shown.breaks.forEach(addBreak);
+  function hoursOf({ start_time, end_time, breaks }) {
+    return { start_time, end_time, breaks };
+  }
+
+  function showHours(hours) {
+    start.value = hours.start_time;
+    end.value = hours.end_time;
+    breaks.replaceChildren();
+    hours.breaks.forEach(addBreak);
+  }
+
+  function showScope() {
+    const saved = serviceAvailability[scopePicker.value];
+    const pending = availabilityDraft().schedule;
+    const inherited = draft.schedule?.values ?? hoursOf(globalSchedule);
+    custom.closest("label").hidden = !saved;
+    custom.checked = Boolean(pending?.custom ?? saved?.custom);
+    fields.disabled = Boolean(saved && !custom.checked);
+    showHours(fields.disabled ? inherited : pending?.values ?? hoursOf(saved?.schedule ?? globalSchedule));
+    readSchedule();
+  }
 
   function readSchedule() {
     const pauses = [...breaks.children].map((row) => ({
@@ -465,15 +552,29 @@ if (scheduleForm) {
   }
 
   function rememberSchedule() {
+    const saved = serviceAvailability[scopePicker.value];
+    const state = availabilityDraft();
     const values = readSchedule();
-    draft.schedule = matches(initial, values) ? null : {
-      version: draft.schedule?.version ?? version, values, valid: scheduleForm.checkValidity(),
+    const same = saved
+      ? custom.checked === saved.custom && (!custom.checked || matches(hoursOf(saved.schedule), values))
+      : matches(hoursOf(globalSchedule), values);
+    state.schedule = same ? null : {
+      version: state.schedule?.version ?? saved?.version ?? globalSchedule.version,
+      custom: custom.checked, values, valid: scheduleForm.checkValidity(),
     };
     persistDraft();
   }
 
-  readSchedule();
-  scheduleForm.addEventListener("input", rememberSchedule);
+  availabilityPanel.addEventListener("availability-scope", showScope);
+  scheduleForm.addEventListener("input", (event) => {
+    if (event.target === custom) {
+      fields.disabled = !custom.checked;
+      const saved = serviceAvailability[scopePicker.value];
+      if (custom.checked && saved.custom) showHours(hoursOf(saved.schedule));
+      if (!custom.checked) showHours(draft.schedule?.values ?? hoursOf(globalSchedule));
+    }
+    rememberSchedule();
+  });
   scheduleForm.addEventListener("submit", (event) => {
     event.preventDefault();
     saveButton.focus();
@@ -498,40 +599,62 @@ if (scheduleForm) {
   });
 }
 
+function closedDaysPayload({ days, reason }) {
+  const payload = { close: [], reopen: {}, reason };
+  Object.entries(days).forEach(([day, reopening]) => {
+    if (reopening) payload.reopen[reopening.id] = reopening.version;
+    else payload.close.push(day);
+  });
+  return payload;
+}
+
+function hoursPayload({ start_time, end_time, breaks }) {
+  return { workday: start_time ? { start_time, end_time } : null, breaks };
+}
+
 function payloadOfDraft() {
   const payload = {
     appointments: [], services: [], remove_services: [],
     categories: [], create_categories: [], remove_categories: [], products: [], remove_products: [],
     restore_categories: Object.values(draft.restorations),
-    closed_days: { close: [], reopen: {}, reason: draft.reason },
+    closed_days: closedDaysPayload(draft),
+    service_availability: activeServiceAvailability()
+      .filter(([, entry]) => entry.schedule || Object.keys(entry.days).length)
+      .map(([id, entry]) => ({
+        id: Number(id),
+        closed_days: closedDaysPayload(entry),
+        ...(entry.schedule && {
+          schedule_version: entry.schedule.version,
+          schedule: entry.schedule.custom ? hoursPayload(entry.schedule.values) : null,
+        }),
+      })),
     ...draft.orders,
   };
   draftEntries().forEach(({ kind, identity, values }) => {
     payload[kind].push({ ...identity, ...values });
   });
   Object.values(draft.removals).forEach(({ kind, identity }) => payload["remove_" + kind].push(identity));
-  Object.entries(draft.days).forEach(([day, reopening]) => {
-    if (reopening) payload.closed_days.reopen[reopening.id] = reopening.version;
-    else payload.closed_days.close.push(day);
-  });
   if (draft.schedule) {
-    const { start_time, end_time, breaks } = draft.schedule.values;
-    payload.work_schedule = {
-      version: draft.schedule.version, workday: start_time ? { start_time, end_time } : null, breaks,
-    };
+    payload.work_schedule = { version: draft.schedule.version, ...hoursPayload(draft.schedule.values) };
   }
   return payload;
 }
 
 function clearDraft() {
+  const scope = draft.availabilityScope;
   draft = blankDraft(draft.month);
+  draft.availabilityScope = scope;
   persistDraft();
 }
 
 saveButton.addEventListener("click", async () => {
   if (saving || processingPhotos.size || !numberOfChanges()) return;
-  if (draft.schedule?.valid === false) {
-    if (scheduleForm) revealEditor(scheduleForm);
+  const invalidSchedule = activeServiceAvailability().find(([, entry]) => entry.schedule?.valid === false);
+  if (draft.schedule?.valid === false || invalidSchedule) {
+    if (scheduleForm) {
+      chooseAvailability(draft.schedule?.valid === false ? "" : invalidSchedule[0]);
+      revealEditor(scheduleForm);
+    }
     scheduleForm?.reportValidity();
     showSaveState("Перевірте початок, кінець і перерви робочого дня.", true);
     return;
@@ -591,7 +714,6 @@ discardButton.addEventListener("click", () => {
 
 const calendar = document.querySelector("[data-admin-calendar]");
 if (calendar) {
-  const closed = JSON.parse(calendar.dataset.closedDays);
   const today = calendar.dataset.today;
   const monthLabel = calendar.querySelector("[data-calendar-month]");
   const daysGrid = calendar.querySelector("[data-calendar-days]");
@@ -609,9 +731,12 @@ if (calendar) {
   const dateKey = (date) => date.toISOString().slice(0, 10);
   const start = fromISO((draft.month ?? today.slice(0, 7)) + "-01");
   let month = Number.isNaN(start.getTime()) ? fromISO(today.slice(0, 7) + "-01") : start;
-  reason.value = draft.reason;
 
   function renderCalendar() {
+    const id = scopePicker.value;
+    const closed = serviceAvailability[id]?.closed_days ?? globalClosedDays;
+    const { days } = availabilityDraft();
+    calendar.querySelector('[data-calendar-key="global"]').hidden = !id;
     const title = monthFormat.format(month);
     if (monthLabel.textContent !== title) monthLabel.textContent = title;
     const year = month.getUTCFullYear();
@@ -627,23 +752,30 @@ if (calendar) {
       const date = dateAt(year, monthIndex, day);
       const iso = dateKey(date);
       const current = closed[iso];
-      const pending = Object.hasOwn(draft.days, iso);
-      const state = pending ? (draft.days[iso] ? "opening" : "closing") : (current ? "closed" : "");
-      const label = { closed: "Закрито", closing: "Буде закрито", opening: "Буде відкрито" }[state];
+      const pending = Object.hasOwn(days, iso);
+      const global = id && (Object.hasOwn(draft.days, iso) ? !draft.days[iso] : globalClosedDays[iso]);
+      const state = pending ? (days[iso] ? "opening" : "closing")
+        : current ? "closed" : global ? "global" : "";
+      const label = { closed: "Закрито", closing: "Буде закрито", opening: "Буде відкрито",
+        global: "Загальне закриття" }[state];
       const button = document.createElement("button");
       button.type = "button";
       button.className = "admin-calendar-day";
       button.dataset.calendarDay = iso;
       button.dataset.state = state;
       button.textContent = String(day);
+      button.disabled = state === "global";
       button.setAttribute("aria-pressed", String(state === "closed" || state === "closing"));
       if (iso === today) button.setAttribute("aria-current", "date");
-      button.setAttribute("aria-label", [dateFormat.format(date), label, current?.reason].filter(Boolean).join(". "));
+      button.setAttribute("aria-label", [
+        dateFormat.format(date), label, global && state !== "global" ? "Загальне закриття" : "",
+        current?.reason,
+      ].filter(Boolean).join(". "));
       if (current?.reason) button.title = current.reason;
       cells.push(button);
     }
     daysGrid.replaceChildren(...cells);
-    const pending = Object.values(draft.days);
+    const pending = Object.values(days);
     const opening = pending.filter(Boolean).length;
     const closing = pending.length - opening;
     count.textContent = [
@@ -670,13 +802,15 @@ if (calendar) {
   });
   const focusDate = (iso) => daysGrid.querySelector('[data-calendar-day="' + iso + '"]')?.focus();
   daysGrid.addEventListener("click", (event) => {
-    const iso = event.target.closest("[data-calendar-day]")?.dataset.calendarDay;
+    const iso = event.target.closest("[data-calendar-day]:not(:disabled)")?.dataset.calendarDay;
     if (!iso) return;
-    if (Object.hasOwn(draft.days, iso)) delete draft.days[iso];
+    const { days } = availabilityDraft();
+    const closed = serviceAvailability[scopePicker.value]?.closed_days ?? globalClosedDays;
+    if (Object.hasOwn(days, iso)) delete days[iso];
     else if (closed[iso]) {
       const { id, version } = closed[iso];
-      draft.days[iso] = { id, version };
-    } else draft.days[iso] = null;
+      days[iso] = { id, version };
+    } else days[iso] = null;
     persistDraft();
     renderCalendar();
     focusDate(iso);
@@ -692,10 +826,14 @@ if (calendar) {
     focusDate(dateKey(target));
   });
   reason.addEventListener("input", () => {
-    draft.reason = reason.value;
+    availabilityDraft().reason = reason.value;
     persistDraft();
   });
-  renderCalendar();
+  availabilityPanel.addEventListener("availability-scope", () => {
+    reason.value = availabilityDraft().reason;
+    renderCalendar();
+  });
+  chooseAvailability(draft.availabilityScope);
 }
 
 renderAdditions();

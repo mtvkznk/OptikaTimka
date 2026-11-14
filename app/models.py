@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, time
 from enum import Enum
 
 from pydantic import EmailStr, field_validator, model_validator
-from sqlalchemy import Column, DateTime, Index, Integer, LargeBinary, UniqueConstraint, text
+from sqlalchemy import JSON, Column, DateTime, Index, Integer, LargeBinary, UniqueConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, SQLModel
 
@@ -182,6 +182,19 @@ class ClosedDateRead(ClosedDateBase):
     id: int
     created_at: datetime
     updated_at: datetime
+
+
+class ServiceSchedule(SQLModel, table=True):
+    service_id: int = Field(primary_key=True, foreign_key="bookingservice.id", ondelete="CASCADE")
+    intervals: list[tuple[int, int]] = Field(sa_type=JSON)
+
+
+class ServiceClosedDate(ClosedDateBase, table=True):
+    __table_args__ = (UniqueConstraint("service_id", "closed_on"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    service_id: int = Field(foreign_key="bookingservice.id", ondelete="CASCADE")
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class AppointmentBase(SQLModel):

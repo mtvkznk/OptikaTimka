@@ -27,6 +27,8 @@ from app.models import (
     CatalogCategory,
     ClosedDate,
     Product,
+    ServiceClosedDate,
+    ServiceSchedule,
     utc_now,
 )
 from app.product_photos import (
@@ -86,8 +88,7 @@ class ProductChange(BaseModel):
     photo: str = Field(default="", max_length=MAX_PHOTO_PAYLOAD)
 
 
-class WorkScheduleChange(BaseModel):
-    version: str = Field(min_length=64, max_length=64)
+class ScheduleHours(BaseModel):
     workday: AvailableTimeSlotCreate | None = None
     breaks: list[AvailableTimeSlotCreate] = Field(default_factory=list, max_length=100)
 
@@ -112,13 +113,15 @@ class WorkScheduleChange(BaseModel):
         return intervals
 
 
+class WorkScheduleChange(ScheduleHours):
+    version: str = Field(min_length=64, max_length=64)
+
+
 def schedule_version(intervals: list[Interval]) -> str:
     return hashlib.sha256(repr(intervals).encode("ascii")).hexdigest()
 
 
-def schedule_for_admin(slots: list[AvailableTimeSlot]) -> dict[str, Any]:
-    intervals = working_intervals(slots)
-
+def schedule_for_admin(intervals: list[Interval]) -> dict[str, Any]:
     def clock(minutes: int) -> str:
         return time(*divmod(minutes, 60)).isoformat(timespec="minutes")
 
@@ -184,6 +187,13 @@ class ClosedDayChanges(BaseModel):
     reason: str = Field(default="", max_length=160)
 
 
+class ServiceAvailabilityChange(BaseModel):
+    id: PositiveInt
+    schedule_version: str | None = Field(default=None, min_length=64, max_length=64)
+    schedule: ScheduleHours | None = None
+    closed_days: ClosedDayChanges = Field(default_factory=ClosedDayChanges)
+
+
 class AdminChanges(BaseModel):
     appointments: list[AppointmentChange] = Field(default_factory=list, max_length=1000)
     services: list[ServiceChange] = Field(default_factory=list, max_length=500)
@@ -195,6 +205,7 @@ class AdminChanges(BaseModel):
     remove_products: list[RowVersion] = Field(default_factory=list, max_length=500)
     time_slots: list[SlotChange] = Field(default_factory=list, max_length=500)
     work_schedule: WorkScheduleChange | None = None
+    service_availability: list[ServiceAvailabilityChange] = Field(default_factory=list, max_length=500)
     closed_periods: list[ClosedPeriodChange] = Field(default_factory=list, max_length=25)
     closed_days: ClosedDayChanges = Field(default_factory=ClosedDayChanges)
     remove_services: list[RowVersion] = Field(default_factory=list, max_length=500)
@@ -415,12 +426,16 @@ def apply_product_changes(
 
 def apply_closed_date_changes(
     session: Session, periods: list[ClosedPeriodChange], days: ClosedDayChanges,
+    service_id: int | None = None,
 ) -> None:
     if not periods and not days.close and not days.reopen:
         return
-    rows = {
-        row.id: row for row in session.exec(select(ClosedDate).order_by(ClosedDate.id).with_for_update())
-    }
+    statement = (
+        select(ClosedDate).order_by(ClosedDate.id) if service_id is None else
+        select(ServiceClosedDate).where(ServiceClosedDate.service_id == service_id)
+        .order_by(ServiceClosedDate.id)
+    )
+    rows = {row.id: row for row in session.exec(statement.with_for_update())}
     removed: set[int] = set()
     for previous in [days.reopen, *(period.previous for period in periods)]:
         for item_id, version in previous.items():
@@ -447,7 +462,41 @@ def apply_closed_date_changes(
             if row.reason != reason:
                 row.reason = reason
                 row.updated_at = utc_now()
-    session.add_all(ClosedDate(closed_on=day, reason=reason) for day, reason in final.items())
+    for day, reason in final.items():
+        session.add(
+            ClosedDate(closed_on=day, reason=reason) if service_id is None else
+            ServiceClosedDate(service_id=service_id, closed_on=day, reason=reason)
+        )
+
+
+def service_schedule_version(schedule: ServiceSchedule | None) -> str:
+    intervals = None if schedule is None else [tuple(interval) for interval in schedule.intervals]
+    return hashlib.sha256(repr(intervals).encode("ascii")).hexdigest()
+
+
+def apply_service_availability(session: Session, changes: list[ServiceAvailabilityChange]) -> None:
+    if len({change.id for change in changes}) != len(changes):
+        raise HTTPException(422, "Графік однієї послуги змінено кілька разів.")
+    for change in changes:
+        service = session.get(BookingService, change.id)
+        if service is None or not service.is_active:
+            raise HTTPException(409, "Послугу видалено. Оновіть сторінку.")
+        if change.schedule is not None and change.schedule_version is None:
+            raise HTTPException(422, "Оновіть сторінку перед зміною графіка послуги.")
+        if change.schedule_version is not None:
+            current = session.get(ServiceSchedule, change.id)
+            if service_schedule_version(current) != change.schedule_version:
+                raise HTTPException(409, "Графік послуги вже змінили. Оновіть сторінку.")
+            if change.schedule is None:
+                if current is not None:
+                    session.delete(current)
+            else:
+                intervals = change.schedule.intervals()
+                if current is None:
+                    session.add(ServiceSchedule(service_id=change.id, intervals=intervals))
+                else:
+                    current.intervals = intervals
+        apply_closed_date_changes(session, [], change.closed_days, change.id)
 
 
 def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
@@ -476,3 +525,4 @@ def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
     if changes.work_schedule is not None:
         apply_work_schedule(session, changes.work_schedule)
     apply_closed_date_changes(session, changes.closed_periods, changes.closed_days)
+    apply_service_availability(session, changes.service_availability)

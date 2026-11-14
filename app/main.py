@@ -21,15 +21,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.admin_changes import AdminChanges, apply_admin_changes, schedule_for_admin
+from app.admin_changes import (
+    AdminChanges,
+    apply_admin_changes,
+    schedule_for_admin,
+    service_schedule_version,
+)
 from app.booking import (
     BookingTime,
+    Interval,
     available_starts,
     check_booking_overlap,
     check_reactivation,
     lock_booking_writes,
     minute_of,
     occupied_intervals,
+    service_is_closed,
     working_intervals,
 )
 from app.catalog import (
@@ -70,6 +77,8 @@ from app.models import (
     ProductCreate,
     ProductPhoto,
     ProductRead,
+    ServiceClosedDate,
+    ServiceSchedule,
     utc_now,
 )
 from app.product_photos import product_photo_url
@@ -166,8 +175,8 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261112-booking-contact"
-ADMIN_ASSET_VERSION = "20261112-create-category"
+ASSET_VERSION = "20261114-service-schedules"
+ADMIN_ASSET_VERSION = "20261114-service-schedules"
 LANDING_ASSET_VERSION = "20261112-shared-brand"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -251,6 +260,13 @@ def get_active_time_slots(session: Session) -> list[AvailableTimeSlot]:
     )
 
 
+def service_working_intervals(session: Session, service_id: int) -> list[Interval]:
+    schedule = session.get(ServiceSchedule, service_id)
+    if schedule is not None:
+        return [tuple(interval) for interval in schedule.intervals]
+    return working_intervals(get_active_time_slots(session))
+
+
 def count_rows(session: Session, model: type[Any], *conditions: Any) -> int:
     statement = select(func.count()).select_from(model)
     for condition in conditions:
@@ -315,8 +331,9 @@ def next_month(value: date) -> date:
     return date(value.year, value.month + 1, 1)
 
 
-def build_booking_calendar(session: Session) -> list[dict[str, Any]]:
-    today, window_end = booking_window()
+def build_booking_calendar(
+    session: Session, today: date, window_end: date,
+) -> list[dict[str, Any]]:
     closed_dates = set(
         session.exec(
             select(ClosedDate.closed_on)
@@ -400,6 +417,20 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
     closed_dates = list(
         session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
     )
+    default_intervals = working_intervals(get_active_time_slots(session))
+    service_ids = [service.id for service in services]
+    schedules = {
+        row.service_id: row for row in session.exec(
+            select(ServiceSchedule).where(ServiceSchedule.service_id.in_(service_ids))
+        )
+    }
+    service_closed_days: dict[int, dict[str, Any]] = {}
+    for item in session.exec(
+        select(ServiceClosedDate).where(ServiceClosedDate.service_id.in_(service_ids))
+    ):
+        service_closed_days.setdefault(item.service_id, {})[item.closed_on.isoformat()] = {
+            "id": item.id, "version": item.updated_at.isoformat(), "reason": item.reason,
+        }
     latest_appointments = list(
         session.exec(
             select(Appointment)
@@ -430,7 +461,18 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         "products": session.exec(active_products()).all(),
         "product_price": lambda product: Decimal(product.price_cents).scaleb(-2),
         "catalog_image": catalog_image,
-        "work_schedule": schedule_for_admin(get_active_time_slots(session)),
+        "work_schedule": schedule_for_admin(default_intervals),
+        "service_availability": {
+            service.id: {
+                "schedule": schedule_for_admin(
+                    schedules[service.id].intervals if service.id in schedules else [],
+                ),
+                "custom": service.id in schedules,
+                "version": service_schedule_version(schedules.get(service.id)),
+                "closed_days": service_closed_days.get(service.id, {}),
+            }
+            for service in services
+        },
         "closed_days": {
             item.closed_on.isoformat(): {
                 "id": item.id, "version": item.updated_at.isoformat(), "reason": item.reason,
@@ -744,6 +786,21 @@ def root(request: Request, session: SessionDep) -> HTMLResponse:
 @app.get("/booking", response_class=HTMLResponse)
 def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
     ensure_seed_data(session)
+    today, window_end = booking_window()
+    services = get_active_services(session)
+    closed_by_service: dict[int, list[str]] = {}
+    for service_id, day in session.exec(
+        select(ServiceClosedDate.service_id, ServiceClosedDate.closed_on)
+        .where(ServiceClosedDate.closed_on.between(today, window_end))
+    ):
+        closed_by_service.setdefault(service_id, []).append(day.isoformat())
+    default_intervals = working_intervals(get_active_time_slots(session))
+    schedules = {row.service_id: row.intervals for row in session.exec(select(ServiceSchedule))}
+    bookable_services = {
+        service.id for service in services
+        if any(end - start >= service.duration_minutes
+               for start, end in schedules.get(service.id, default_intervals))
+    }
 
     return templates.TemplateResponse(
         request,
@@ -751,8 +808,10 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
         {
             "app_name": settings.app_name,
             "asset_version": ASSET_VERSION,
-            "services": get_active_services(session),
-            "booking_months": build_booking_calendar(session),
+            "services": services,
+            "closed_by_service": closed_by_service,
+            "bookable_services": bookable_services,
+            "booking_months": build_booking_calendar(session, today, window_end),
             "weekday_labels": WEEKDAY_LABELS,
             "offer_google_sign_in": (
                 google_auth_enabled() and get_customer_by_session(request, session) is None
@@ -1020,18 +1079,21 @@ def available_time_slots(
         return []
     ensure_seed_data(session)
     booking_service = get_booking_service(session, service) if service is not None else None
-    if booking_service is not None and not booking_service.is_available_on(preferred_date):
+    if booking_service is not None and (
+        not booking_service.is_available_on(preferred_date)
+        or service_is_closed(session, booking_service.id, preferred_date)
+    ):
         return []
-    slots = get_active_time_slots(session)
-    booked = occupied_intervals(session, preferred_date)
     earliest = minute_of(now.time()) + 1 if preferred_date == today else 0
+    booked = occupied_intervals(session, preferred_date)
     if booking_service is not None:
         return available_starts(
-            working_intervals(slots), booked, booking_service.duration_minutes, earliest,
+            service_working_intervals(session, booking_service.id),
+            booked, booking_service.duration_minutes, earliest,
         )
     # Keep returning configured slots to clients that do not supply a service.
     return [
-        slot for slot in slots
+        slot for slot in get_active_time_slots(session)
         if (start := minute_of(slot.start_time)) >= earliest
         and not any(booked_start <= start < booked_end for booked_start, booked_end in booked)
     ]
@@ -1092,10 +1154,12 @@ def create_appointment(
         raise HTTPException(400, "На цю дату запис закритий.")
     if not service.is_available_on(day):
         raise HTTPException(400, "Ця послуга недоступна в обраний день тижня.")
+    if service_is_closed(session, service.id, day):
+        raise HTTPException(400, "Запис на цю послугу закритий на обрану дату.")
     start = minute_of(payload.preferred_time)
     if not any(
         opens <= start and start + duration <= closes
-        for opens, closes in working_intervals(get_active_time_slots(session))
+        for opens, closes in service_working_intervals(session, service.id)
     ):
         raise HTTPException(400, "Для цієї послуги оберіть час у межах робочого графіка.")
     check_booking_overlap(session, day, start, duration)

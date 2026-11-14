@@ -56,14 +56,12 @@
 <header class="admin-page-heading"><h1>Послуги й графік</h1></header>
 <nav class="admin-section-nav" aria-label="Налаштування запису">
   <a class="admin-button" href="#services">Послуги</a>
-  <a class="admin-button" href="#time-slots">Робочий графік</a>
-  <a class="admin-button" href="#closed-dates">Закриті дати</a>
+  <a class="admin-button" href="#time-slots">Доступність</a>
 </nav>
 <section class="admin-panel" id="services" aria-labelledby="services-heading">
   <div class="admin-panel-heading">
     <div>
       <h2 id="services-heading">Послуги</h2>
-      <p>Позначте дні тижня для кожної послуги. Якщо зняти всі позначки, запис на неї буде закритий.</p>
     </div>
   </div>
   <div class="admin-edit-list" data-order="service_order">
@@ -82,6 +80,7 @@
       </label>
       {{ remove_button(service.name) }}
       {{ service_weekdays(service.weekdays_mask) }}
+      <a class="admin-service-schedule" href="#time-slots" data-service-schedule="{{ service.id }}">Налаштувати доступність →</a>
     </form>
     {% else %}
     <p class="admin-list-empty">Послуг поки немає.</p>
@@ -90,6 +89,7 @@
   <ul class="admin-pending" data-pending-for="services" hidden></ul>
   <details class="admin-add">
     <summary>Додати послугу</summary>
+    <p class="admin-availability-hint">Власні години й закриті дати можна налаштувати після збереження послуги.</p>
     <form class="admin-editor admin-add-service" action="/admin/services" method="post" data-admin-add="services">
       {% include "csrf_field.html" %}
       <label class="admin-field admin-service-name">Назва
@@ -110,11 +110,26 @@
 <section class="admin-panel" id="time-slots" aria-labelledby="slots-heading">
   <div class="admin-panel-heading">
     <div>
-      <h2 id="slots-heading">Робочий графік</h2>
-      <p>Графік діє на всі відкриті дати. Сайт сам підбирає вільний час для кожної послуги.</p>
+      <h2 id="slots-heading">Доступність для запису</h2>
+      <p>Власні години замінюють загальні години для вибраної послуги. Загальні закриті дати діють для всіх.</p>
     </div>
   </div>
-  <form class="admin-editor admin-work-schedule" data-work-schedule='{{ work_schedule | tojson }}'>
+  <label class="admin-field admin-availability-picker">Редагувати
+    <select data-availability-scope>
+      <option value="">Загальний графік</option>
+      {% for service in services %}
+      <option value="{{ service.id }}">{{ service.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div data-service-weekdays></div>
+  <h3 class="admin-availability-heading">Робочі години</h3>
+  <form class="admin-editor admin-work-schedule" data-work-schedule='{{ work_schedule | tojson }}'
+    data-service-availability='{{ service_availability | tojson }}'>
+    <label class="admin-custom-schedule" data-custom-schedule-control hidden>
+      <input type="checkbox" data-custom-schedule /> Власні години для цієї послуги
+    </label>
+    <fieldset class="admin-schedule-fields" data-schedule-fields aria-label="Робочі години та перерви">
     <div class="admin-work-times">
       <label class="admin-field">Початок робочого дня
         <input type="time" name="start_time" value="{{ work_schedule.start_time }}" />
@@ -135,16 +150,10 @@
         <button class="admin-button admin-danger" type="button" data-remove-break>Видалити перерву</button>
       </div>
     </template>
+    </fieldset>
   </form>
-</section>
-
-<section class="admin-panel" id="closed-dates" aria-labelledby="closed-heading">
-  <div class="admin-panel-heading">
-    <div>
-      <h2 id="closed-heading">Закриті дати</h2>
-      <p>Натисніть на дати, щоб закрити або відкрити їх для запису.</p>
-    </div>
-  </div>
+  <h3 class="admin-availability-heading" id="closed-dates">Закриті дати</h3>
+  <p class="admin-availability-hint">Натисніть на дати, щоб закрити або відкрити запис.</p>
   <div class="admin-calendar" data-admin-calendar data-today="{{ today.isoformat() }}" data-closed-days='{{ closed_days | tojson }}'>
     <div class="admin-calendar-nav">
       <button class="admin-button" type="button" data-calendar-move="-1" aria-label="Попередній місяць">←</button>
@@ -159,6 +168,7 @@
       <span data-calendar-key="closed">Закрито</span>
       <span data-calendar-key="closing">Буде закрито</span>
       <span data-calendar-key="opening">Буде відкрито</span>
+      <span data-calendar-key="global" hidden>Загальне закриття</span>
     </div>
     <p class="admin-calendar-count" data-calendar-count role="status"></p>
     <label class="admin-field admin-calendar-reason" data-calendar-reason-field hidden>

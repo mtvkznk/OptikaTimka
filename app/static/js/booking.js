@@ -68,8 +68,11 @@ function showMonth(index) {
 async function refreshAvailability() {
   availabilityRequest?.abort();
   const service = checked("service");
+  const closedDates = new Set(JSON.parse(service?.dataset.closedDates ?? "[]"));
   for (const day of dateRadios) {
-    day.disabled = Boolean(service && !(Number(service.dataset.weekdays) & Number(day.dataset.weekday)));
+    day.disabled = Boolean(service && (
+      closedDates.has(day.value) || !(Number(service.dataset.weekdays) & Number(day.dataset.weekday))
+    ));
     if (day.disabled) day.checked = false;
   }
   const date = checked("preferred_date");

@@ -157,6 +157,9 @@
 .admin-save-actions [hidden],
 .admin-pending[hidden],
 .admin-photo [hidden],
+[data-weekdays][hidden],
+[data-custom-schedule-control][hidden],
+.admin-calendar-legend [hidden],
 [data-add-product][hidden],
 [data-admin-view][hidden] {
   display: none;
@@ -652,6 +655,63 @@
 .admin-work-schedule {
   grid-template-columns: minmax(0, 1fr);
   max-width: 43rem;
+}
+
+.admin-availability-picker {
+  max-width: 27rem;
+  margin-bottom: 0.85rem;
+}
+
+.admin-availability-heading {
+  margin: 1.1rem 0 0.5rem;
+  font-size: 1rem;
+  scroll-margin-top: 8rem;
+}
+
+.admin-availability-hint {
+  margin: 0 0 0.65rem;
+  color: var(--admin-muted);
+  font-size: 0.86rem;
+}
+
+.admin-service-schedule {
+  grid-column: 1 / -1;
+  width: fit-content;
+  color: var(--admin-accent);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.admin-custom-schedule {
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.admin-custom-schedule input {
+  accent-color: var(--admin-accent);
+}
+
+.admin-schedule-fields {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.admin-schedule-fields:disabled {
+  opacity: 0.68;
+}
+
+.admin-calendar-day[data-state="global"],
+.admin-calendar-legend [data-calendar-key="global"] {
+  color: var(--admin-muted);
+  background: #edf0ee;
+}
+
+.admin-calendar-day[data-state="global"] {
+  cursor: default;
 }
 
 .admin-work-times,

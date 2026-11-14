@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
-from app.models import Appointment, AppointmentStatus, AvailableTimeSlot
+from app.models import Appointment, AppointmentStatus, AvailableTimeSlot, ServiceClosedDate
 
 Interval = tuple[int, int]
 START_STEP_MINUTES = 15
@@ -38,6 +38,14 @@ def working_intervals(slots: list[AvailableTimeSlot]) -> list[Interval]:
         else:
             intervals.append((start, end))
     return intervals
+
+
+def service_is_closed(session: Session, service_id: int, day: date) -> bool:
+    return session.exec(
+        select(ServiceClosedDate.id).where(
+            ServiceClosedDate.service_id == service_id, ServiceClosedDate.closed_on == day,
+        )
+    ).first() is not None
 
 
 def occupied_intervals(session: Session, day: date, exclude_id: int | None = None) -> list[Interval]:

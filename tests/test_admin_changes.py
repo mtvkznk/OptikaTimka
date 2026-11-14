@@ -1,16 +1,23 @@
 import json
 import re
 from base64 import b64encode
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from io import BytesIO
 
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy.engine import Engine
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+from app.admin_changes import service_schedule_version
 from app.main import current_date
-from app.models import Appointment, AppointmentStatus, CatalogCategory
+from app.models import (
+    Appointment,
+    AppointmentStatus,
+    CatalogCategory,
+    ServiceClosedDate,
+    ServiceSchedule,
+)
 
 
 def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:
@@ -239,6 +246,65 @@ def test_work_schedule_sets_hours_and_booking_uses_remaining_time(client: TestCl
     }).status_code == 200
     assert client.get("/api/availability", params=params).json() == []
     assert schedule()["start_time"] == ""
+
+
+def test_per_service_hours_and_closures_respect_shared_bookings(
+    client: TestClient, app_db: Engine,
+) -> None:
+    first, second, *_ = client.get("/api/booking-services").json()
+    day = current_date() + timedelta(days=2)
+    closed = day + timedelta(days=1)
+    common_closed = day + timedelta(days=2)
+    inherited = service_schedule_version(None)
+    schedule = {
+        "id": first["id"],
+        "schedule_version": inherited,
+        "schedule": {
+            "workday": {"start_time": "08:00", "end_time": "18:00"},
+            "breaks": [{"start_time": "12:00", "end_time": "14:00"}],
+        },
+        "closed_days": {"close": [closed.isoformat()], "reason": "Відпустка"},
+    }
+    assert client.post("/admin/changes", json={
+        "service_availability": [schedule],
+        "closed_days": {"close": [common_closed.isoformat()]},
+    }).status_code == 200
+    assert client.post("/admin/changes", json={"service_availability": [schedule]}).status_code == 409
+
+    def times(service: dict, on: date = day) -> list[str]:
+        response = client.get(
+            "/api/availability", params={"preferred_date": on, "service": service["name"]},
+        )
+        assert response.status_code == 200
+        return [slot["start_time"] for slot in response.json()]
+
+    def book(service: dict, on: date, at: str) -> int:
+        return client.post("/api/appointments", json={
+            "service": service["name"], "preferred_date": on.isoformat(), "preferred_time": at,
+            "name": "Client", "phone": "+380501234567",
+        }).status_code
+
+    assert times(first)[0] == "08:00:00"
+    assert times(second)[0] == "09:00:00"
+    assert "12:00:00" not in times(first)
+    assert times(first, closed) == []
+    assert times(second, closed)
+    assert times(first, common_closed) == times(second, common_closed) == []
+    assert book(first, closed, "09:00") == 400
+    assert book(first, day, "12:00") == 400
+    assert book(first, day, "09:00") == 201
+    assert book(second, day, "09:00") == 409
+    assert "09:00:00" not in times(second)
+
+    with Session(app_db) as session:
+        version = service_schedule_version(session.get(ServiceSchedule, first["id"]))
+        closure = session.exec(select(ServiceClosedDate)).one()
+        reopen = {str(closure.id): closure.updated_at.isoformat()}
+    assert client.post("/admin/changes", json={"service_availability": [{
+        "id": first["id"], "schedule_version": version, "closed_days": {"reopen": reopen},
+    }]}).status_code == 200
+    assert times(first, closed)[0] == "09:00:00"
+    assert times(first, common_closed) == []
 
 
 def test_batch_applies_booking_service_and_period_together(client: TestClient, app_db: Engine) -> None:
