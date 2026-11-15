@@ -170,7 +170,6 @@ body.landing-page {
   letter-spacing: -0.018em;
 }
 
-.landing-services-grid,
 .catalog-product-grid {
   display: grid;
 }
@@ -182,9 +181,18 @@ body.landing-page {
   margin-top: 2.75rem;
 }
 
-.landing-services-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.landing-services-grid {
+  --service-columns: 4;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
 
 .landing-service {
+  flex: 0 0 calc(
+    (100% - (var(--service-columns) - 1) * var(--landing-grid-gap)) / var(--service-columns)
+  );
+  min-width: 0;
   min-height: 14rem;
   padding: 1.8rem;
   border: 1px solid var(--landing-line);
@@ -426,6 +434,8 @@ body.landing-page {
 }
 
 @media (max-width: 70rem) {
+  .landing-services-grid { --service-columns: 3; }
+
   .landing-hero {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
     padding-bottom: 6rem;
@@ -436,6 +446,8 @@ body.landing-page {
 }
 
 @media (max-width: 54rem) {
+  .landing-services-grid { --service-columns: 2; }
+
   :root {
     --landing-anchor-offset: 8rem;
     --landing-grid-gap: 0.8rem;
@@ -484,7 +496,7 @@ body.landing-page {
   .landing-hero { padding-top: 2rem; padding-bottom: 3rem; }
   .landing-hero-actions .landing-button { min-height: 3rem; font-size: 0.96rem; }
 
-  .landing-services-grid { grid-template-columns: 1fr; }
+  .landing-services-grid { --service-columns: 1; }
   .landing-service { min-height: auto; border-radius: 1.25rem; }
   .landing-service h3 { margin-top: 0.8rem; }
   .landing-catalog-grid { --catalog-columns: 2; }
