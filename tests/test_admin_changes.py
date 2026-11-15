@@ -15,6 +15,7 @@ from app.models import (
     Appointment,
     AppointmentStatus,
     CatalogCategory,
+    ClosedDate,
     ServiceClosedDate,
     ServiceSchedule,
 )
@@ -232,6 +233,10 @@ def test_photo_visibility_follows_category_removal_and_restoration(
     url = saved["image_url"]
     response = anonymous_client.get(url)
     assert response.status_code == 200 and response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "private, no-cache"
+    cached = {"If-None-Match": response.headers["etag"]}
+    unchanged = anonymous_client.get(url, headers=cached)
+    assert unchanged.status_code == 304 and unchanged.content == b""
     with Image.open(BytesIO(response.content)) as image:
         assert image.size == (32, 24)
     assert url in anonymous_client.get("/catalog/frames").text
@@ -239,8 +244,9 @@ def test_photo_visibility_follows_category_removal_and_restoration(
     assert client.post("/admin/changes", json={"remove_categories": [{
         "id": "frames", "version": "",
     }]}).status_code == 200
-    assert anonymous_client.get(url).status_code == 404
-    assert client.get("/admin" + url).status_code == 200
+    assert anonymous_client.get(url, headers=cached).status_code == 404
+    private_photo = client.get("/admin" + url)
+    assert private_photo.status_code == 200 and private_photo.headers["cache-control"] == "no-store"
     with Session(app_db) as session:
         category = session.get(CatalogCategory, "frames")
         restore = {"id": "frames", "version": category.updated_at.isoformat()}
@@ -417,7 +423,9 @@ def test_batch_conflict_rolls_back_other_sections(client: TestClient, app_db: En
         assert session.get(Appointment, edit["id"]).status == AppointmentStatus.new
 
 
-def test_closed_period_overlap_and_reopening(client: TestClient) -> None:
+def test_closed_period_overlap_and_reopening(
+    client: TestClient, anonymous_client: TestClient, app_db: Engine,
+) -> None:
     day = current_date() + timedelta(days=8)
     days = [(day + timedelta(days=offset)).isoformat() for offset in range(4)]
     assert client.post("/admin/changes", json={
@@ -426,10 +434,12 @@ def test_closed_period_overlap_and_reopening(client: TestClient) -> None:
     assert client.post("/admin/changes", json={
         "closed_periods": [{"start": days[0], "end": days[2], "reason": "New note"}],
     }).status_code == 200
-    closed = client.get("/api/closed-dates").json()
-    assert [(row["closed_on"], row["reason"]) for row in closed] == [
-        (days[0], "New note"), (days[1], "Existing note"), (days[2], "New note"),
-    ]
+    closed = anonymous_client.get("/api/closed-dates").json()
+    assert [row["closed_on"] for row in closed] == days[:3]
+    assert all("reason" not in row for row in closed)
+    with Session(app_db) as session:
+        reasons = session.exec(select(ClosedDate.reason).order_by(ClosedDate.closed_on)).all()
+        assert reasons == ["New note", "Existing note", "New note"]
 
     first = closed[0]
     previous = {first["id"]: first["updated_at"]}
@@ -440,7 +450,8 @@ def test_closed_period_overlap_and_reopening(client: TestClient) -> None:
         "closed_periods": [{"previous": previous}],
     }).status_code == 409
     closed = client.get("/api/closed-dates").json()
-    assert closed[0]["reason"] == "Updated"
+    with Session(app_db) as session:
+        assert session.get(ClosedDate, first["id"]).reason == "Updated"
     assert client.post("/admin/changes", json={
         "closed_periods": [{"previous": {closed[0]["id"]: closed[0]["updated_at"]}}],
     }).status_code == 200
@@ -500,7 +511,9 @@ def test_delete_catalog_rows_keeps_empty_lists_and_allows_readding(
     assert [row["name"] for row in client.get("/api/booking-services").json()] == [services[1]["name"]]
 
 
-def test_calendar_saves_nonconsecutive_dates_and_reopens_one_day(client: TestClient) -> None:
+def test_calendar_saves_nonconsecutive_dates_and_reopens_one_day(
+    client: TestClient, app_db: Engine,
+) -> None:
     start = current_date() + timedelta(days=5)
     days = [(start + timedelta(days=offset)).isoformat() for offset in range(6)]
     assert client.post("/admin/changes", json={
@@ -515,8 +528,9 @@ def test_calendar_saves_nonconsecutive_dates_and_reopens_one_day(client: TestCli
     })
     assert response.status_code == 200, response.text
     closed = client.get("/api/closed-dates").json()
-    assert [(row["closed_on"], row["reason"]) for row in closed] == [
-        (days[0], ""), (days[3], "Existing note"), (days[5], ""),
-    ]
+    assert [row["closed_on"] for row in closed] == [days[0], days[3], days[5]]
+    with Session(app_db) as session:
+        reasons = session.exec(select(ClosedDate.reason).order_by(ClosedDate.closed_on)).all()
+        assert reasons == ["", "Existing note", ""]
     assert client.get("/api/availability", params={"preferred_date": days[1]}).json()
     assert client.get("/api/availability", params={"preferred_date": days[3]}).json() == []

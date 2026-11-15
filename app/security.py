@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import UTC, datetime
 from typing import Annotated
@@ -25,6 +26,7 @@ CSRF_COOKIE_NAME = "optika_csrf"
 MAX_BODY_BYTES = 65_536
 MAX_ADMIN_CHANGES_BYTES = 2 * 1024 * 1024
 CSRF_TTL_SECONDS = 24 * 60 * 60
+CSRF_FORM_PAGES = frozenset({"/booking", "/cabinet", "/admin", "/admin/appointments"})
 basic_auth = HTTPBasic(auto_error=False, realm="Optika Timka admin")
 
 
@@ -119,6 +121,17 @@ async def read_form_data(request: Request) -> dict[str, str]:
     return parse_form_body(await request.body(), request.headers.get("content-type", ""))
 
 
+class PathOnlyAccessLog(logging.Filter):
+    """Keep OAuth parameters and appointment search terms out of Uvicorn access logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
+            client, method, target, version, status_code = args
+            record.args = (client, method, target.partition("?")[0], version, status_code)
+        return True
+
+
 class SecurityMiddleware:
     """Bound request bodies and enforce signed, session-bound CSRF tokens."""
 
@@ -131,15 +144,19 @@ class SecurityMiddleware:
             return
 
         request = Request(scope)
-        session_token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "")
-        cookie_token = request.cookies.get(cookie_name(CSRF_COOKIE_NAME), "")
-        token_valid = valid_csrf_token(cookie_token, session_token)
-        if token_valid:
-            csrf_token = cookie_token
-        else:
-            payload = f"{int(datetime.now(UTC).timestamp())}.{secrets.token_hex(16)}"
-            csrf_token = f"{payload}.{csrf_signature(payload, session_token)}"
-        scope.setdefault("state", {})["csrf_token"] = csrf_token
+        path = scope["path"]
+        mutating = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        needs_form_token = request.method == "GET" and path in CSRF_FORM_PAGES
+        new_csrf_token = None
+        if mutating or needs_form_token:
+            session_token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "")
+            cookie_token = request.cookies.get(cookie_name(CSRF_COOKIE_NAME), "")
+            token_valid = valid_csrf_token(cookie_token, session_token)
+            if needs_form_token:
+                if not token_valid:
+                    payload = f"{int(datetime.now(UTC).timestamp())}.{secrets.token_hex(16)}"
+                    new_csrf_token = f"{payload}.{csrf_signature(payload, session_token)}"
+                scope.setdefault("state", {})["csrf_token"] = new_csrf_token or cookie_token
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -148,7 +165,7 @@ class SecurityMiddleware:
                 headers["X-Frame-Options"] = "DENY"
                 # Native form POSTs need their Origin header. Keep OAuth redirect URLs private.
                 headers["Referrer-Policy"] = (
-                    "no-referrer" if scope["path"].startswith("/auth/google") else "same-origin"
+                    "no-referrer" if path.startswith("/auth/google") else "same-origin"
                 )
                 headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
                 headers["Cross-Origin-Opener-Policy"] = "same-origin"
@@ -157,15 +174,15 @@ class SecurityMiddleware:
                     "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
                     "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
                 )
-                if not scope["path"].startswith("/static/"):
-                    headers["Cache-Control"] = "no-store"
+                if not path.startswith("/static/"):
+                    headers.setdefault("Cache-Control", "no-store")
                 if production():
                     headers["Strict-Transport-Security"] = "max-age=31536000"
-                if not token_valid and "text/html" in headers.get("content-type", ""):
+                if new_csrf_token and "text/html" in headers.get("content-type", ""):
                     cookie_response = JSONResponse({})
                     cookie_response.set_cookie(
                         cookie_name(CSRF_COOKIE_NAME),
-                        csrf_token,
+                        new_csrf_token,
                         max_age=CSRF_TTL_SECONDS,
                         httponly=True,
                         secure=production(),
@@ -178,30 +195,18 @@ class SecurityMiddleware:
         async def reject(status_code: int, detail: str) -> None:
             await JSONResponse({"detail": detail}, status_code)(scope, receive, send_with_headers)
 
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if mutating:
             try:
                 content_length = int(request.headers.get("content-length", "0"))
             except ValueError:
                 await reject(400, "Некоректна довжина запиту.")
                 return
             limit = (
-                MAX_ADMIN_CHANGES_BYTES if scope["path"] == "/admin/changes" else MAX_BODY_BYTES
+                MAX_ADMIN_CHANGES_BYTES if path == "/admin/changes" else MAX_BODY_BYTES
             )
             if content_length < 0 or content_length > limit:
                 await reject(413, "Запит завеликий.")
                 return
-            body = bytearray()
-            while True:
-                message = await receive()
-                if message["type"] == "http.disconnect":
-                    return
-                body.extend(message.get("body", b""))
-                if len(body) > limit:
-                    await reject(413, "Запит завеликий.")
-                    return
-                if not message.get("more_body", False):
-                    break
-
             expected_origin = settings.public_base_url or str(request.base_url).rstrip("/")
             origin = request.headers.get("origin")
             referer = request.headers.get("referer")
@@ -218,22 +223,41 @@ class SecurityMiddleware:
                 await reject(403, "Запит з іншого сайту заборонено.")
                 return
             submitted = request.headers.get("x-csrf-token", "")
-            if not submitted and request.headers.get("content-type", "").startswith(
-                "application/x-www-form-urlencoded"
-            ):
-                try:
-                    submitted = parse_form_body(bytes(body), request.headers["content-type"]).get(
-                        "csrf_token",
-                        "",
-                    )
-                except HTTPException as exc:
-                    await reject(exc.status_code, str(exc.detail))
-                    return
-            if not token_valid or not secrets.compare_digest(
-                submitted.encode(), cookie_token.encode()
+            content_type = request.headers.get("content-type", "")
+            needs_form_field = not submitted and (
+                content_type.split(";", 1)[0].strip().lower() == "application/x-www-form-urlencoded"
+            )
+            if not token_valid or (
+                not needs_form_field and not secrets.compare_digest(
+                    submitted.encode(), cookie_token.encode()
+                )
             ):
                 await reject(403, "Оновіть сторінку та повторіть дію.")
                 return
+
+            body = bytearray()
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    return
+                chunk = message.get("body", b"")
+                if len(body) + len(chunk) > limit:
+                    await reject(413, "Запит завеликий.")
+                    return
+                body.extend(chunk)
+                if not message.get("more_body", False):
+                    break
+
+            data = bytes(body)
+            if needs_form_field:
+                try:
+                    submitted = parse_form_body(data, content_type).get("csrf_token", "")
+                except HTTPException as exc:
+                    await reject(exc.status_code, str(exc.detail))
+                    return
+                if not secrets.compare_digest(submitted.encode(), cookie_token.encode()):
+                    await reject(403, "Оновіть сторінку та повторіть дію.")
+                    return
 
             sent = False
 
@@ -242,7 +266,7 @@ class SecurityMiddleware:
                 if sent:
                     return await receive()
                 sent = True
-                return {"type": "http.request", "body": bytes(body), "more_body": False}
+                return {"type": "http.request", "body": data, "more_body": False}
 
             await self.app(scope, receive_body, send_with_headers)
         else:

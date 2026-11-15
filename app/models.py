@@ -180,7 +180,8 @@ class ClosedDateCreate(ClosedDateBase):
     pass
 
 
-class ClosedDateRead(ClosedDateBase):
+class ClosedDateRead(SQLModel):
+    closed_on: date
     id: int
     created_at: datetime
     updated_at: datetime

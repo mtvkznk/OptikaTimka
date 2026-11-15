@@ -1,3 +1,4 @@
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -20,7 +21,13 @@ from app.models import (
     SecurityRateLimit,
     utc_now,
 )
-from app.security import GOOGLE_SESSION_PREFIX, SESSION_COOKIE_NAME, cookie_name, hash_session_token
+from app.security import (
+    GOOGLE_SESSION_PREFIX,
+    SESSION_COOKIE_NAME,
+    PathOnlyAccessLog,
+    cookie_name,
+    hash_session_token,
+)
 
 
 def booking(**changes: object) -> dict[str, object]:
@@ -196,6 +203,34 @@ def test_host_and_security_headers(raw_client: TestClient) -> None:
     assert "HttpOnly" in response.headers["set-cookie"]
     oauth_redirect = raw_client.get("/auth/google", follow_redirects=False)
     assert oauth_redirect.headers["Referrer-Policy"] == "no-referrer"
+
+
+def test_storefront_does_not_set_form_cookies(raw_client: TestClient) -> None:
+    for path in ("/", "/catalog", "/static/css/landing.css"):
+        response = raw_client.get(path)
+        assert response.status_code == 200
+        assert "set-cookie" not in response.headers
+    assert "optika_csrf=" in raw_client.get("/booking").headers["set-cookie"]
+
+
+def test_validation_response_keeps_fields_without_submitted_values(
+    anonymous_client: TestClient,
+) -> None:
+    response = anonymous_client.post("/api/appointments", json=booking(phone="invalid phone"))
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any(error["loc"] == ["body", "phone"] for error in errors)
+    assert all("input" not in error and "ctx" not in error for error in errors)
+    assert "invalid phone" not in response.text
+
+
+def test_access_log_keeps_path_and_status_without_query_parameters() -> None:
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0, '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1", "GET", "/admin/appointments?q=sample", "1.1", 200), None,
+    )
+    assert PathOnlyAccessLog().filter(record)
+    assert record.getMessage() == '127.0.0.1 - "GET /admin/appointments HTTP/1.1" 200'
 
 
 def test_production_has_secure_host_cookies(

@@ -64,8 +64,11 @@ see the administrator dashboard button in their Google-authenticated cabinet.
 - Google login requires a verified email, uses the stable Google `sub`, validates
   OAuth state, uses PKCE, and refuses provider redirects.
 - Production cookies are Secure, HttpOnly, and host-prefixed. Dynamic responses
-  use `Cache-Control: no-store`; CSP, frame restrictions, and other security headers
-  apply to responses. Production OpenAPI/Swagger/ReDoc endpoints are disabled.
+  use `Cache-Control: no-store`. Browsers can retain public catalog photos but
+  must revalidate them before reuse. CSP, frame restrictions, and other security
+  headers apply to responses. Production OpenAPI/Swagger/ReDoc endpoints are disabled.
+- Public closed-date responses omit internal administrator notes.
+- Production application access logs omit URL query strings.
 - Request bodies are limited to 64 KiB. The administrator's batch save accepts up
   to 2 MiB so it can include product photos. Photos are resized in the browser,
   validated and re-encoded on the server, and stored with the catalog in PostgreSQL.

@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import logging
 import re
 import secrets
 from datetime import date, datetime, time, timedelta
@@ -10,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -86,6 +88,7 @@ from app.security import (
     GOOGLE_SESSION_PREFIX,
     SESSION_COOKIE_NAME,
     CanonicalHostMiddleware,
+    PathOnlyAccessLog,
     SecurityMiddleware,
     cookie_name,
     get_customer_by_session,
@@ -99,6 +102,8 @@ from app.security import (
 from app.validation import normalize_email
 
 IS_PRODUCTION = settings.environment == "production"
+if IS_PRODUCTION:
+    logging.getLogger("uvicorn.access").addFilter(PathOnlyAccessLog())
 app = FastAPI(
     title=settings.app_name,
     docs_url=None if IS_PRODUCTION else "/docs",
@@ -125,6 +130,17 @@ async def integrity_error(request: Request, exc: IntegrityError) -> JSONResponse
     return JSONResponse(
         {"detail": "Цей час уже зайнятий або такі дані вже існують. Оновіть сторінку."},
         status_code=409,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # Keep field locations for the forms, without echoing the submitted values.
+    return JSONResponse(
+        {"detail": [
+            {key: error[key] for key in ("loc", "msg", "type")} for error in exc.errors()
+        ]},
+        status_code=422,
     )
 
 
@@ -208,10 +224,12 @@ def google_auth_enabled() -> bool:
 
 def ensure_seed_data(session: Session) -> None:
     # Defaults initialize empty tables. Administrators own their contents after that.
-    services = session.exec(select(BookingService.id).limit(1)).first() is None
-    slots = session.exec(select(AvailableTimeSlot.id).limit(1)).first() is None
+    has_services, has_slots = session.exec(select(
+        select(BookingService.id).exists(),
+        select(AvailableTimeSlot.id).exists(),
+    )).one()
     insert = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
-    if services:
+    if not has_services:
         session.execute(
             insert(BookingService)
             .values(DEFAULT_SERVICES)
@@ -219,7 +237,7 @@ def ensure_seed_data(session: Session) -> None:
                 index_elements=[BookingService.name],
             )
         )
-    if slots:
+    if not has_slots:
         session.execute(
             insert(AvailableTimeSlot)
             .values(DEFAULT_TIME_SLOTS)
@@ -227,7 +245,7 @@ def ensure_seed_data(session: Session) -> None:
                 index_elements=[AvailableTimeSlot.start_time],
             )
         )
-    if services or slots:
+    if not (has_services and has_slots):
         session.commit()
 
 
@@ -853,12 +871,19 @@ def photo_response(jpeg: bytes | None) -> Response:
 
 
 @app.get("/catalog/photos/{product_id}.jpg", response_class=Response)
-def public_catalog_photo(product_id: int, session: SessionDep) -> Response:
+def public_catalog_photo(request: Request, product_id: int, session: SessionDep) -> Response:
     jpeg = session.exec(
         select(ProductPhoto.jpeg).join(Product)
         .where(ProductPhoto.product_id == product_id, Product.is_active, visible_category())
     ).first()
-    return photo_response(jpeg)
+    response = photo_response(jpeg)
+    etag = f'"{hashlib.sha256(response.body).hexdigest()}"'
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
+    candidates = request.headers.get("if-none-match", "").split(",")
+    if any(tag.strip().removeprefix("W/") in {etag, "*"} for tag in candidates):
+        return Response(status_code=304, headers=headers)
+    response.headers.update(headers)
+    return response
 
 
 @admin_router.get("/catalog/photos/{product_id}.jpg", response_class=Response)
