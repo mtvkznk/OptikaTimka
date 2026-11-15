@@ -80,6 +80,8 @@ class CatalogCategory(SQLModel, table=True):
     slug: str = Field(primary_key=True, max_length=80)
     name: str = Field(max_length=80)
     is_removed: bool = Field(default=False, sa_column_kwargs={"server_default": text("false")})
+    is_purged: bool = Field(default=False, sa_column_kwargs={"server_default": text("false")})
+    sort_order: int | None = None
     updated_at: datetime = Field(default_factory=utc_now)
 
 

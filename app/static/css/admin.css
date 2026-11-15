@@ -568,6 +568,35 @@
   justify-self: start;
 }
 
+.admin-category-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.admin-product-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.45rem;
+}
+
+.admin-drag-handle {
+  display: grid;
+  place-items: center;
+  width: 1.65rem;
+  min-height: 2.55rem;
+  color: var(--admin-muted);
+  font-size: 1.15rem;
+  user-select: none;
+}
+
+.admin-drag-handle[draggable="true"] { cursor: grab; }
+[data-dragging] { opacity: 0.5; }
+[data-drop-position] { outline: 2px dashed var(--admin-accent); outline-offset: 2px; }
+
 .admin-product {
   grid-template-columns: minmax(8rem, 2fr) minmax(8rem, 1.3fr) minmax(6rem, 0.7fr) auto;
 }

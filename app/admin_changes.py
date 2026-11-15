@@ -7,6 +7,7 @@ from typing import Annotated, Any, Self
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, PositiveInt, StringConstraints, model_validator
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.booking import (
@@ -16,7 +17,13 @@ from app.booking import (
     minute_of,
     working_intervals,
 )
-from app.catalog import DEFAULT_CATEGORIES, category_names
+from app.catalog import (
+    DEFAULT_CATEGORIES,
+    active_products,
+    category_names,
+    category_records,
+    product_category,
+)
 from app.models import (
     Appointment,
     AppointmentStatus,
@@ -86,6 +93,17 @@ class ProductChange(BaseModel):
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ""
     price: Decimal = Field(ge=0, le=Decimal("21474836.47"), decimal_places=2)
     photo: str = Field(default="", max_length=MAX_PHOTO_PAYLOAD)
+
+
+class CatalogOrder[T](BaseModel):
+    previous: list[T] = Field(max_length=5000)
+    positions: list[T] = Field(max_length=5000)
+
+    def check(self, current: list[T]) -> None:
+        if self.previous != current or len(self.positions) != len(current) or (
+            set(self.positions) != set(current)
+        ):
+            raise HTTPException(409, "Порядок у каталозі змінився. Скиньте чернетку й перевірте список.")
 
 
 class ScheduleHours(BaseModel):
@@ -201,8 +219,11 @@ class AdminChanges(BaseModel):
     create_categories: list[CategoryCreate] = Field(default_factory=list, max_length=500)
     remove_categories: list[CategoryVersion] = Field(default_factory=list, max_length=500)
     restore_categories: list[CategoryVersion] = Field(default_factory=list, max_length=500)
+    purge_categories: list[CategoryVersion] = Field(default_factory=list, max_length=500)
+    category_order: CatalogOrder[CategorySlug] | None = None
     products: list[ProductChange] = Field(default_factory=list, max_length=500)
     remove_products: list[RowVersion] = Field(default_factory=list, max_length=500)
+    product_order: CatalogOrder[PositiveInt] | None = None
     time_slots: list[SlotChange] = Field(default_factory=list, max_length=500)
     work_schedule: WorkScheduleChange | None = None
     service_availability: list[ServiceAvailabilityChange] = Field(default_factory=list, max_length=500)
@@ -367,9 +388,10 @@ def apply_category_changes(
     for change in restorations:
         category = session.get(CatalogCategory, change.id)
         verify_version(category, change.version)
-        if not category.is_removed:
+        if not category.is_removed or category.is_purged:
             raise HTTPException(409, "Категорія вже доступна. Оновіть сторінку.")
         category.is_removed = False
+        category.sort_order = None
         category.updated_at = utc_now()
     if additions:
         names = {" ".join(name.casefold().split()) for name in category_names(session).values()}
@@ -410,10 +432,17 @@ def apply_product_changes(
         row.updated_at = utc_now()
         if row.image_url == product_photo_url(row.id):
             update_product_photo(session, row, None)
+    next_position = 0
+    if any(change.id is None for change in changes):
+        next_position = session.exec(
+            select(func.max(Product.sort_order)).where(Product.is_active)
+        ).one() or 0
     for change in changes:
         values = change.model_dump(include={"category", "name", "description"})
         values["price_cents"] = int(change.price * 100)
         if change.id is None:
+            next_position += 1
+            values["sort_order"] = next_position
             row = Product.model_validate(values)
             session.add(row)
         else:
@@ -422,6 +451,49 @@ def apply_product_changes(
             row.updated_at = utc_now()
         if change.photo:
             update_product_photo(session, row, photos.get(change.photo))
+
+
+def purge_categories(session: Session, removals: list[CategoryVersion]) -> None:
+    if len({change.id for change in removals}) != len(removals):
+        raise HTTPException(422, "Одну категорію змінено кілька разів.")
+    for change in removals:
+        category = session.get(CatalogCategory, change.id)
+        verify_version(category, change.version)
+        if not category.is_removed or category.is_purged:
+            raise HTTPException(409, "Категорія вже недоступна для видалення. Оновіть сторінку.")
+        if session.exec(select(Product.id).where(
+            Product.is_active, product_category() == change.id,
+        ).limit(1)).first() is not None:
+            raise HTTPException(
+                409, f"Спочатку перенесіть або видаліть товари категорії «{category.name}».",
+            )
+        # Retain only the identifier so the old address stays retired, including built-in categories.
+        category.is_purged = True
+        category.name = ""
+        category.sort_order = None
+        category.updated_at = utc_now()
+
+
+def save_category_order(session: Session, order: CatalogOrder[CategorySlug]) -> None:
+    records = category_records(session)
+    ranked = dict.fromkeys([*order.positions, *records])
+    position = 0
+    for slug in ranked:
+        row = records[slug]
+        if row is not None and row.is_removed:
+            continue
+        position += 1
+        if row is None:
+            session.add(CatalogCategory(slug=slug, name=DEFAULT_CATEGORIES[slug], sort_order=position))
+        else:
+            row.sort_order = position
+
+
+def save_product_order(session: Session, order: CatalogOrder[PositiveInt]) -> None:
+    products = {row.id: row for row in session.exec(active_products())}
+    ranked = dict.fromkeys([*order.positions, *products])
+    for position, product_id in enumerate((key for key in ranked if key in products), start=1):
+        products[product_id].sort_order = position
 
 
 def apply_closed_date_changes(
@@ -505,6 +577,14 @@ def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
         for payload in {change.photo for change in changes.products} - {"", "remove"}
     }
     lock_booking_writes(session)
+    if changes.category_order is not None:
+        changes.category_order.check(list(category_names(session)))
+    if changes.product_order is not None:
+        changes.product_order.check([row.id for row in session.exec(active_products())])
+    if {change.id for change in changes.purge_categories} & {
+        change.id for change in [*changes.remove_categories, *changes.restore_categories]
+    }:
+        raise HTTPException(422, "Одну категорію змінено кілька разів.")
     if changes.work_schedule is not None and (
         changes.time_slots or changes.remove_time_slots or changes.time_slot_order is not None
     ):
@@ -515,6 +595,11 @@ def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
         changes.create_categories,
     )
     apply_product_changes(session, changes.products, changes.remove_products, photos)
+    purge_categories(session, changes.purge_categories)
+    if changes.category_order is not None:
+        save_category_order(session, changes.category_order)
+    if changes.product_order is not None:
+        save_product_order(session, changes.product_order)
     apply_catalog_changes(
         session, BookingService, changes.services, changes.service_order, changes.remove_services,
     )

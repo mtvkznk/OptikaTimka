@@ -1,3 +1,4 @@
+{% from "admin_order.html" import order_buttons %}
 {% macro product_fields(product=none) %}
 {% set selected = product.category.lower().replace("_", "-") if product else "" %}
 <label class="admin-field">Назва товару
@@ -49,13 +50,16 @@
     </form>
   </details>
   <ul class="admin-pending admin-pending-categories" data-pending-for="create_categories" hidden></ul>
-  <div class="admin-category-grid">
+  <div class="admin-category-grid" data-order="category_order" data-catalog-order>
     {% for slug, category in categories.items() %}
     <form class="admin-editor" method="post" action="/admin/changes" data-admin-edit="categories" data-id="{{ slug }}" data-version="{{ category.version }}">
       <label class="admin-field">Назва категорії
         <input name="name" value="{{ category.name }}" maxlength="80" required />
       </label>
-      {{ remove_button(category.name) }}
+      <div class="admin-category-actions">
+        {{ order_buttons(category.name, draggable=true) }}
+        {{ remove_button(category.name) }}
+      </div>
     </form>
     {% else %}
     <p class="admin-list-empty">Категорій у каталозі немає.</p>
@@ -66,9 +70,12 @@
     <summary>Видалені категорії ({{ removed_categories | length }})</summary>
     <ul class="admin-pending">
       {% for slug, category in removed_categories.items() %}
-      <li>
+      <li data-removed-category="{{ slug }}">
         <span>{{ category.name }}</span>
-        <button type="button" class="admin-button" data-restore-category="{{ slug }}" data-version="{{ category.updated_at.isoformat() }}" data-label="{{ category.name }}">Відновити</button>
+        <div class="admin-category-actions">
+          <button type="button" class="admin-button" data-restore-category="{{ slug }}" data-version="{{ category.updated_at.isoformat() }}" data-label="{{ category.name }}">Відновити</button>
+          <button type="button" class="admin-button admin-danger" data-purge-category>Видалити остаточно</button>
+        </div>
       </li>
       {% endfor %}
     </ul>
@@ -83,9 +90,11 @@
     </form>
   </details>
   <ul class="admin-pending" data-pending-for="products" hidden></ul>
-  <div class="admin-edit-list">
+  <div class="admin-edit-list" data-order="product_order" data-catalog-order>
     {% for product in products %}
     {% set category = categories.get(product.category.lower().replace("_", "-")) %}
+    <div class="admin-product-row" data-order-id="{{ product.id }}">
+    {{ order_buttons(product.name, draggable=true) }}
     <details class="admin-product-card">
       <summary><strong>{{ product.name }}</strong><span>{{ category.name if category else 'Приховано з каталогу' }}</span></summary>
     <form class="admin-editor admin-product" method="post" action="/admin/changes" data-admin-edit="products" data-id="{{ product.id }}" data-version="{{ product.updated_at.isoformat() }}">
@@ -93,6 +102,7 @@
       <button class="admin-button admin-danger" type="button" data-remove data-label="{{ product.name }}" aria-label="Видалити: {{ product.name }}">Видалити</button>
     </form>
     </details>
+    </div>
     {% else %}
     <p class="admin-list-empty">Товарів поки немає.</p>
     {% endfor %}

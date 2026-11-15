@@ -5,7 +5,7 @@ const saveMessage = document.querySelector("[data-save-message]");
 const storageKey = "optika.admin.changes.v4";
 const blankDraft = (month = null) => ({
   edits: {}, additions: [], forms: {}, orders: {}, removals: {}, restorations: {}, days: {}, reason: "",
-  schedule: null, serviceAvailability: {}, availabilityScope: "", month,
+  schedule: null, serviceAvailability: {}, availabilityScope: "", purges: {}, month,
 });
 let draft = blankDraft();
 let saving = false;
@@ -137,7 +137,7 @@ renderCategoryOptions();
 function numberOfChanges() {
   return activeEdits().length + draft.additions.length + Object.keys(draft.forms).length
     + Object.keys(draft.orders).length + Object.keys(draft.removals).length
-    + Object.keys(draft.restorations).length
+    + Object.keys(draft.restorations).length + Object.keys(draft.purges).length
     + Object.keys(draft.days).length + Number(Boolean(draft.schedule))
     + activeServiceAvailability().reduce(
       (count, [, entry]) => count + Number(Boolean(entry.schedule)) + Object.keys(entry.days).length,
@@ -210,7 +210,7 @@ document.querySelectorAll("[data-admin-edit]").forEach((form) => {
     if (photo) photo.disabled = pending;
     remove.textContent = pending ? "Скасувати" : "Видалити";
     remove.setAttribute("aria-label", (pending ? "Скасувати видалення: " : "Видалити: ") + remove.dataset.label);
-    form.parentElement.dispatchEvent(new Event("admin-removals"));
+    form.parentElement.dispatchEvent(new Event("admin-removals", { bubbles: true }));
   };
   renderRemoval();
   remove.addEventListener("click", () => {
@@ -288,17 +288,36 @@ document.querySelectorAll("[data-admin-add]").forEach((form) => {
 
 document.querySelectorAll("[data-restore-category]").forEach((button) => {
   const id = button.dataset.restoreCategory;
+  const row = button.closest("[data-removed-category]");
+  const purge = row.querySelector("[data-purge-category]");
+  const identity = { id, version: button.dataset.version };
   const update = () => {
     const pending = Boolean(draft.restorations[id]);
+    const purging = Boolean(draft.purges[id]);
     button.textContent = pending ? "Скасувати" : "Відновити";
+    button.disabled = purging;
+    purge.disabled = pending;
+    purge.textContent = purging ? "Скасувати видалення" : "Видалити остаточно";
+    purge.setAttribute("aria-label",
+      (purging ? "Скасувати остаточне видалення: " : "Видалити остаточно: ") + button.dataset.label);
     button.setAttribute("aria-label",
       (pending ? "Скасувати відновлення: " : "Відновити: ") + button.dataset.label);
-    if (pending) button.closest("details").open = true;
+    if (pending || purging) button.closest("details").open = true;
   };
   update();
   button.addEventListener("click", () => {
     if (draft.restorations[id]) delete draft.restorations[id];
-    else draft.restorations[id] = { id, version: button.dataset.version };
+    else draft.restorations[id] = identity;
+    update();
+    persistDraft();
+  });
+  purge.addEventListener("click", () => {
+    if (draft.purges[id]) delete draft.purges[id];
+    else {
+      if (!window.confirm("Видалити категорію «" + button.dataset.label
+        + "» остаточно? Після збереження її не можна буде відновити.")) return;
+      draft.purges[id] = identity;
+    }
     update();
     persistDraft();
   });
@@ -381,14 +400,24 @@ document.querySelectorAll("[data-admin-photo]").forEach((editor) => {
 
 document.querySelectorAll("[data-order]").forEach((list) => {
   const orderKey = list.dataset.order;
-  const getRows = () => [...list.querySelectorAll("[data-id]")];
-  const movableRows = () => getRows().filter((row) => !row.hasAttribute("data-removing"));
-  const idsOf = (rows) => rows.map((row) => Number(row.dataset.id));
+  const rowSelector = "[data-id], [data-order-id]";
+  const catalog = list.hasAttribute("data-catalog-order");
+  const getRows = () => [...list.children].filter((node) => node.matches(rowSelector));
+  const rowOf = (target) => target.closest("[data-order-id]") ?? target.closest("[data-id]");
+  const movableRows = () => getRows().filter(
+    (row) => !row.hasAttribute("data-removing") && !row.querySelector("[data-removing]"),
+  );
+  const idOf = (row) => orderKey === "category_order" ? row.dataset.id
+    : Number(row.dataset.orderId ?? row.dataset.id);
+  const idsOf = (rows) => rows.map(idOf);
   const initial = idsOf(getRows());
   const pending = draft.orders[orderKey];
-  if (pending?.length === initial.length && pending.every((id) => initial.includes(id))) {
-    const rows = new Map(getRows().map((row) => [Number(row.dataset.id), row]));
-    list.append(...pending.map((id) => rows.get(id)));
+  const positions = catalog ? pending?.positions : pending;
+  if ((!catalog || matches(pending?.previous, initial)) &&
+    positions?.length === initial.length && new Set(positions).size === initial.length &&
+    positions.every((id) => initial.includes(id))) {
+    const rows = new Map(getRows().map((row) => [idOf(row), row]));
+    list.append(...positions.map((id) => rows.get(id)));
   }
 
   const syncButtons = () => {
@@ -397,28 +426,76 @@ document.querySelectorAll("[data-order]").forEach((list) => {
       const index = movable.indexOf(row);
       row.querySelector('[data-move="-1"]').disabled = index <= 0;
       row.querySelector('[data-move="1"]').disabled = index < 0 || index === movable.length - 1;
+      const handle = row.querySelector("[data-drag-handle]");
+      if (handle) handle.draggable = index >= 0 && movable.length > 1;
     });
   };
   syncButtons();
   list.addEventListener("admin-removals", syncButtons);
+  const rememberOrder = () => {
+    const order = idsOf(getRows());
+    if (matches(initial, order)) delete draft.orders[orderKey];
+    else draft.orders[orderKey] = catalog ? { previous: initial, positions: order } : order;
+    persistDraft();
+  };
+  const moveRow = (row, neighbor, up) => {
+    list.insertBefore(row, up ? neighbor : neighbor.nextSibling);
+    syncButtons();
+    rememberOrder();
+  };
   list.addEventListener("click", (event) => {
     const button = event.target.closest("[data-move]");
     if (!button) return;
-    const row = button.closest("[data-id]");
+    const row = rowOf(button);
     const up = button.dataset.move === "-1";
     const movable = movableRows();
     const neighbor = movable[movable.indexOf(row) + (up ? -1 : 1)];
     if (!neighbor) return;
 
-    if (up) list.insertBefore(row, neighbor);
-    else list.insertBefore(neighbor, row);
-    syncButtons();
+    moveRow(row, neighbor, up);
     (button.disabled ? row.querySelector("[data-move]:not(:disabled)") : button)?.focus();
+  });
 
-    const order = idsOf(getRows());
-    if (matches(initial, order)) delete draft.orders[orderKey];
-    else draft.orders[orderKey] = order;
-    persistDraft();
+  if (!catalog) return;
+  let dragged;
+  let target;
+  const clearTarget = () => {
+    if (target) delete target.dataset.dropPosition;
+    target = undefined;
+  };
+  list.addEventListener("dragstart", (event) => {
+    const handle = event.target.closest("[data-drag-handle]");
+    if (!handle?.draggable) return;
+    dragged = rowOf(handle);
+    dragged.dataset.dragging = "";
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(idOf(dragged)));
+  });
+  list.addEventListener("dragover", (event) => {
+    if (!dragged) return;
+    const row = rowOf(event.target);
+    const movable = movableRows();
+    const index = movable.indexOf(row);
+    clearTarget();
+    if (row === dragged || index < 0) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    target = row;
+    target.dataset.dropPosition = index < movable.indexOf(dragged) ? "before" : "after";
+  });
+  list.addEventListener("dragleave", (event) => {
+    if (!list.contains(event.relatedTarget)) clearTarget();
+  });
+  list.addEventListener("drop", (event) => {
+    if (!dragged || !target || !target.contains(event.target)) return;
+    event.preventDefault();
+    moveRow(dragged, target, target.dataset.dropPosition === "before");
+    clearTarget();
+  });
+  list.addEventListener("dragend", () => {
+    if (dragged) delete dragged.dataset.dragging;
+    dragged = undefined;
+    clearTarget();
   });
 });
 
@@ -617,6 +694,7 @@ function payloadOfDraft() {
     appointments: [], services: [], remove_services: [],
     categories: [], create_categories: [], remove_categories: [], products: [], remove_products: [],
     restore_categories: Object.values(draft.restorations),
+    purge_categories: Object.values(draft.purges),
     closed_days: closedDaysPayload(draft),
     service_availability: activeServiceAvailability()
       .filter(([, entry]) => entry.schedule || Object.keys(entry.days).length)

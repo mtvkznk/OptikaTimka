@@ -176,7 +176,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261114-time-columns"
-ADMIN_ASSET_VERSION = "20261114-compact-schedule"
+ADMIN_ASSET_VERSION = "20261115-catalog-order"
 LANDING_ASSET_VERSION = "20261115-service-cards"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -447,7 +447,8 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
             if row is None or not row.is_removed
         },
         "removed_categories": {
-            slug: row for slug, row in records.items() if row is not None and row.is_removed
+            slug: row for slug, row in records.items()
+            if row is not None and row.is_removed and not row.is_purged
         },
         "products": session.exec(active_products()).all(),
         "product_price": lambda product: Decimal(product.price_cents).scaleb(-2),

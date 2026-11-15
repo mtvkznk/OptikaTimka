@@ -18,7 +18,11 @@ def category_records(session: Session) -> dict[str, CatalogCategory | None]:
     categories.update(
         (row.slug, row) for row in sorted(rows.values(), key=lambda row: (row.name.casefold(), row.slug))
     )
-    return categories
+    return dict(sorted(
+        categories.items(),
+        key=lambda item: item[1].sort_order
+        if item[1] is not None and item[1].sort_order is not None else float("inf"),
+    ))
 
 
 def category_names(session: Session) -> dict[str, str]:

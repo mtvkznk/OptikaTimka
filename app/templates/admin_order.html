@@ -1,0 +1,7 @@
+{% macro order_buttons(name, draggable=false) %}
+<div class="admin-order" aria-label="Порядок у списку">
+  {% if draggable %}<span class="admin-drag-handle" data-drag-handle draggable="false" title="Перетягнути: {{ name }}" aria-hidden="true">⠿</span>{% endif %}
+  <button class="admin-button admin-button-small" type="button" data-move="-1" aria-label="{{ name }} — вище" title="Перемістити вище" disabled>↑</button>
+  <button class="admin-button admin-button-small" type="button" data-move="1" aria-label="{{ name }} — нижче" title="Перемістити нижче" disabled>↓</button>
+</div>
+{% endmacro %}

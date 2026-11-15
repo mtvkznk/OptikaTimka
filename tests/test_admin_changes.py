@@ -170,6 +170,51 @@ def test_new_category_and_its_products_share_one_save(
     assert "Оправа для бігу" in anonymous_client.get(url).text
 
 
+def test_catalog_order_and_permanent_removal_preserve_products(
+    client: TestClient, app_db: Engine,
+) -> None:
+    assert client.post("/admin/changes", json={"products": [
+        {"name": "First", "category": "frames", "price": 100},
+        {"name": "Second", "category": "sunglasses", "price": 200},
+    ]}).status_code == 200
+    first, second = client.get("/api/products").json()
+    categories = ["frames", "sunglasses", "contact-lenses", "kids-frames"]
+    changes = {
+        "category_order": {"previous": categories, "positions": categories[::-1]},
+        "product_order": {
+            "previous": [first["id"], second["id"]], "positions": [second["id"], first["id"]],
+        },
+    }
+    assert client.post("/admin/changes", json=changes).status_code == 200
+    assert [row["name"] for row in client.get("/api/products").json()] == ["Second", "First"]
+    assert re.findall(r'class="landing-category" href="/catalog/([^"]+)"', client.get("/").text) == (
+        categories[::-1]
+    )
+    assert client.post("/admin/changes", json=changes).status_code == 409
+
+    def category_version() -> dict:
+        with Session(app_db) as session:
+            row = session.get(CatalogCategory, "frames")
+            return {"id": row.slug, "version": row.updated_at.isoformat()}
+
+    assert client.post("/admin/changes", json={"remove_categories": [
+        category_version(),
+    ]}).status_code == 200
+    purge = {"purge_categories": [category_version()]}
+    assert client.post("/admin/changes", json=purge).status_code == 409
+    assert 'data-removed-category="frames"' in client.get("/admin").text
+    assert client.post("/admin/changes", json={**purge, "products": [{
+        "id": first["id"], "version": first["updated_at"], "name": first["name"],
+        "category": "sunglasses", "price": 100,
+    }]}).status_code == 200
+    assert client.get("/catalog/frames").status_code == 404
+    assert 'data-removed-category="frames"' not in client.get("/admin").text
+    assert client.post("/admin/changes", json={"restore_categories": [
+        category_version(),
+    ]}).status_code == 409
+    assert [row["name"] for row in client.get("/api/products").json()] == ["Second", "First"]
+
+
 def test_photo_visibility_follows_category_removal_and_restoration(
     client: TestClient, anonymous_client: TestClient, app_db: Engine,
 ) -> None:
