@@ -17,9 +17,9 @@
         <a class="brand-link landing-brand" href="/">
           {{ wordmark() }}
         </a>
-        {% set location = 'about' if request.url.path == '/' else 'catalog' %}
+        {% set location = none if request.url.path == '/' else 'catalog' %}
         <nav class="landing-location" aria-label="Розділи сайту">
-          {% for key, text in [('catalog', 'Каталог'), ('services', 'Послуги'), ('about', 'Про нас'), ('contacts', 'Контакти')] %}
+          {% for key, text in [('catalog', 'Каталог'), ('services', 'Послуги'), ('contacts', 'Контакти')] %}
           {% if key != 'catalog' or categories %}
           <a href="/#{{ key }}" data-location="{{ key }}"{% if location == key %} aria-current="location"{% endif %}>{{ text }}</a>
           {% endif %}
