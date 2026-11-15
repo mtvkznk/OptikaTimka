@@ -14,10 +14,11 @@
     <a class="landing-skip" href="#main">До вмісту</a>
     <header class="landing-header" data-landing-header>
       <div class="landing-container landing-header-inner">
+        {% set is_home = request.url.path == '/' %}
         <a class="brand-link landing-brand" href="/">
-          {{ wordmark() }}
+          {{ wordmark('Офтальмологія. Дитяча офтальмологія.' if is_home else none) }}
         </a>
-        {% set location = none if request.url.path == '/' else 'catalog' %}
+        {% set location = none if is_home else 'catalog' %}
         <nav class="landing-location" aria-label="Розділи сайту">
           {% for key, text in [('catalog', 'Каталог'), ('services', 'Послуги'), ('contacts', 'Контакти')] %}
           {% if key != 'catalog' or categories %}

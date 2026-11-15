@@ -69,6 +69,19 @@ body.landing-page {
   padding-block: 1.3rem;
 }
 
+.landing-brand:has(small) { align-items: baseline; }
+
+.landing-brand small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--landing-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.25;
+  letter-spacing: normal;
+  text-wrap: balance;
+}
+
 .landing-header .landing-button {
   justify-self: end;
   min-height: 3.25rem;
@@ -515,6 +528,10 @@ body.landing-page {
   .landing-book p { font-size: 1rem; }
   .landing-footer { margin-top: 2rem; }
   .landing-contact-grid { gap: 1.1rem 0.8rem; font-size: 0.9rem; }
+}
+
+@media (max-width: 22rem) {
+  .landing-brand:has(small) ~ .landing-button { padding-inline: 0.65rem; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
