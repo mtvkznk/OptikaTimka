@@ -36,6 +36,7 @@ from app.models import (
     Product,
     ServiceClosedDate,
     ServiceSchedule,
+    ServiceWeekdaySchedule,
     utc_now,
 )
 from app.product_photos import (
@@ -205,10 +206,18 @@ class ClosedDayChanges(BaseModel):
     reason: str = Field(default="", max_length=160)
 
 
+class WeekdayScheduleChange(BaseModel):
+    version: str = Field(min_length=64, max_length=64)
+    schedule: ScheduleHours | None
+
+
 class ServiceAvailabilityChange(BaseModel):
     id: PositiveInt
     schedule_version: str | None = Field(default=None, min_length=64, max_length=64)
     schedule: ScheduleHours | None = None
+    weekday_schedules: dict[Annotated[int, Field(ge=0, le=6)], WeekdayScheduleChange] = Field(
+        default_factory=dict, max_length=7,
+    )
     closed_days: ClosedDayChanges = Field(default_factory=ClosedDayChanges)
 
 
@@ -541,9 +550,28 @@ def apply_closed_date_changes(
         )
 
 
-def service_schedule_version(schedule: ServiceSchedule | None) -> str:
+ServiceHours = ServiceSchedule | ServiceWeekdaySchedule
+
+
+def service_schedule_version(schedule: ServiceHours | None) -> str:
     intervals = None if schedule is None else [tuple(interval) for interval in schedule.intervals]
     return hashlib.sha256(repr(intervals).encode("ascii")).hexdigest()
+
+
+def save_service_schedule(
+    session: Session, model: type[ServiceSchedule] | type[ServiceWeekdaySchedule], key: dict[str, int],
+    version: str, schedule: ScheduleHours | None,
+) -> None:
+    current = session.get(model, key)
+    if service_schedule_version(current) != version:
+        raise HTTPException(409, "Графік послуги вже змінили. Оновіть сторінку.")
+    if schedule is None:
+        if current is not None:
+            session.delete(current)
+    elif current is None:
+        session.add(model(**key, intervals=schedule.intervals()))
+    else:
+        current.intervals = schedule.intervals()
 
 
 def apply_service_availability(session: Session, changes: list[ServiceAvailabilityChange]) -> None:
@@ -556,18 +584,14 @@ def apply_service_availability(session: Session, changes: list[ServiceAvailabili
         if change.schedule is not None and change.schedule_version is None:
             raise HTTPException(422, "Оновіть сторінку перед зміною графіка послуги.")
         if change.schedule_version is not None:
-            current = session.get(ServiceSchedule, change.id)
-            if service_schedule_version(current) != change.schedule_version:
-                raise HTTPException(409, "Графік послуги вже змінили. Оновіть сторінку.")
-            if change.schedule is None:
-                if current is not None:
-                    session.delete(current)
-            else:
-                intervals = change.schedule.intervals()
-                if current is None:
-                    session.add(ServiceSchedule(service_id=change.id, intervals=intervals))
-                else:
-                    current.intervals = intervals
+            save_service_schedule(
+                session, ServiceSchedule, {"service_id": change.id}, change.schedule_version, change.schedule,
+            )
+        for weekday, edit in change.weekday_schedules.items():
+            save_service_schedule(
+                session, ServiceWeekdaySchedule, {"service_id": change.id, "weekday": weekday},
+                edit.version, edit.schedule,
+            )
         apply_closed_date_changes(session, [], change.closed_days, change.id)
 
 

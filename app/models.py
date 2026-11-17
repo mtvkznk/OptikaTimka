@@ -4,6 +4,7 @@ from enum import Enum
 from pydantic import EmailStr, field_validator, model_validator
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
     DateTime,
     Index,
@@ -199,6 +200,14 @@ class ClosedDateRead(SQLModel):
 
 class ServiceSchedule(SQLModel, table=True):
     service_id: int = Field(primary_key=True, foreign_key="bookingservice.id", ondelete="CASCADE")
+    intervals: list[tuple[int, int]] = Field(sa_type=JSON)
+
+
+class ServiceWeekdaySchedule(SQLModel, table=True):
+    __table_args__ = (CheckConstraint("weekday BETWEEN 0 AND 6", name="ck_service_schedule_weekday"),)
+
+    service_id: int = Field(primary_key=True, foreign_key="bookingservice.id", ondelete="CASCADE")
+    weekday: int = Field(primary_key=True)
     intervals: list[tuple[int, int]] = Field(sa_type=JSON)
 
 

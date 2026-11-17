@@ -83,6 +83,7 @@ from app.models import (
     ProductRead,
     ServiceClosedDate,
     ServiceSchedule,
+    ServiceWeekdaySchedule,
     utc_now,
 )
 from app.product_photos import product_photo_url
@@ -194,7 +195,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261117-booking-availability"
-ADMIN_ASSET_VERSION = "20261117-appointment-removal"
+ADMIN_ASSET_VERSION = "20261117-weekday-schedules"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -289,11 +290,41 @@ def get_active_time_slots(session: Session) -> list[AvailableTimeSlot]:
     )
 
 
-def service_working_intervals(session: Session, service_id: int) -> list[Interval]:
-    schedule = session.get(ServiceSchedule, service_id)
+def service_working_intervals(session: Session, service_id: int, day: date) -> list[Interval]:
+    schedule: ServiceWeekdaySchedule | ServiceSchedule | None = session.get(
+        ServiceWeekdaySchedule, (service_id, day.weekday()),
+    )
+    if schedule is None:
+        schedule = session.get(ServiceSchedule, service_id)
     if schedule is not None:
         return [tuple(interval) for interval in schedule.intervals]
     return working_intervals(get_active_time_slots(session))
+
+
+def weekday_schedules_by_service(
+    session: Session, service_ids: list[int],
+) -> dict[int, dict[int, ServiceWeekdaySchedule]]:
+    schedules: dict[int, dict[int, ServiceWeekdaySchedule]] = {}
+    for row in session.exec(
+        select(ServiceWeekdaySchedule).where(ServiceWeekdaySchedule.service_id.in_(service_ids))
+    ):
+        schedules.setdefault(row.service_id, {})[row.weekday] = row
+    return schedules
+
+
+def weekly_working_intervals(
+    default_intervals: list[Interval], schedule: ServiceSchedule | None,
+    overrides: dict[int, ServiceWeekdaySchedule],
+) -> list[list[Interval]]:
+    base = schedule.intervals if schedule is not None else default_intervals
+    return [overrides[day].intervals if day in overrides else base for day in range(7)]
+
+
+def bookable_weekdays(service: BookingService, week: list[list[Interval]]) -> int:
+    return service.weekdays_mask & sum(
+        1 << day for day, intervals in enumerate(week)
+        if any(end - start >= service.duration_minutes for start, end in intervals)
+    )
 
 
 def count_rows(session: Session, model: type[Any], *conditions: Any) -> int:
@@ -444,40 +475,38 @@ def diary_service(services: list[BookingService]) -> BookingService | None:
 
 
 def find_diary_day(
-    service: BookingService, closed_days: set[date], day: date, *,
+    weekday_mask: int, closed_days: set[date], day: date, *,
     step: int = 1, include_day: bool = True,
 ) -> date | None:
     first = day.toordinal() + (0 if include_day else step)
     stop = date.max.toordinal() + 1 if step > 0 else 0
     for ordinal in range(first, stop, step):
         candidate = date.fromordinal(ordinal)
-        if candidate not in closed_days and service.is_available_on(candidate):
+        if candidate not in closed_days and weekday_mask & (1 << candidate.weekday()):
             return candidate
     return None
 
 
 def appointment_diary(
     session: Session, requested_day: date, service: BookingService | None,
-    intervals: list[Interval], closed_days: set[date], *, now: datetime, window_end: date,
+    week: list[list[Interval]], closed_days: set[date], *, now: datetime, window_end: date,
 ) -> dict[str, Any]:
-    if service is None or not service.weekdays_mask or not any(
-        end - start >= service.duration_minutes for start, end in intervals
-    ):
+    if service is None or not (weekdays := bookable_weekdays(service, week)):
         return {"service": service, "date": None}
 
     today = now.date()
-    home_day = find_diary_day(service, closed_days, today)
-    day = home_day if requested_day == today else find_diary_day(service, closed_days, requested_day)
+    home_day = find_diary_day(weekdays, closed_days, today)
+    day = home_day if requested_day == today else find_diary_day(weekdays, closed_days, requested_day)
     if day is None:
-        day = find_diary_day(service, closed_days, requested_day, step=-1, include_day=False)
+        day = find_diary_day(weekdays, closed_days, requested_day, step=-1, include_day=False)
     if day is None:
         return {"service": service, "date": None}
 
     context = {
         "date": day,
         "weekday": WEEKDAY_NAMES[day.weekday()],
-        "previous": find_diary_day(service, closed_days, day, step=-1, include_day=False),
-        "next": find_diary_day(service, closed_days, day, include_day=False),
+        "previous": find_diary_day(weekdays, closed_days, day, step=-1, include_day=False),
+        "next": find_diary_day(weekdays, closed_days, day, include_day=False),
         "home_day": home_day,
         "service": service,
         "online_not_yet_open": day > window_end,
@@ -490,6 +519,7 @@ def appointment_diary(
         .order_by(Appointment.preferred_time, Appointment.id)
     ))
     duration = service.duration_minutes
+    intervals = week[day.weekday()]
     starts = {minute for start, end in intervals for minute in range(start, end, duration)}
     timed = []
     untimed = []
@@ -546,6 +576,7 @@ def admin_context(
             select(ServiceSchedule).where(ServiceSchedule.service_id.in_(service_ids))
         )
     }
+    weekday_schedules = weekday_schedules_by_service(session, service_ids)
     service_closed_days: dict[int, dict[str, Any]] = {}
     for item in session.exec(
         select(ServiceClosedDate).where(ServiceClosedDate.service_id.in_(service_ids))
@@ -555,10 +586,12 @@ def admin_context(
         }
     service = diary_service(services)
     day = diary_day or today
-    schedule = schedules.get(service.id) if service is not None else None
-    diary_intervals = schedule.intervals if schedule is not None else default_intervals
+    diary_week = []
     diary_closed_days = {item.closed_on for item in closed_dates}
     if service is not None:
+        diary_week = weekly_working_intervals(
+            default_intervals, schedules.get(service.id), weekday_schedules.get(service.id, {}),
+        )
         diary_closed_days.update(map(date.fromisoformat, service_closed_days.get(service.id, {})))
 
     return {
@@ -567,10 +600,12 @@ def admin_context(
         "admin_asset_version": ADMIN_ASSET_VERSION,
         "today": today,
         "diary": appointment_diary(
-            session, day, service, diary_intervals, diary_closed_days, now=now, window_end=window_end,
+            session, day, service, diary_week, diary_closed_days, now=now, window_end=window_end,
         ),
         "services": services,
         "weekdays": [(1 << index, label) for index, label in enumerate(WEEKDAY_LABELS)],
+        "weekday_names": WEEKDAY_NAMES,
+        "inherited_schedule_version": service_schedule_version(None),
         "all_weekdays": ALL_WEEKDAYS,
         "categories": {
             slug: {
@@ -595,6 +630,13 @@ def admin_context(
                 ),
                 "custom": service.id in schedules,
                 "version": service_schedule_version(schedules.get(service.id)),
+                "weekday_schedules": {
+                    day: {
+                        "schedule": schedule_for_admin(row.intervals),
+                        "version": service_schedule_version(row),
+                    }
+                    for day, row in weekday_schedules.get(service.id, {}).items()
+                },
                 "closed_days": service_closed_days.get(service.id, {}),
             }
             for service in services
@@ -908,11 +950,13 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
     ):
         closed_by_service.setdefault(service_id, []).append(day.isoformat())
     default_intervals = working_intervals(get_active_time_slots(session))
-    schedules = {row.service_id: row.intervals for row in session.exec(select(ServiceSchedule))}
-    bookable_services = {
-        service.id for service in services
-        if any(end - start >= service.duration_minutes
-               for start, end in schedules.get(service.id, default_intervals))
+    schedules = {row.service_id: row for row in session.exec(select(ServiceSchedule))}
+    weekday_schedules = weekday_schedules_by_service(session, [service.id for service in services])
+    service_weekdays = {
+        service.id: bookable_weekdays(service, weekly_working_intervals(
+            default_intervals, schedules.get(service.id), weekday_schedules.get(service.id, {}),
+        ))
+        for service in services
     }
 
     return templates.TemplateResponse(
@@ -924,7 +968,7 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
             "services": services,
             "confirmation_service_id": doctor.id if doctor is not None else None,
             "closed_by_service": closed_by_service,
-            "bookable_services": bookable_services,
+            "service_weekdays": service_weekdays,
             "booking_months": build_booking_calendar(session, today, window_end),
             "weekday_labels": WEEKDAY_LABELS,
             "offer_google_sign_in": (
@@ -1171,7 +1215,7 @@ def create_manual_appointment(
     duration = service.duration_minutes
     if not any(
         opens <= start and start + duration <= closes
-        for opens, closes in service_working_intervals(session, service.id)
+        for opens, closes in service_working_intervals(session, service.id, day)
     ):
         raise HTTPException(409, "Для прийому не вистачає часу до кінця робочого проміжку.")
     check_booking_overlap(session, day, start, duration)
@@ -1260,7 +1304,7 @@ def available_time_slots(
     booked = occupied_intervals(session, preferred_date)
     if booking_service is not None:
         return available_starts(
-            service_working_intervals(session, booking_service.id),
+            service_working_intervals(session, booking_service.id, preferred_date),
             booked, booking_service.duration_minutes, earliest,
         )
     # Keep returning configured slots to clients that do not supply a service.
@@ -1331,7 +1375,7 @@ def create_appointment(
         raise HTTPException(400, "Запис на цю послугу закритий на обрану дату.")
     if not any(
         opens <= start and start + duration <= closes
-        for opens, closes in service_working_intervals(session, service.id)
+        for opens, closes in service_working_intervals(session, service.id, day)
     ):
         raise HTTPException(400, "Для цієї послуги оберіть час у межах робочого графіка.")
     check_booking_overlap(session, day, start, duration)

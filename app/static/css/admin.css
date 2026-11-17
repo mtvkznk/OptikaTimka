@@ -649,6 +649,32 @@
   max-width: 43rem;
 }
 
+.admin-work-weekdays {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(4.55rem, 1fr));
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.admin-work-weekdays .admin-button {
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.3rem;
+}
+
+.admin-work-weekdays small {
+  color: var(--admin-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.admin-work-week .admin-button[aria-pressed="true"] {
+  background: #e2f2ea;
+  border-color: #83bba5;
+  color: var(--admin-accent);
+}
+
 .admin-availability-picker {
   max-width: 27rem;
   margin-bottom: 0.85rem;

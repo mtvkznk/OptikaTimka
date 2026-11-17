@@ -5,7 +5,7 @@ const saveMessage = document.querySelector("[data-save-message]");
 const storageKey = "optika.admin.changes.v4";
 const blankDraft = (month = null) => ({
   edits: {}, additions: [], forms: {}, orders: {}, removals: {}, restorations: {}, days: {}, reason: "",
-  schedule: null, serviceAvailability: {}, availabilityScope: "", purges: {}, month,
+  schedule: null, serviceAvailability: {}, availabilityScope: "", availabilityWeekday: "", purges: {}, month,
 });
 let draft = blankDraft();
 let saving = false;
@@ -217,7 +217,8 @@ function numberOfChanges() {
     + Object.keys(draft.restorations).length + Object.keys(draft.purges).length
     + Object.keys(draft.days).length + Number(Boolean(draft.schedule))
     + activeServiceAvailability().reduce(
-      (count, [, entry]) => count + Number(Boolean(entry.schedule)) + Object.keys(entry.days).length,
+      (count, [, entry]) => count + Number(Boolean(entry.schedule))
+        + Object.keys(entry.weekdaySchedules ?? {}).length + Object.keys(entry.days).length,
       0,
     );
 }
@@ -620,6 +621,7 @@ document.querySelectorAll("[data-order]").forEach((list) => {
 
 const scheduleForm = document.querySelector("[data-work-schedule]");
 const scopePicker = document.querySelector("[data-availability-scope]");
+const weekdayControl = scheduleForm?.querySelector("[data-work-weekday-control]");
 const serviceAvailability = scheduleForm ? JSON.parse(scheduleForm.dataset.serviceAvailability) : {};
 const availabilityPanel = scheduleForm?.closest(".admin-panel");
 const globalSchedule = scheduleForm ? JSON.parse(scheduleForm.dataset.workSchedule) : null;
@@ -632,10 +634,11 @@ function availabilityDraft() {
   return draft.serviceAvailability[id] ??= { schedule: null, days: {}, reason: "" };
 }
 
-function chooseAvailability(id) {
+function chooseAvailability(id, weekday = "") {
   scopePicker.value = id;
   if (scopePicker.selectedIndex < 0 || scopePicker.selectedOptions[0].disabled) scopePicker.value = "";
   draft.availabilityScope = scopePicker.value;
+  draft.availabilityWeekday = scopePicker.value && /^[0-6]$/.test(weekday) ? weekday : "";
   availabilityPanel.dispatchEvent(new Event("availability-scope"));
   persistDraft();
 }
@@ -673,6 +676,7 @@ if (scopePicker) {
       field.addEventListener("input", () => {
         sourceDays[index].checked = field.checked;
         sourceDays[index].dispatchEvent(new Event("input", { bubbles: true }));
+        availabilityPanel.dispatchEvent(new Event("available-weekdays"));
       });
     });
     weekdaysPanel.append(copy);
@@ -689,7 +693,9 @@ if (scheduleForm) {
   const template = scheduleForm.querySelector("[data-work-break]");
   const clear = scheduleForm.querySelector("[data-clear-schedule]");
   const custom = scheduleForm.querySelector("[data-custom-schedule]");
+  const customLabel = scheduleForm.querySelector("[data-custom-schedule-label]");
   const fields = scheduleForm.querySelector("[data-schedule-fields]");
+  const dayButtons = [...weekdayControl.querySelectorAll("[data-work-weekday]")];
 
   function addBreak(values) {
     const row = template.content.firstElementChild.cloneNode(true);
@@ -710,15 +716,57 @@ if (scheduleForm) {
     hours.breaks.forEach(addBreak);
   }
 
+  function scheduleSelection(weekday = draft.availabilityWeekday) {
+    const service = serviceAvailability[scopePicker.value];
+    const state = availabilityDraft();
+    const global = draft.schedule?.values ?? hoursOf(globalSchedule);
+    if (!service || !weekday) {
+      return { service, weekday: "", state, saved: service, pending: state.schedule, inherited: global };
+    }
+    const day = service.weekday_schedules[weekday];
+    const base = state.schedule;
+    const inherited = (base?.custom ?? service.custom)
+      ? base?.values ?? hoursOf(service.schedule) : global;
+    return {
+      service, weekday, state, inherited,
+      saved: { ...day, custom: Boolean(day), version: day?.version ?? scheduleForm.dataset.inheritedVersion },
+      pending: state.weekdaySchedules?.[weekday],
+    };
+  }
+
+  function effectiveHours({ saved, pending, inherited }) {
+    if (pending) return pending.custom ? pending.values : inherited;
+    return saved?.custom ? hoursOf(saved.schedule) : inherited;
+  }
+
+  function renderWeek() {
+    if (!scopePicker.value) return;
+    const enabled = weekdayFields(availabilityPanel.querySelector("[data-service-weekdays]"));
+    for (const button of dayButtons) {
+      const day = button.dataset.workWeekday;
+      button.setAttribute("aria-pressed", String(day === draft.availabilityWeekday));
+      if (!day) continue;
+      const selection = scheduleSelection(day);
+      const { start_time, end_time } = effectiveHours(selection);
+      const label = !enabled[Number(day)]?.checked ? "Вихідний"
+        : selection.pending?.valid === false ? "Перевірте час"
+        : start_time && end_time ? start_time + "–" + end_time : "Без годин";
+      button.querySelector("[data-day-hours]").textContent = label;
+      button.setAttribute("aria-label", button.dataset.weekdayName + ", " + label);
+    }
+  }
+
   function showScope() {
-    const saved = serviceAvailability[scopePicker.value];
-    const pending = availabilityDraft().schedule;
-    const inherited = draft.schedule?.values ?? hoursOf(globalSchedule);
-    custom.closest("label").hidden = !saved;
+    const { service, weekday, saved, pending, inherited } = scheduleSelection();
+    weekdayControl.hidden = !service;
+    custom.closest("label").hidden = !service;
+    customLabel.textContent = weekday ? "Власні години для цього дня" : "Власні години для цієї послуги";
     custom.checked = Boolean(pending?.custom ?? saved?.custom);
-    fields.disabled = Boolean(saved && !custom.checked);
-    showHours(fields.disabled ? inherited : pending?.values ?? hoursOf(saved?.schedule ?? globalSchedule));
+    fields.disabled = Boolean(service && !custom.checked);
+    const savedHours = saved?.schedule ? hoursOf(saved.schedule) : inherited;
+    showHours(fields.disabled ? inherited : pending?.values ?? savedHours);
     readSchedule();
+    renderWeek();
   }
 
   function readSchedule() {
@@ -748,26 +796,41 @@ if (scheduleForm) {
   }
 
   function rememberSchedule() {
-    const saved = serviceAvailability[scopePicker.value];
-    const state = availabilityDraft();
+    const { weekday, state, saved, pending } = scheduleSelection();
     const values = readSchedule();
     const same = saved
       ? custom.checked === saved.custom && (!custom.checked || matches(hoursOf(saved.schedule), values))
       : matches(hoursOf(globalSchedule), values);
-    state.schedule = same ? null : {
-      version: state.schedule?.version ?? saved?.version ?? globalSchedule.version,
+    const change = same ? null : {
+      version: pending?.version ?? saved?.version ?? globalSchedule.version,
       custom: custom.checked, values, valid: scheduleForm.checkValidity(),
     };
+    if (weekday) {
+      state.weekdaySchedules ??= {};
+      if (change) state.weekdaySchedules[weekday] = change;
+      else delete state.weekdaySchedules[weekday];
+    } else {
+      state.schedule = change;
+    }
+    renderWeek();
     persistDraft();
   }
 
   availabilityPanel.addEventListener("availability-scope", showScope);
+  availabilityPanel.addEventListener("available-weekdays", renderWeek);
+  dayButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      draft.availabilityWeekday = button.dataset.workWeekday;
+      showScope();
+      persistDraft();
+    });
+  });
   scheduleForm.addEventListener("input", (event) => {
     if (event.target === custom) {
       fields.disabled = !custom.checked;
-      const saved = serviceAvailability[scopePicker.value];
+      const { saved, inherited } = scheduleSelection();
       if (custom.checked && saved.custom) showHours(hoursOf(saved.schedule));
-      if (!custom.checked) showHours(draft.schedule?.values ?? hoursOf(globalSchedule));
+      if (!custom.checked) showHours(inherited);
     }
     rememberSchedule();
   });
@@ -816,10 +879,15 @@ function payloadOfDraft() {
     purge_categories: Object.values(draft.purges),
     closed_days: closedDaysPayload(draft),
     service_availability: activeServiceAvailability()
-      .filter(([, entry]) => entry.schedule || Object.keys(entry.days).length)
+      .filter(([, entry]) => entry.schedule || Object.keys(entry.weekdaySchedules ?? {}).length
+        || Object.keys(entry.days).length)
       .map(([id, entry]) => ({
         id: Number(id),
         closed_days: closedDaysPayload(entry),
+        weekday_schedules: Object.fromEntries(Object.entries(entry.weekdaySchedules ?? {})
+          .map(([weekday, change]) => [weekday, {
+            version: change.version, schedule: change.custom ? hoursPayload(change.values) : null,
+          }])),
         ...(entry.schedule && {
           schedule_version: entry.schedule.version,
           schedule: entry.schedule.custom ? hoursPayload(entry.schedule.values) : null,
@@ -839,17 +907,25 @@ function payloadOfDraft() {
 
 function clearDraft() {
   const scope = draft.availabilityScope;
+  const weekday = draft.availabilityWeekday;
   draft = blankDraft(draft.month);
   draft.availabilityScope = scope;
+  draft.availabilityWeekday = weekday;
   persistDraft();
 }
 
 saveButton.addEventListener("click", async () => {
   if (saving || processingPhotos.size || !numberOfChanges()) return;
-  const invalidSchedule = activeServiceAvailability().find(([, entry]) => entry.schedule?.valid === false);
-  if (draft.schedule?.valid === false || invalidSchedule) {
+  const invalidSchedule = [
+    ["", "", draft.schedule],
+    ...activeServiceAvailability().flatMap(([id, entry]) => [
+      [id, "", entry.schedule],
+      ...Object.entries(entry.weekdaySchedules ?? {}).map(([day, change]) => [id, day, change]),
+    ]),
+  ].find(([, , schedule]) => schedule?.valid === false);
+  if (invalidSchedule) {
     if (scheduleForm) {
-      chooseAvailability(draft.schedule?.valid === false ? "" : invalidSchedule[0]);
+      chooseAvailability(invalidSchedule[0], invalidSchedule[1]);
       revealEditor(scheduleForm);
     }
     scheduleForm?.reportValidity();
@@ -1030,7 +1106,7 @@ if (calendar) {
     reason.value = availabilityDraft().reason;
     renderCalendar();
   });
-  chooseAvailability(draft.availabilityScope);
+  chooseAvailability(draft.availabilityScope, draft.availabilityWeekday);
 }
 
 renderAdditions();

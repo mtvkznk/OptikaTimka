@@ -70,7 +70,7 @@
   <div class="admin-panel-heading">
     <div>
       <h2 id="slots-heading">Доступність для запису</h2>
-      <p>Власні години замінюють загальні години для вибраної послуги. Загальні закриті дати діють для всіх.</p>
+      <p>Оберіть послугу й день тижня. Дні без власних годин використовують типові години послуги або загальний графік. Загальні закриті дати діють для всіх.</p>
     </div>
   </div>
   <label class="admin-field admin-availability-picker">Редагувати
@@ -84,9 +84,20 @@
   <div data-service-weekdays></div>
   <h3 class="admin-availability-heading">Робочі години</h3>
   <form class="admin-editor admin-work-schedule" data-work-schedule='{{ work_schedule | tojson }}'
-    data-service-availability='{{ service_availability | tojson }}'>
+    data-service-availability='{{ service_availability | tojson }}' data-inherited-version="{{ inherited_schedule_version }}">
+    <div class="admin-work-week" data-work-weekday-control role="group" aria-label="Години за днями тижня" hidden>
+      <div class="admin-work-weekdays">
+        {% for _, label in weekdays %}
+        <button class="admin-button" type="button" data-work-weekday="{{ loop.index0 }}"
+                data-weekday-name="{{ weekday_names[loop.index0] }}" aria-pressed="false">
+          <span>{{ label }}</span><small data-day-hours></small>
+        </button>
+        {% endfor %}
+      </div>
+      <button class="admin-button admin-button-small" type="button" data-work-weekday="" aria-pressed="false">Типові години послуги</button>
+    </div>
     <label class="admin-custom-schedule" data-custom-schedule-control hidden>
-      <input type="checkbox" data-custom-schedule /> Власні години для цієї послуги
+      <input type="checkbox" data-custom-schedule /> <span data-custom-schedule-label>Власні години для цієї послуги</span>
     </label>
     <fieldset class="admin-schedule-fields" data-schedule-fields aria-label="Робочі години та перерви">
     <div class="admin-work-times">

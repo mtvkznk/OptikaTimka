@@ -30,7 +30,7 @@
               {% for service in services %}
               <label class="service-option" data-service-option>
                 <input type="radio" name="service" value="{{ service.name }}"
-                  data-weekdays="{{ service.weekdays_mask if service.id in bookable_services else 0 }}"
+                  data-weekdays="{{ service_weekdays[service.id] }}"
                   data-requires-confirmation="{{ 'true' if service.id == confirmation_service_id else 'false' }}"
                   data-closed-dates='{{ closed_by_service.get(service.id, []) | tojson }}' required />
                 <span class="service-option-text">

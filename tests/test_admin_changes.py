@@ -22,6 +22,7 @@ from app.models import (
     ClosedDate,
     ServiceClosedDate,
     ServiceSchedule,
+    ServiceWeekdaySchedule,
 )
 
 
@@ -618,6 +619,71 @@ def test_per_service_hours_and_closures_respect_shared_bookings(
     }]}).status_code == 200
     assert times(first, closed)[0] == "09:00:00"
     assert times(first, common_closed) == []
+
+
+def test_weekday_hours_apply_per_service_in_booking_and_notebook(
+    client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
+) -> None:
+    now = datetime(2026, 11, 17, 11, tzinfo=main.KYIV_TZ)
+    monkeypatch.setattr(main, "kyiv_now", lambda: now)
+    doctor, other = client.get("/api/booking-services").json()[:2]
+    with Session(app_db) as session:
+        session.add(ServiceSchedule(service_id=doctor["id"], intervals=[(600, 720)]))
+        session.commit()
+    missing = service_schedule_version(None)
+    hours = {
+        "2": {"version": missing, "schedule": {
+            "workday": {"start_time": "14:00", "end_time": "16:30"},
+            "breaks": [{"start_time": "15:00", "end_time": "16:00"}],
+        }},
+        "3": {"version": missing, "schedule": {
+            "workday": {"start_time": "11:00", "end_time": "12:00"},
+        }},
+        "4": {"version": missing, "schedule": {}},
+    }
+
+    def save(schedules: dict) -> int:
+        return client.post("/admin/changes", json={"service_availability": [{
+            "id": doctor["id"], "weekday_schedules": schedules,
+        }]}).status_code
+
+    def starts(service: dict, day: str) -> list[str]:
+        response = client.get("/api/availability", params={
+            "preferred_date": day, "service": service["name"],
+        })
+        assert response.status_code == 200
+        return [slot["start_time"] for slot in response.json()]
+
+    wednesday, thursday, friday = "2026-11-18", "2026-11-19", "2026-11-20"
+    assert save(hours) == 200
+    assert save({"7": hours["2"]}) == 422
+    assert starts(doctor, wednesday) == ["14:00:00", "14:30:00", "16:00:00"]
+    assert starts(doctor, thursday) == ["11:00:00", "11:30:00"]
+    assert starts(doctor, friday) == []
+    assert starts(doctor, "2026-11-23")[0] == "10:00:00"
+    assert starts(other, wednesday)[0] == "09:00:00"
+
+    assert f'value="{doctor["name"]}"\n                  data-weekdays="111"' in client.get("/booking").text
+    diary = client.get("/admin", params={"day": wednesday}).text
+    assert re.findall(r'data-notebook-start="([^"]+)"', diary) == ["14:00", "14:30", "16:00"]
+    assert 'day=2026-11-21#appointment-diary" aria-label="Наступний день"' in client.get(
+        "/admin", params={"day": thursday},
+    ).text
+    booking = {
+        "preferred_date": wednesday, "preferred_time": "15:00",
+        "name": "Test client", "phone": "+380501234567", "service": doctor["name"],
+    }
+    assert client.post("/api/appointments", json=booking).status_code == 400
+    assert client.post("/admin/appointments/manual", data=booking).status_code == 409
+    assert client.post("/api/appointments", json={**booking, "preferred_time": "14:00"}).status_code == 201
+    assert starts(doctor, wednesday) == ["14:30:00", "16:00:00"]
+
+    assert save({"2": {"version": missing, "schedule": None}}) == 409
+    with Session(app_db) as session:
+        version = service_schedule_version(session.get(ServiceWeekdaySchedule, (doctor["id"], 2)))
+    assert save({"2": {"version": version, "schedule": None}}) == 200
+    assert starts(doctor, wednesday)[0] == "10:00:00"
+    assert starts(doctor, thursday) == ["11:00:00", "11:30:00"]
 
 
 def test_batch_applies_booking_service_and_period_together(client: TestClient, app_db: Engine) -> None:
