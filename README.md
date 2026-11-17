@@ -105,6 +105,15 @@ SQLite preview databases, or debug settings to production.
 docker compose --env-file C:/Deploy/OptikaTimka/prod.env -f docker-compose.prod.yml up -d --build
 ```
 
+On the Windows host, the `Optika Timka Recovery` scheduled task runs
+`ops/windows/optika-recovery.ps1` every minute under the signed-in Docker
+Desktop account. Keep the installed copy in `C:/Program Files/OptikaTimkaRecovery`.
+The task can invoke the existing `Start Docker Desktop` task and recover the
+existing production containers. Recovery actions appear in the Windows Application
+event log under `Optika Timka Recovery`. Disable the recovery task during intentional
+Docker or site maintenance and re-enable it afterward. Docker Desktop recovery
+requires its Windows account to be signed in.
+
 `ENVIRONMENT=production` refuses weak/missing application secrets and a missing HTTPS
 origin. The container runs without root privileges,
 with a read-only filesystem and dropped capabilities. Runtime dependencies are
