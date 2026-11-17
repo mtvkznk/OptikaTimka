@@ -640,7 +640,8 @@ def test_service_duration_controls_booking_and_preserves_existing_reservations(
     assert client.post("/api/appointments", json=booking(
         service=short, preferred_time="14:00:00", expected_duration_minutes=33,
     )).status_code == 201
-    assert options(long)["14:33:00"] == "15:18:00"
+    assert "14:33:00" not in options(long)
+    assert options(long)["14:45:00"] == "15:30:00"
 
 
 @pytest.mark.parametrize(

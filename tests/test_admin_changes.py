@@ -10,6 +10,7 @@ from pytest import MonkeyPatch
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
+from app import main
 from app.admin_changes import service_schedule_version
 from app.config import settings
 from app.main import current_date
@@ -107,6 +108,31 @@ def test_phone_only_notebook_appointment_uses_doctor_service_duration(
         assert appointment.phone_normalized == "+380671234567"
         assert appointment.status == AppointmentStatus.confirmed and appointment.customer_id is None
         assert appointment.duration_minutes == 35 and appointment.service_id == service["id"]
+
+
+def test_client_slots_keep_service_hours_when_today_has_a_manual_booking(
+    client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
+) -> None:
+    now = datetime(2026, 11, 17, 18, 55, tzinfo=main.KYIV_TZ)
+    monkeypatch.setattr(main, "kyiv_now", lambda: now)
+    service = client.get("/api/booking-services").json()[0]
+    with Session(app_db) as session:
+        session.add(ServiceSchedule(service_id=service["id"], intervals=[(14 * 60, 21 * 60)]))
+        session.commit()
+
+    params = {"preferred_date": now.date().isoformat(), "service": service["name"]}
+
+    def starts() -> list[str]:
+        response = client.get("/api/availability", params=params)
+        assert response.status_code == 200
+        return [slot["start_time"] for slot in response.json()]
+
+    assert starts() == ["19:00:00", "19:30:00", "20:00:00", "20:30:00"]
+    result = client.post("/admin/appointments/manual", data={
+        "preferred_date": params["preferred_date"], "preferred_time": "19:10", "phone": "0671234567",
+    }, follow_redirects=False)
+    assert result.status_code == 303
+    assert starts() == ["20:00:00", "20:30:00"]
 
 
 def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:

@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from pytest import mark
 
 from app.main import ASSET_VERSION, KYIV_TZ, booking_window, current_date
 
@@ -104,7 +105,11 @@ def test_create_and_list_product(client: TestClient) -> None:
     assert client.get("/catalog/unknown").status_code == 404
 
 
-def test_create_appointment(client: TestClient) -> None:
+@mark.parametrize(("service", "expected_status"), [
+    ("Консультація офтальмолога", "new"),
+    ("Перевірка зору", "confirmed"),
+])
+def test_create_appointment(client: TestClient, service: str, expected_status: str) -> None:
     preferred_date = current_date() + timedelta(days=1)
     response = client.post(
         "/api/appointments",
@@ -112,7 +117,7 @@ def test_create_appointment(client: TestClient) -> None:
             "name": "Ivan Petrenko",
             "phone": "(098) 000-00-00",
             "email": "ivan@example.com",
-            "service": "Перевірка зору",
+            "service": service,
             "preferred_date": preferred_date.isoformat(),
             "preferred_time": "10:00:00",
             "message": "Need a consultation.",
@@ -120,7 +125,7 @@ def test_create_appointment(client: TestClient) -> None:
     )
 
     assert response.status_code == 201
-    assert response.json()["status"] == "new"
+    assert response.json()["status"] == expected_status
     assert response.json()["phone"] == "+380980000000"
 
 
@@ -265,12 +270,13 @@ def test_admin_can_update_appointment_status(client: TestClient) -> None:
             "name": "Serhii Melnyk",
             "phone": "+380630000000",
             "email": None,
-            "service": "Перевірка зору",
+            "service": "Консультація офтальмолога",
             "preferred_date": preferred_date.isoformat(),
             "preferred_time": "09:00:00",
             "message": "",
         },
     )
+    assert appointment_response.json()["status"] == "new"
     appointment_id = appointment_response.json()["id"]
 
     update_response = client.post(

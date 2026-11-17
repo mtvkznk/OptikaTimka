@@ -192,7 +192,7 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261114-time-columns"
+ASSET_VERSION = "20261117-booking-confirmation"
 ADMIN_ASSET_VERSION = "20261117-notebook-records"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
@@ -880,6 +880,7 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
     ensure_seed_data(session)
     today, window_end = booking_window()
     services = get_active_services(session)
+    doctor = diary_service(services)
     closed_by_service: dict[int, list[str]] = {}
     for service_id, day in session.exec(
         select(ServiceClosedDate.service_id, ServiceClosedDate.closed_on)
@@ -901,6 +902,7 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
             "app_name": settings.app_name,
             "asset_version": ASSET_VERSION,
             "services": services,
+            "confirmation_service_id": doctor.id if doctor is not None else None,
             "closed_by_service": closed_by_service,
             "bookable_services": bookable_services,
             "booking_months": build_booking_calendar(session, today, window_end),
@@ -1307,6 +1309,12 @@ def create_appointment(
     check_booking_overlap(session, day, start, duration)
 
     appointment = Appointment.model_validate(payload)
+    confirmation_service_id = settings.doctor_diary_service_id
+    if confirmation_service_id is None:
+        doctor = diary_service(get_active_services(session))
+        confirmation_service_id = doctor.id if doctor is not None else None
+    if service.id != confirmation_service_id:
+        appointment.status = AppointmentStatus.confirmed
     appointment.service_id = service.id
     appointment.duration_minutes = duration
     appointment.phone_normalized = payload.phone

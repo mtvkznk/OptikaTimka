@@ -85,16 +85,15 @@ def available_starts(
     working: list[Interval], occupied: list[Interval], duration: int, earliest: int,
 ) -> list[BookingTime]:
     options: list[BookingTime] = []
-    for start, end in working:
-        cursor = max(start, earliest)
-        for blocked_start, blocked_end in [*occupied, (end, end)]:
-            last_start = min(end, blocked_start) - duration
-            for candidate in range(cursor, last_start + 1, duration):
-                options.append(BookingTime(
-                    start_time=time(*divmod(candidate, 60)),
-                    end_time=time(*divmod(candidate + duration, 60)),
-                ))
-            cursor = max(cursor, blocked_end)
-            if cursor >= end:
-                break
+    for opens, closes in working:
+        # Round forward on the working interval's grid, including on the current day.
+        skipped_slots = max(0, (earliest - opens + duration - 1) // duration)
+        for start in range(opens + skipped_slots * duration, closes - duration + 1, duration):
+            end = start + duration
+            if any(start < blocked_end and blocked_start < end for blocked_start, blocked_end in occupied):
+                continue
+            options.append(BookingTime(
+                start_time=time(*divmod(start, 60)),
+                end_time=time(*divmod(end, 60)),
+            ))
     return options

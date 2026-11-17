@@ -31,6 +31,7 @@
               <label class="service-option" data-service-option>
                 <input type="radio" name="service" value="{{ service.name }}"
                   data-weekdays="{{ service.weekdays_mask if service.id in bookable_services else 0 }}"
+                  data-requires-confirmation="{{ 'true' if service.id == confirmation_service_id else 'false' }}"
                   data-closed-dates='{{ closed_by_service.get(service.id, []) | tojson }}' required />
                 <span class="service-option-text">
                   <span class="service-option-name">{{ service.name }}</span>
@@ -119,18 +120,18 @@
           <div class="booking-footer">
             <div class="booking-review">
               <p data-booking-selection hidden></p>
-              <p class="booking-hint">Ми зателефонуємо для підтвердження.</p>
+              <p class="booking-hint" data-booking-confirmation-hint hidden>Ми зателефонуємо для підтвердження.</p>
             </div>
-            <button class="submit-button" type="submit" disabled>Надіслати заявку</button>
+            <button class="submit-button" type="submit" disabled>Записатися</button>
             <p class="form-status" role="status" tabindex="-1" data-form-status></p>
             <noscript><p class="booking-hint">Для онлайн-запису увімкніть JavaScript у браузері.</p></noscript>
           </div>
         </form>
 
         <section class="booking-card booking-confirmation" data-booking-confirmation aria-labelledby="confirmation-title" hidden>
-          <h2 id="confirmation-title" tabindex="-1">Заявку прийнято</h2>
+          <h2 id="confirmation-title" tabindex="-1">Запис прийнято</h2>
           <p class="confirmation-details" data-confirmation-details></p>
-          <p class="booking-hint">Ми зателефонуємо для підтвердження.</p>
+          <p class="booking-hint" data-confirmation-hint hidden>Ми зателефонуємо для підтвердження.</p>
           <button class="secondary-button" type="button" data-new-booking>Створити ще один запис</button>
         </section>
       </section>

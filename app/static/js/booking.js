@@ -12,7 +12,10 @@ const timeOption = form.querySelector("[data-time-option]");
 const availabilityStatus = form.querySelector("[data-availability-status]");
 const availabilityRetry = form.querySelector("[data-availability-retry]");
 const selection = form.querySelector("[data-booking-selection]");
+const reviewHint = form.querySelector("[data-booking-confirmation-hint]");
 const confirmation = document.querySelector("[data-booking-confirmation]");
+const confirmationTitle = confirmation.querySelector("h2");
+const confirmationHint = confirmation.querySelector("[data-confirmation-hint]");
 const dateFormat = new Intl.DateTimeFormat("uk-UA", {
   day: "numeric",
   month: "long",
@@ -46,8 +49,11 @@ function bookingDetails() {
 }
 
 function updateSelection() {
+  const requiresConfirmation = checked("service")?.dataset.requiresConfirmation === "true";
   selection.textContent = bookingDetails();
   selection.hidden = !selection.textContent;
+  reviewHint.hidden = !requiresConfirmation;
+  submitButton.textContent = requiresConfirmation ? "Надіслати заявку" : "Записатися";
 }
 
 function setStatus(message, state = "") {
@@ -191,7 +197,7 @@ form.addEventListener("submit", async (event) => {
   const fieldsets = [...form.querySelectorAll("fieldset")];
   fieldsets.forEach((fieldset) => { fieldset.disabled = true; });
   submitButton.disabled = true;
-  setStatus("Надсилаємо заявку…");
+  setStatus("Зберігаємо запис…");
 
   try {
     const response = await fetch(form.action, {
@@ -228,16 +234,20 @@ form.addEventListener("submit", async (event) => {
       return;
     }
 
+    const appointment = await response.json();
+    const confirmed = appointment.status === "confirmed";
+    confirmationTitle.textContent = confirmed ? "Запис підтверджено" : "Заявку прийнято";
+    confirmationHint.hidden = confirmed;
     confirmation.querySelector("[data-confirmation-details]").textContent = details;
     form.hidden = true;
     confirmation.hidden = false;
-    confirmation.querySelector("h2").focus();
+    confirmationTitle.focus();
     form.reset();
     showMonth(0);
     refreshAvailability();
     setStatus("");
   } catch {
-    showError("Не вдалося надіслати заявку. Перевірте з’єднання та спробуйте ще раз.");
+    showError("Не вдалося зберегти запис. Перевірте з’єднання та спробуйте ще раз.");
   } finally {
     fieldsets.forEach((fieldset) => { fieldset.disabled = false; });
     submitButton.disabled = false;
