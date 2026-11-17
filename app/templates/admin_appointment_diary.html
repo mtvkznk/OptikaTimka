@@ -29,6 +29,7 @@
 {% endmacro %}
 <section class="admin-notebook" id="appointment-diary" aria-labelledby="diary-heading">
   <header class="admin-notebook-header">
+    {% if diary.date %}
     <nav class="admin-notebook-nav" aria-label="Гортання щоденника">
       {% if diary.previous %}
       <a class="admin-button" href="{{ diary_url(diary.previous) }}" aria-label="Попередній день">←</a>
@@ -41,19 +42,20 @@
       <a class="admin-button" href="{{ diary_url(diary.next) }}" aria-label="Наступний день">→</a>
       {% else %}<span></span>{% endif %}
     </nav>
+    {% else %}
+    <div class="admin-notebook-date"><h1 id="diary-heading">Записи</h1></div>
+    {% endif %}
     {% if diary.service %}
     <p class="admin-notebook-service">{{ diary.service.name }}</p>
     {% endif %}
   </header>
-  {% if diary.service %}
-  {% if diary.date != today %}
+  {% if diary.date %}
+  {% if diary.home_day and diary.date != diary.home_day %}
   <div class="admin-notebook-actions">
-    <a class="admin-button" href="{{ diary_url(today) }}">Сьогодні</a>
+    <a class="admin-button" href="{{ diary_url(diary.home_day) }}">{{ "Сьогодні" if diary.home_day == today else "Найближчий робочий день" }}</a>
   </div>
   {% endif %}
-  {% if diary.online_closed %}
-  <p class="admin-notebook-note">Онлайн-запис на цей день закритий.</p>
-  {% elif diary.online_not_yet_open %}
+  {% if diary.online_not_yet_open %}
   <p class="admin-notebook-note">Онлайн-запис на цей день ще не відкрився.</p>
   {% endif %}
   {% if diary.rows or diary.untimed %}
@@ -102,6 +104,8 @@
     </label>
     <p class="admin-notebook-note" data-manual-feedback role="status"></p>
   </form>
+  {% elif diary.service %}
+  <p class="admin-notebook-note">Для огляду лікаря немає робочих днів. Перевірте розділ «Послуги й графік».</p>
   {% else %}
   <p class="admin-notebook-note">Послугу для щоденника не знайдено. Перевірте, що огляд лікаря є серед активних послуг.</p>
   {% endif %}

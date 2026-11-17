@@ -112,6 +112,52 @@ def test_phone_only_notebook_appointment_uses_doctor_service_duration(
         assert appointment.duration_minutes == 35 and appointment.service_id == service["id"]
 
 
+def test_notebook_skips_days_closed_for_the_doctor(
+    client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
+) -> None:
+    now = datetime(2026, 11, 19, 9, tzinfo=main.KYIV_TZ)
+    monkeypatch.setattr(main, "kyiv_now", lambda: now)
+    doctor, other = client.get("/api/booking-services").json()[:2]
+    with Session(app_db) as session:
+        service = session.get(BookingService, doctor["id"])
+        service.weekdays_mask = 0b111  # Monday to Wednesday.
+        session.add_all([
+            ServiceClosedDate(service_id=doctor["id"], closed_on=date(2026, 11, 18)),
+            ServiceClosedDate(service_id=other["id"], closed_on=date(2026, 11, 23)),
+            ClosedDate(closed_on=date(2026, 11, 24)),
+            Appointment(
+                name="Existing visit on closed day", phone="+380980000001",
+                service=doctor["name"], service_id=doctor["id"],
+                preferred_date=date(2026, 11, 18), preferred_time=time(10),
+            ),
+        ])
+        session.commit()
+
+    for path in ("/admin", "/admin?day=2026-11-18"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert '<time datetime="2026-11-23">23.11.2026</time>' in response.text
+        assert 'day=2026-11-17#appointment-diary" aria-label="Попередній день"' in response.text
+        assert 'day=2026-11-25#appointment-diary" aria-label="Наступний день"' in response.text
+        assert "Existing visit on closed day" not in response.text
+
+    previous = client.get("/admin?day=2026-11-17").text
+    assert 'day=2026-11-23#appointment-diary">Найближчий робочий день' in previous
+    assert "Existing visit on closed day" in client.get("/admin/appointments?day=2026-11-18").text
+    assert client.post("/admin/appointments/manual", data={
+        "preferred_date": "2026-11-24", "preferred_time": "10:00", "phone": "0671234567",
+    }).status_code == 409
+
+    with Session(app_db) as session:
+        service = session.get(BookingService, doctor["id"])
+        service.weekdays_mask = 0
+        session.commit()
+    html = client.get("/admin").text
+    assert "Для огляду лікаря немає робочих днів." in html
+    assert "Гортання щоденника" not in html and "data-notebook-start=" not in html
+    assert 'href="/admin/appointments">Усі записи' in html
+
+
 def test_notebook_and_online_form_share_future_service_slots(
     client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
 ) -> None:

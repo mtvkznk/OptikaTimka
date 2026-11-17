@@ -443,22 +443,46 @@ def diary_service(services: list[BookingService]) -> BookingService | None:
     return None
 
 
+def find_diary_day(
+    service: BookingService, closed_days: set[date], day: date, *,
+    step: int = 1, include_day: bool = True,
+) -> date | None:
+    first = day.toordinal() + (0 if include_day else step)
+    stop = date.max.toordinal() + 1 if step > 0 else 0
+    for ordinal in range(first, stop, step):
+        candidate = date.fromordinal(ordinal)
+        if candidate not in closed_days and service.is_available_on(candidate):
+            return candidate
+    return None
+
+
 def appointment_diary(
-    session: Session, day: date, service: BookingService | None,
-    intervals: list[Interval], online_closed: bool, *, now: datetime, window_end: date,
+    session: Session, requested_day: date, service: BookingService | None,
+    intervals: list[Interval], closed_days: set[date], *, now: datetime, window_end: date,
 ) -> dict[str, Any]:
+    if service is None or not service.weekdays_mask or not any(
+        end - start >= service.duration_minutes for start, end in intervals
+    ):
+        return {"service": service, "date": None}
+
+    today = now.date()
+    home_day = find_diary_day(service, closed_days, today)
+    day = home_day if requested_day == today else find_diary_day(service, closed_days, requested_day)
+    if day is None:
+        day = find_diary_day(service, closed_days, requested_day, step=-1, include_day=False)
+    if day is None:
+        return {"service": service, "date": None}
+
     context = {
         "date": day,
         "weekday": WEEKDAY_NAMES[day.weekday()],
-        "previous": day - timedelta(days=1) if day > date.min else None,
-        "next": day + timedelta(days=1) if day < date.max else None,
+        "previous": find_diary_day(service, closed_days, day, step=-1, include_day=False),
+        "next": find_diary_day(service, closed_days, day, include_day=False),
+        "home_day": home_day,
         "service": service,
-        "online_closed": online_closed,
         "online_not_yet_open": day > window_end,
         "return_url": f"/admin?day={day.isoformat()}#appointment-diary",
     }
-    if service is None:
-        return context
 
     appointments = list(session.exec(
         select(Appointment)
@@ -533,12 +557,9 @@ def admin_context(
     day = diary_day or today
     schedule = schedules.get(service.id) if service is not None else None
     diary_intervals = schedule.intervals if schedule is not None else default_intervals
-    online_closed = service is not None and (
-        not service.is_available_on(day)
-        or day.isoformat() in service_closed_days.get(service.id, {})
-        or any(item.closed_on == day for item in closed_dates)
-        or not diary_intervals
-    )
+    diary_closed_days = {item.closed_on for item in closed_dates}
+    if service is not None:
+        diary_closed_days.update(map(date.fromisoformat, service_closed_days.get(service.id, {})))
 
     return {
         "request": request,
@@ -546,7 +567,7 @@ def admin_context(
         "admin_asset_version": ADMIN_ASSET_VERSION,
         "today": today,
         "diary": appointment_diary(
-            session, day, service, diary_intervals, online_closed, now=now, window_end=window_end,
+            session, day, service, diary_intervals, diary_closed_days, now=now, window_end=window_end,
         ),
         "services": services,
         "weekdays": [(1 << index, label) for index, label in enumerate(WEEKDAY_LABELS)],
@@ -1141,6 +1162,12 @@ def create_manual_appointment(
     service = diary_service(get_active_services(session))
     if service is None:
         raise HTTPException(409, "Огляд лікаря зараз недоступний для запису.")
+    if (
+        not service.is_available_on(day)
+        or service_is_closed(session, service.id, day)
+        or session.exec(select(ClosedDate.id).where(ClosedDate.closed_on == day)).first() is not None
+    ):
+        raise HTTPException(409, "Цей день закритий для запису на огляд лікаря.")
     duration = service.duration_minutes
     if not any(
         opens <= start and start + duration <= closes
