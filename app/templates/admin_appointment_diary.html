@@ -3,11 +3,11 @@
   {% set visit = row.appointment %}
   <div class="admin-notebook-visit">
     <div class="admin-notebook-client">
-      <strong>{{ visit.name or "Без імені" }}</strong>
+      {% if visit.name %}<strong>{{ visit.name }}</strong>{% endif %}
       {% if visit.phone_normalized %}
       <a href="tel:{{ visit.phone_normalized }}">{{ visit.phone }}</a>
       {% elif visit.phone %}<span>{{ visit.phone }}</span>{% endif %}
-      {% if row.end_time %}<small>до {{ row.end_time }}</small>{% endif %}
+      {% if visit.preferred_time is not none %}<small>{{ visit.duration_minutes }} хв</small>{% endif %}
       {% if visit.message %}
       <details class="admin-comment">
         <summary>Коментар</summary>
@@ -46,31 +46,11 @@
     {% endif %}
   </header>
   {% if diary.service %}
+  {% if diary.date != today %}
   <div class="admin-notebook-actions">
-    <details class="admin-notebook-editor" id="manual-appointment">
-      <summary>Додати запис</summary>
-      <form class="admin-notebook-form" action="/admin/appointments/manual" method="post" data-manual-appointment>
-        {% include "csrf_field.html" %}
-        <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
-        <input type="hidden" name="service_id" value="{{ diary.service.id }}" />
-        <label class="admin-field">Ім’я та прізвище
-          <input name="name" />
-        </label>
-        <label class="admin-field">Телефон або контакт
-          <input name="phone" />
-        </label>
-        <label class="admin-field">Початок
-          <input type="time" name="preferred_time" required />
-        </label>
-        <label class="admin-field">Кінець
-          <input type="time" name="end_time" required />
-        </label>
-        <button class="admin-button admin-primary" type="submit">Додати до розкладу</button>
-        <p class="admin-notebook-note" data-manual-feedback role="status"></p>
-      </form>
-    </details>
-    {% if diary.date != today %}<a class="admin-button" href="{{ diary_url(today) }}">Сьогодні</a>{% endif %}
+    <a class="admin-button" href="{{ diary_url(today) }}">Сьогодні</a>
   </div>
+  {% endif %}
   {% if diary.online_closed %}<p class="admin-notebook-note">Онлайн-запис на цей день закритий.</p>{% endif %}
   {% if diary.rows or diary.untimed %}
   <ul class="admin-notebook-lines" aria-label="Записи на вибраний день">
@@ -83,10 +63,13 @@
           {% if row.doctor_occupied %}
           <span class="admin-notebook-muted">Прийом триває</span>
           {% elif row.other_occupied %}
-          <span class="admin-notebook-muted">Зайнято іншою послугою</span>
-          {% elif row.suggested_end %}
+          <span class="admin-notebook-muted">Зайнято</span>
+          {% elif row.can_book %}
           <button class="admin-notebook-slot" type="button" data-notebook-start="{{ row.start }}"
-                  data-notebook-end="{{ row.suggested_end }}" aria-label="Додати запис на {{ row.start }}">+</button>
+                  aria-controls="manual-appointment" aria-expanded="false"
+                  aria-label="Додати запис на {{ row.start }}" title="Додати запис на {{ row.start }}">+</button>
+          {% elif row.inside_schedule %}
+          <span class="admin-notebook-muted">Замало часу для прийому</span>
           {% else %}
           <span class="admin-notebook-muted">Поза графіком</span>
           {% endif %}
@@ -102,6 +85,19 @@
     {% endfor %}
   </ul>
   {% endif %}
+  <form class="admin-notebook-form" id="manual-appointment" action="/admin/appointments/manual"
+        method="post" data-manual-appointment hidden>
+    {% include "csrf_field.html" %}
+    <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
+    <input type="hidden" name="preferred_time" />
+    <label class="admin-field">Ім’я та прізвище (необов’язково)
+      <input name="name" />
+    </label>
+    <label class="admin-field">Номер телефону
+      <input type="tel" name="phone" />
+    </label>
+    <p class="admin-notebook-note" data-manual-feedback role="status"></p>
+  </form>
   {% else %}
   <p class="admin-notebook-note">Послугу для щоденника не знайдено. Перевірте, що огляд лікаря є серед активних послуг.</p>
   {% endif %}

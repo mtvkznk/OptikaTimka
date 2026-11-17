@@ -193,7 +193,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261114-time-columns"
-ADMIN_ASSET_VERSION = "20261117-doctor-notebook"
+ADMIN_ASSET_VERSION = "20261117-notebook-quick-entry"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -352,10 +352,6 @@ def build_appointment_rows(appointments: list[Appointment]) -> list[dict[str, An
             "appointment": appointment,
             "status_value": status_value(appointment),
             "status_label": status_label(appointment.status),
-            "end_time": (
-                format_minute(minute_of(appointment.preferred_time) + appointment.duration_minutes)
-                if appointment.preferred_time is not None else None
-            ),
         }
         for appointment in appointments
     ]
@@ -467,7 +463,10 @@ def appointment_diary(
         .where(Appointment.status != AppointmentStatus.canceled, Appointment.preferred_date == day)
         .order_by(Appointment.preferred_time, Appointment.id)
     ))
-    boundaries = {minute for start, end in intervals for minute in (*range(start, end, 30), end)}
+    duration = service.duration_minutes
+    boundaries = {
+        minute for start, end in intervals for minute in (*range(start, end, duration), end)
+    }
     timed = []
     untimed = []
     for appointment in appointments:
@@ -493,16 +492,17 @@ def appointment_diary(
         doctor_occupied = any(s <= start < e and doctor for s, e, doctor, _ in timed)
         other_occupied = any(s <= start < e and not doctor for s, e, doctor, _ in timed)
         working_end = next((hi for lo, hi in intervals if lo <= start < hi), None)
-        suggested_end = None
+        can_book = False
         if working_end is not None and not (doctor_occupied or other_occupied):
             next_appointment = next((s for s, _, _, _ in timed if s > start), working_end)
-            suggested_end = format_minute(min(start + service.duration_minutes, working_end, next_appointment))
+            can_book = start + duration <= min(working_end, next_appointment)
         rows.append({
             "start": format_minute(start),
             "visits": build_appointment_rows(appointments_here),
             "doctor_occupied": doctor_occupied,
             "other_occupied": other_occupied,
-            "suggested_end": suggested_end,
+            "inside_schedule": working_end is not None,
+            "can_book": can_book,
         })
     return {**context, "rows": rows, "untimed": build_appointment_rows(untimed)}
 
@@ -1130,21 +1130,20 @@ def create_manual_appointment(
         raise HTTPException(422, "Перевірте символи в імені та контакті.")
     day = form_date(form_data, "preferred_date")
     start_time = form_time(form_data, "preferred_time")
-    end_time = form_time(form_data, "end_time")
-    if any(value.tzinfo or value.second or value.microsecond for value in (start_time, end_time)):
+    if start_time.tzinfo or start_time.second or start_time.microsecond:
         raise HTTPException(422, "Вкажіть час у годинах і хвилинах.")
     start = minute_of(start_time)
-    duration = (minute_of(end_time) or 24 * 60) - start
-    if duration <= 0:
-        raise HTTPException(422, "Час завершення має бути пізнішим за час початку.")
-    service_id = form_int(form_data, "service_id")
-    if not 0 < service_id <= 2_147_483_647:
-        raise HTTPException(422, "Виберіть активну послугу.")
 
     lock_booking_writes(session)
-    service = session.get(BookingService, service_id)
-    if service is None or not service.is_active:
-        raise HTTPException(422, "Виберіть активну послугу.")
+    service = diary_service(get_active_services(session))
+    if service is None:
+        raise HTTPException(409, "Огляд лікаря зараз недоступний для запису.")
+    duration = service.duration_minutes
+    if not any(
+        opens <= start and start + duration <= closes
+        for opens, closes in service_working_intervals(session, service.id)
+    ):
+        raise HTTPException(409, "Для прийому не вистачає часу до кінця робочого проміжку.")
     check_booking_overlap(session, day, start, duration)
     session.add(Appointment(
         name=name, phone=phone, phone_normalized=normalize_phone(phone),

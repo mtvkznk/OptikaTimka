@@ -59,48 +59,54 @@ def test_doctor_notebook_orders_the_day_without_showing_other_clients(
     assert agenda.index("Earlier in the diary") < agenda.index("Later in the diary")
     assert "Canceled visit" not in agenda and "Visit on another day" not in agenda
     assert "Visit for another service" not in agenda
-    assert "Зайнято іншою послугою" in agenda
+    assert ">Зайнято<" in agenda and "іншою послугою" not in agenda
     assert "Прийом триває" in agenda
     assert "Updated diary service" in agenda
-    assert 'data-notebook-start="11:00"' in agenda and 'data-notebook-end="11:10"' in agenda
+    assert 'data-notebook-start="11:00"' not in agenda  # The ten-minute gap is too short.
+    assert 'data-notebook-start="09:00"' in agenda
+    assert 'name="service_id"' not in agenda and 'name="end_time"' not in agenda
     assert 'day=2026-11-30#appointment-diary' in agenda
     assert 'day=2026-12-02#appointment-diary' in agenda
 
 
-def test_manual_appointment_reserves_public_availability(
+def test_phone_only_notebook_appointment_uses_doctor_service_duration(
     client: TestClient, anonymous_client: TestClient, app_db: Engine,
 ) -> None:
     day = (current_date() + timedelta(days=2)).isoformat()
     services = anonymous_client.get("/api/booking-services").json()
     service, other_service = services[:2]
+    with Session(app_db) as session:
+        doctor = session.get(BookingService, service["id"])
+        doctor.duration_minutes = 35
+        session.commit()
     request = {
-        "name": "Test client " * 18, "phone": "Contact from the paper diary " * 5,
-        "preferred_date": day, "preferred_time": "10:10", "end_time": "11:47",
-        "service_id": str(service["id"]),
+        "phone": "067 123 45 67",
+        "preferred_date": day, "preferred_time": "10:10",
     }
     endpoint = "/admin/appointments/manual"
     assert anonymous_client.post(endpoint, data=request).status_code == 401
-    result = client.post(endpoint, data=request, follow_redirects=False)
+    result = client.post(endpoint, data={
+        **request, "service_id": str(other_service["id"]), "end_time": "11:47",
+    }, follow_redirects=False)
     assert result.status_code == 303
     assert result.headers["location"] == f"/admin?day={day}#appointment-diary"
-    assert client.post(endpoint, data={
-        **request, "preferred_time": "10:35", "service_id": str(other_service["id"]),
-    }).status_code == 409
-    assert client.post(endpoint, data={**request, "end_time": "10:00"}).status_code == 422
+    assert client.post(endpoint, data={**request, "preferred_time": "10:35"}).status_code == 409
+    assert client.post(endpoint, data={**request, "preferred_time": "12:35"}).status_code == 409
+    assert client.post(endpoint, data={**request, "phone": ""}).status_code == 422
 
     slots = anonymous_client.get("/api/availability", params={
         "preferred_date": day, "service": other_service["name"],
     }).json()
     assert slots and all(
-        slot["end_time"] <= "10:10:00" or slot["start_time"] >= "11:47:00" for slot in slots
+        slot["end_time"] <= "10:10:00" or slot["start_time"] >= "10:45:00" for slot in slots
     )
     with Session(app_db) as session:
         appointment = session.exec(select(Appointment)).one()
-        assert appointment.name == request["name"].strip()
-        assert appointment.phone == request["phone"].strip()
-        assert appointment.phone_normalized is None
+        assert not appointment.name
+        assert appointment.phone == request["phone"]
+        assert appointment.phone_normalized == "+380671234567"
         assert appointment.status == AppointmentStatus.confirmed and appointment.customer_id is None
-        assert appointment.duration_minutes == 97 and appointment.service_id == service["id"]
+        assert appointment.duration_minutes == 35 and appointment.service_id == service["id"]
 
 
 def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:

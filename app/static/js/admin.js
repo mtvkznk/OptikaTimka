@@ -69,48 +69,80 @@ if (adminViews.length) {
 
 const manualAppointment = document.querySelector("[data-manual-appointment]");
 if (manualAppointment) {
-  const editor = manualAppointment.closest("details");
+  const feedback = manualAppointment.querySelector("[data-manual-feedback]");
+  const phone = manualAppointment.elements.namedItem("phone");
+  let selectedSlot = null;
+  let savingAppointment = false;
+
+  const setExpanded = (slot, expanded) => {
+    slot.setAttribute("aria-expanded", String(expanded));
+    const action = expanded ? "Зберегти запис на " : "Додати запис на ";
+    slot.setAttribute("aria-label", action + slot.dataset.notebookStart);
+    slot.title = action + slot.dataset.notebookStart;
+  };
+
   document.querySelectorAll("[data-notebook-start]").forEach((button) => {
     button.addEventListener("click", () => {
-      editor.open = true;
+      if (savingAppointment) return;
+      if (selectedSlot === button) {
+        manualAppointment.requestSubmit();
+        return;
+      }
+      if (selectedSlot) setExpanded(selectedSlot, false);
+      selectedSlot = button;
+      setExpanded(button, true);
       manualAppointment.elements.namedItem("preferred_time").value = button.dataset.notebookStart;
-      const end = button.dataset.notebookEnd;
-      manualAppointment.elements.namedItem("end_time").value = end === "24:00" ? "00:00" : end;
-      editor.scrollIntoView({ block: "nearest" });
-      manualAppointment.elements.namedItem("name").focus({ preventScroll: true });
+      feedback.textContent = "";
+      button.after(manualAppointment);
+      manualAppointment.hidden = false;
+      phone.focus();
     });
   });
-}
 
-manualAppointment?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = manualAppointment.querySelector("button");
-  const feedback = manualAppointment.querySelector("[data-manual-feedback]");
-  if (button.disabled) return;
-  button.disabled = true;
-  feedback.textContent = "";
-  const fallback = "Не вдалося додати запис. Перевірте поля або оновіть сторінку.";
-  let saved = false;
-  try {
-    const response = await fetch(manualAppointment.action, {
-      method: "POST",
-      headers: { Accept: "application/json" },
-      body: new URLSearchParams(new FormData(manualAppointment)),
-    });
-    const body = await response.json().catch(() => null);
-    if (!response.ok || !body?.redirect) {
-      feedback.textContent = typeof body?.detail === "string" ? body.detail : fallback;
-      return;
+  manualAppointment.addEventListener("keydown", (event) => {
+    if (event.isComposing || savingAppointment || !selectedSlot) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      manualAppointment.requestSubmit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setExpanded(selectedSlot, false);
+      manualAppointment.reset();
+      manualAppointment.hidden = true;
+      selectedSlot.focus();
+      selectedSlot = null;
     }
-    saved = true;
-    history.replaceState(null, "", body.redirect);
-    location.reload();
-  } catch {
-    feedback.textContent = fallback;
-  } finally {
-    button.disabled = saved;
-  }
-});
+  });
+
+  manualAppointment.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (savingAppointment || !selectedSlot) return;
+    const button = selectedSlot;
+    const fallback = "Не вдалося додати запис. Перевірте поля або оновіть сторінку.";
+    button.disabled = true;
+    savingAppointment = true;
+    feedback.textContent = "";
+    try {
+      const response = await fetch(manualAppointment.action, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: new URLSearchParams(new FormData(manualAppointment)),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.redirect) {
+        feedback.textContent = typeof body?.detail === "string" ? body.detail : fallback;
+      } else {
+        history.replaceState(null, "", body.redirect);
+        location.reload();
+        return;
+      }
+    } catch {
+      feedback.textContent = fallback;
+    }
+    button.disabled = false;
+    savingAppointment = false;
+  });
+}
 
 function revealEditor(form) {
   const view = form.closest("[data-admin-view]");
