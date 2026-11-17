@@ -41,15 +41,25 @@
       </td>
       <td role="cell" class="admin-appointment-status">
         <span class="status-pill status-{{ row.status_value }}">{{ row.status_label }}</span>
-        <form class="admin-status-form" action="/admin/appointments/{{ appointment.id }}/status" method="post" data-admin-edit="appointments" data-id="{{ appointment.id }}" data-version="{{ appointment.updated_at.isoformat() }}">
-          {% include "csrf_field.html" %}
-          <input type="hidden" name="return_to" value="{{ appointment_return_url }}" />
-          <select name="status" aria-label="Статус запису {{ appointment.name or appointment.phone }}">
-            {% for option in status_options %}
-            <option value="{{ option.value }}"{% if option.value == row.status_value %} selected{% endif %}>{{ option.label }}</option>
-            {% endfor %}
-          </select>
-        </form>
+        {% set client_label = appointment.name or appointment.phone or "№" ~ appointment.id %}
+        <div class="admin-appointment-actions">
+          <form class="admin-status-form" action="/admin/appointments/{{ appointment.id }}/status" method="post" data-admin-edit="appointments" data-id="{{ appointment.id }}" data-version="{{ appointment.updated_at.isoformat() }}">
+            {% include "csrf_field.html" %}
+            <input type="hidden" name="return_to" value="{{ appointment_return_url }}" />
+            <select name="status" aria-label="Статус запису {{ client_label }}">
+              {% for option in status_options %}
+              <option value="{{ option.value }}"{% if option.value == row.status_value %} selected{% endif %}>{{ option.label }}</option>
+              {% endfor %}
+            </select>
+          </form>
+          <form action="/admin/appointments/{{ appointment.id }}/delete" method="post" data-delete-appointment="{{ appointment.id }}">
+            {% include "csrf_field.html" %}
+            <input type="hidden" name="return_to" value="{{ appointment_return_url }}" />
+            <input type="hidden" name="version" value="{{ appointment.updated_at.isoformat() }}" />
+            <button class="admin-button admin-button-small admin-danger" type="submit" aria-label="Видалити: {{ client_label }}">Видалити</button>
+          </form>
+        </div>
+        <p class="admin-appointment-error" data-delete-feedback role="alert" hidden></p>
       </td>
     </tr>
     {% endfor %}

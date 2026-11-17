@@ -244,6 +244,48 @@ function persistDraft() {
   showSaveState();
 }
 
+document.querySelectorAll("[data-delete-appointment]").forEach((form) => {
+  const button = form.querySelector("button");
+  const feedback = form.closest("td").querySelector("[data-delete-feedback]");
+  const fallback = "Не вдалося видалити запис. Оновіть сторінку й перевірте список.";
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (saving) return;
+
+    const body = new URLSearchParams(new FormData(form));
+    const send = () => fetch(form.action, {
+      method: "POST", headers: { Accept: "application/json" }, body,
+    });
+    feedback.hidden = true;
+    saving = button.disabled = true;
+    showSaveState();
+    try {
+      let response = await send();
+      let detail = response.ok ? null : (await response.json().catch(() => null))?.detail;
+      if (detail?.confirmation_required === "upcoming_appointment_removal") {
+        if (!window.confirm("Видалити майбутній запис?")) return;
+        body.set("confirmed", "true");
+        response = await send();
+        detail = response.ok ? null : (await response.json().catch(() => null))?.detail;
+      }
+      if (response.status === 204) {
+        delete draft.edits["appointments:" + form.dataset.deleteAppointment];
+        persistDraft();
+        location.reload();
+        return;
+      }
+      feedback.textContent = typeof detail === "string" ? detail : fallback;
+    } catch {
+      feedback.textContent = fallback;
+    } finally {
+      saving = button.disabled = false;
+      showSaveState();
+    }
+    feedback.hidden = false;
+  });
+});
+
 document.querySelectorAll("[data-admin-edit]").forEach((form) => {
   const kind = form.dataset.adminEdit;
   const key = kind + ":" + form.dataset.id;

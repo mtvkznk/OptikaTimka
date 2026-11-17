@@ -170,6 +170,72 @@ def test_notebook_and_online_form_share_future_service_slots(
     }).status_code == 409
 
 
+def test_admin_can_delete_appointments_and_reopen_their_time(
+    client: TestClient, anonymous_client: TestClient, raw_client: TestClient,
+    app_db: Engine, monkeypatch: MonkeyPatch,
+) -> None:
+    now = datetime(2026, 11, 17, 9, 5, tzinfo=main.KYIV_TZ)
+    monkeypatch.setattr(main, "kyiv_now", lambda: now)
+    service = client.get("/api/booking-services").json()[0]
+    day = now.date().isoformat()
+    params = {"service": service["name"], "preferred_date": day}
+
+    def starts() -> list[str]:
+        return [slot["start_time"] for slot in anonymous_client.get(
+            "/api/availability", params=params,
+        ).json()]
+
+    first, second, *_ = starts()
+
+    def book(name: str, start: str) -> int:
+        response = anonymous_client.post("/api/appointments", json={
+            **params, "name": name, "phone": "+380500000001", "preferred_time": start,
+        })
+        assert response.status_code == 201
+        return response.json()["id"]
+
+    removal_id = book("Remove this visit", first)
+    book("Keep this visit", second)
+    with Session(app_db) as session:
+        past = Appointment(
+            name="Past visit", phone="+380500000001", service=service["name"],
+            preferred_date=now.date(), preferred_time=time(9),
+            duration_minutes=service["duration_minutes"],
+        )
+        session.add(past)
+        session.commit()
+        past_id = past.id
+        past_version = past.updated_at.isoformat()
+        version = session.get(Appointment, removal_id).updated_at.isoformat()
+
+    assert first not in starts() and second not in starts()
+    records = f"/admin/appointments?day={day}"
+    assert 'aria-label="Видалити: Remove this visit"' in client.get(records).text
+    endpoint = f"/admin/appointments/{removal_id}/delete"
+    data = {"version": version, "return_to": records}
+    assert anonymous_client.post(endpoint, data=data).status_code == 401
+    assert raw_client.post(endpoint, data=data, auth=client.auth).status_code == 403
+    confirmation = client.post(endpoint, data=data)
+    assert confirmation.status_code == 409
+    assert confirmation.json()["detail"] == {"confirmation_required": "upcoming_appointment_removal"}
+    assert client.post(endpoint, data={
+        **data, "confirmed": "true", "version": "2000-01-01",
+    }).status_code == 409
+    assert first not in starts() and second not in starts()
+
+    assert client.post(endpoint, data={**data, "confirmed": "true"}, headers={
+        "Accept": "application/json",
+    }).status_code == 204
+    result = client.post(f"/admin/appointments/{past_id}/delete", data={
+        "version": past_version, "return_to": records,
+    }, follow_redirects=False)
+    assert result.status_code == 303 and result.headers["location"] == records
+    html = client.get(records).text
+    assert "Remove this visit" not in html and "Past visit" not in html
+    assert "Keep this visit" in html
+    assert first in starts() and second not in starts()
+
+
 def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:
     service, other_service, *_ = client.get("/api/booking-services").json()
     open_day = current_date() + timedelta(days=2)

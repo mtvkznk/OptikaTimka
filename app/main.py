@@ -194,7 +194,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261117-booking-availability"
-ADMIN_ASSET_VERSION = "20261117-notebook-records"
+ADMIN_ASSET_VERSION = "20261117-appointment-removal"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -1379,6 +1379,35 @@ def update_appointment_status(
     session.add(appointment)
     session.commit()
     return RedirectResponse(url=admin_return_url(form_data), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@admin_router.post("/appointments/{appointment_id}/delete", response_model=None)
+def delete_appointment(
+    appointment_id: int, request: Request, session: SessionDep, form_data: FormDataDep,
+) -> Response:
+    lock_booking_writes(session)
+    appointment = session.get(Appointment, appointment_id)
+    if appointment is None:
+        raise HTTPException(404, "Запис не знайдено. Оновіть сторінку.")
+    if form_data.get("version") != appointment.updated_at.isoformat():
+        raise HTTPException(409, "Запис змінився. Оновіть сторінку й повторіть дію.")
+
+    now = kyiv_now()
+    day = appointment.preferred_date
+    starts_at = appointment.preferred_time
+    upcoming = day is not None and (
+        day > now.date() or (day == now.date() and (starts_at is None or starts_at > now.time()))
+    )
+    if upcoming and form_data.get("confirmed") != "true":
+        raise HTTPException(409, {"confirmation_required": "upcoming_appointment_removal"})
+
+    session.delete(appointment)
+    session.commit()
+    if request.headers.get("accept") == "application/json":
+        return Response(status_code=204)
+    return RedirectResponse(
+        url=admin_return_url(form_data, fallback="/admin/appointments"), status_code=303,
+    )
 
 
 @admin_router.post("/services")

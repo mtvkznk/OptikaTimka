@@ -358,6 +358,23 @@
   margin-top: 0.45rem;
 }
 
+.admin-appointment-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  max-width: 22rem;
+  margin-top: 0.45rem;
+}
+
+.admin-appointment-actions .admin-status-form {
+  margin-top: 0;
+}
+
+.admin-appointment-error {
+  margin: 0.35rem 0 0;
+  color: #a32727;
+}
+
 .admin-field {
   display: grid;
   min-width: 0;
