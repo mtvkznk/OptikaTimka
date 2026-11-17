@@ -12,41 +12,8 @@
 </fieldset>
 {% endmacro %}
 {% block content %}
-<div data-admin-view="appointments" data-admin-anchor="#appointments">
-<header class="admin-page-heading">
-  <div>
-    <h1>Записи</h1>
-  </div>
-  <time class="admin-today" datetime="{{ today.isoformat() }}">{{ format_date(today) }}</time>
-</header>
-
-<section class="admin-metrics" aria-label="Коротка статистика">
-  <a class="admin-metric" href="/admin/appointments?day={{ today.isoformat() }}">
-    <span>Записи сьогодні</span>
-    <strong>{{ metrics.today_appointments }}</strong>
-    <span class="admin-metric-hint">Усі статуси</span>
-  </a>
-  <a class="admin-metric admin-metric-emphasis" href="/admin/appointments?status=new">
-    <span>Нові записи</span>
-    <strong>{{ metrics.new_appointments }}</strong>
-    <span class="admin-metric-hint">Очікують підтвердження</span>
-  </a>
-  <a class="admin-metric" href="#services">
-    <span>Послуги</span>
-    <strong>{{ services | length }}</strong>
-    <span class="admin-metric-hint">У формі запису</span>
-  </a>
-</section>
-
-{% include "admin_appointment_diary.html" %}
-
-<section class="admin-panel" id="appointments" aria-labelledby="latest-heading">
-  <div class="admin-panel-heading">
-    <h2 id="latest-heading">Останні записи</h2>
-    <a class="admin-button" href="/admin/appointments">Усі записи <span aria-hidden="true">→</span></a>
-  </div>
-  {% include "admin_appointment_list.html" %}
-</section>
+<div id="appointments" data-admin-view="appointments" data-admin-anchor="#appointments">
+  {% include "admin_appointment_diary.html" %}
 </div>
 
 <div data-admin-view="schedule" data-admin-anchor="#services">

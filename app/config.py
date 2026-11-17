@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Annotated, Self
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     admin_password: SecretStr | None = None
     admin_google_email: str | None = None
     admin_google_subjects: Annotated[frozenset[str], NoDecode] = frozenset()
+    doctor_diary_service_id: int | None = Field(default=None, ge=1, le=2_147_483_647)
     public_base_url: str | None = None
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "admin_password",
+        "doctor_diary_service_id",
         "google_client_id",
         "google_client_secret",
         "google_redirect_uri",

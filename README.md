@@ -105,6 +105,9 @@ SQLite preview databases, or debug settings to production.
 docker compose --env-file C:/Deploy/OptikaTimka/prod.env -f docker-compose.prod.yml up -d --build
 ```
 
+Set `DOCTOR_DIARY_SERVICE_ID` to the ID of the doctor's examination service
+from `/api/booking-services` to keep the diary bound to that service after a rename.
+
 On the Windows host, the `Optika Timka Recovery` scheduled task runs
 `ops/windows/optika-recovery.ps1` every minute under the signed-in Docker
 Desktop account. Keep the installed copy in `C:/Program Files/OptikaTimkaRecovery`.

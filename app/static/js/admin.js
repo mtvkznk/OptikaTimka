@@ -67,10 +67,21 @@ if (adminViews.length) {
   window.addEventListener("hashchange", syncAdminView);
 }
 
-const diaryFilter = document.querySelector("[data-diary-filter]");
-diaryFilter?.addEventListener("change", () => diaryFilter.requestSubmit());
-
 const manualAppointment = document.querySelector("[data-manual-appointment]");
+if (manualAppointment) {
+  const editor = manualAppointment.closest("details");
+  document.querySelectorAll("[data-notebook-start]").forEach((button) => {
+    button.addEventListener("click", () => {
+      editor.open = true;
+      manualAppointment.elements.namedItem("preferred_time").value = button.dataset.notebookStart;
+      const end = button.dataset.notebookEnd;
+      manualAppointment.elements.namedItem("end_time").value = end === "24:00" ? "00:00" : end;
+      editor.scrollIntoView({ block: "nearest" });
+      manualAppointment.elements.namedItem("name").focus({ preventScroll: true });
+    });
+  });
+}
+
 manualAppointment?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = manualAppointment.querySelector("button");

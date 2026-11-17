@@ -6,10 +6,12 @@ from io import BytesIO
 
 from fastapi.testclient import TestClient
 from PIL import Image
+from pytest import MonkeyPatch
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from app.admin_changes import service_schedule_version
+from app.config import settings
 from app.main import current_date
 from app.models import (
     Appointment,
@@ -22,8 +24,8 @@ from app.models import (
 )
 
 
-def test_appointment_diary_filters_and_orders_the_selected_day(
-    client: TestClient, app_db: Engine,
+def test_doctor_notebook_orders_the_day_without_showing_other_clients(
+    client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
 ) -> None:
     with Session(app_db) as session:
         service = BookingService(name="Diary service")
@@ -33,7 +35,7 @@ def test_appointment_diary_filters_and_orders_the_selected_day(
         service_id = service.id
         for name, day, starts, status in (
             ("Later in the diary", date(2026, 12, 1), time(14, 30), AppointmentStatus.new),
-            ("Earlier in the diary", date(2026, 12, 1), time(11), AppointmentStatus.confirmed),
+            ("Earlier in the diary", date(2026, 12, 1), time(11, 10), AppointmentStatus.confirmed),
             ("Canceled visit", date(2026, 12, 1), time(10), AppointmentStatus.canceled),
             ("Visit on another day", date(2026, 12, 2), time(10), AppointmentStatus.confirmed),
         ):
@@ -50,16 +52,19 @@ def test_appointment_diary_filters_and_orders_the_selected_day(
         service.name = "Updated diary service"
         session.commit()
 
-    response = client.get("/admin", params={"day": "2026-12-01", "service_id": service_id})
+    monkeypatch.setattr(settings, "doctor_diary_service_id", service_id)
+    response = client.get("/admin", params={"day": "2026-12-01"})
     assert response.status_code == 200
-    agenda = response.text.split('id="appointment-diary"', 1)[1].split('id="appointments"', 1)[0]
+    agenda = response.text.split('id="appointment-diary"', 1)[1].split('data-admin-view="schedule"', 1)[0]
     assert agenda.index("Earlier in the diary") < agenda.index("Later in the diary")
     assert "Canceled visit" not in agenda and "Visit on another day" not in agenda
     assert "Visit for another service" not in agenda
+    assert "Зайнято іншою послугою" in agenda
+    assert "Прийом триває" in agenda
     assert "Updated diary service" in agenda
-    assert 'aria-label="01.12.2026, кількість записів 2"' in agenda
-    assert f'day=2026-11-01&amp;service_id={service_id}#appointment-diary' in agenda
-    assert f'day=2027-01-01&amp;service_id={service_id}#appointment-diary' in agenda
+    assert 'data-notebook-start="11:00"' in agenda and 'data-notebook-end="11:10"' in agenda
+    assert 'day=2026-11-30#appointment-diary' in agenda
+    assert 'day=2026-12-02#appointment-diary' in agenda
 
 
 def test_manual_appointment_reserves_public_availability(
@@ -77,7 +82,7 @@ def test_manual_appointment_reserves_public_availability(
     assert anonymous_client.post(endpoint, data=request).status_code == 401
     result = client.post(endpoint, data=request, follow_redirects=False)
     assert result.status_code == 303
-    assert result.headers["location"] == f"/admin?day={day}&service_id={service['id']}#appointment-diary"
+    assert result.headers["location"] == f"/admin?day={day}#appointment-diary"
     assert client.post(endpoint, data={
         **request, "preferred_time": "10:35", "service_id": str(other_service["id"]),
     }).status_code == 409
@@ -563,7 +568,7 @@ def test_delete_catalog_rows_keeps_empty_lists_and_allows_readding(
     assert client.get("/api/booking-services").json() == []
     assert client.get("/api/time-slots").json() == []
     dashboard = client.get("/admin").text
-    assert service["name"] in dashboard  # The existing appointment still shows its original name.
+    assert service["name"] in client.get("/admin/appointments").text
     assert 'data-admin-edit="services"' not in dashboard
     assert 'data-admin-edit="time_slots"' not in dashboard
     with Session(app_db) as session:

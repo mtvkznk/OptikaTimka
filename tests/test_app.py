@@ -68,8 +68,9 @@ def test_admin_dashboard_renders_controls(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert "Адмінпанель" in response.text
-    assert "Останні записи" in response.text
-    assert "/admin/appointments" in response.text
+    assert "Останні записи" not in response.text
+    assert 'id="appointment-diary"' in response.text
+    assert 'aria-label="Наступний день"' in response.text
     assert "Загальний графік" in response.text
     assert "Послуги" in response.text
     assert "Закриті дати" in response.text
@@ -279,9 +280,9 @@ def test_admin_can_update_appointment_status(client: TestClient) -> None:
 
     assert update_response.status_code == 303
 
-    admin_page = client.get("/admin")
+    admin_page = client.get("/admin/appointments")
     assert admin_page.status_code == 200
-    assert "Підтверджено" in admin_page.text
+    assert 'class="status-pill status-confirmed"' in admin_page.text
 
 
 def test_admin_can_reorder_services(client: TestClient) -> None:

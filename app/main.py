@@ -3,9 +3,9 @@ import hashlib
 import logging
 import re
 import secrets
-from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
@@ -193,7 +193,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261114-time-columns"
-ADMIN_ASSET_VERSION = "20261117-service-diaries"
+ADMIN_ASSET_VERSION = "20261117-doctor-notebook"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -213,6 +213,15 @@ MONTH_TITLE_LABELS = {
     12: "Грудень",
 }
 WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
+WEEKDAY_NAMES = ["Понеділок", "Вівторок", "Середа", "Четвер", "П’ятниця", "Субота", "Неділя"]
+DOCTOR_SERVICE_NAMES = (
+    "Комплексний огляд лікаря офтальмолога",
+    "Комплексний огляд лікаря-офтальмолога",
+    "Огляд лікаря офтальмолога",
+    "Огляд лікаря-офтальмолога",
+    "Огляд лікаря",
+    DEFAULT_SERVICES[0]["name"],
+)
 
 
 class ReorderPayload(BaseModel):
@@ -316,6 +325,10 @@ def format_time(value: time | None) -> str:
     return value.strftime("%H:%M")
 
 
+def format_minute(minute: int) -> str:
+    return "{:02d}:{:02d}".format(*divmod(minute, 60))
+
+
 def kyiv_now() -> datetime:
     return datetime.now(KYIV_TZ)
 
@@ -340,9 +353,8 @@ def build_appointment_rows(appointments: list[Appointment]) -> list[dict[str, An
             "status_value": status_value(appointment),
             "status_label": status_label(appointment.status),
             "end_time": (
-                "{:02d}:{:02d}".format(*divmod(
-                    minute_of(appointment.preferred_time) + appointment.duration_minutes, 60,
-                )) if appointment.preferred_time is not None else None
+                format_minute(minute_of(appointment.preferred_time) + appointment.duration_minutes)
+                if appointment.preferred_time is not None else None
             ),
         }
         for appointment in appointments
@@ -423,56 +435,85 @@ def apply_sort_order(session: Session, model: type[Any], ids: list[int]) -> None
     session.commit()
 
 
-def appointment_diary(session: Session, day: date, service_id: int) -> dict[str, Any]:
-    first = day.replace(day=1)
-    offset, month_days = monthrange(day.year, day.month)
-    last = day.replace(day=month_days)
-    filters = [Appointment.status != AppointmentStatus.canceled]
-    if service_id:
-        filters.append(Appointment.service_id == service_id)
-    counts = dict(session.exec(
-        select(Appointment.preferred_date, func.count())
-        .where(*filters, Appointment.preferred_date.between(first, last))
-        .group_by(Appointment.preferred_date)
-    ).all())
+def diary_service(services: list[BookingService]) -> BookingService | None:
+    configured_id = settings.doctor_diary_service_id
+    if configured_id is not None:
+        return next((service for service in services if service.id == configured_id), None)
+    by_name = {service.name.strip().casefold(): service for service in services}
+    for name in DOCTOR_SERVICE_NAMES:
+        if service := by_name.get(name.casefold()):
+            return service
+    return None
+
+
+def appointment_diary(
+    session: Session, day: date, service: BookingService | None,
+    intervals: list[Interval], online_closed: bool,
+) -> dict[str, Any]:
+    context = {
+        "date": day,
+        "weekday": WEEKDAY_NAMES[day.weekday()],
+        "previous": day - timedelta(days=1) if day > date.min else None,
+        "next": day + timedelta(days=1) if day < date.max else None,
+        "service": service,
+        "online_closed": online_closed,
+        "return_url": f"/admin?day={day.isoformat()}#appointment-diary",
+    }
+    if service is None:
+        return context
+
     appointments = list(session.exec(
         select(Appointment)
-        .where(*filters, Appointment.preferred_date == day)
-        .order_by(Appointment.preferred_time.is_(None), Appointment.preferred_time, Appointment.id)
+        .where(Appointment.status != AppointmentStatus.canceled, Appointment.preferred_date == day)
+        .order_by(Appointment.preferred_time, Appointment.id)
     ))
-    return {
-        "date": day,
-        "month": f"{MONTH_TITLE_LABELS[day.month]} {day.year}",
-        "offset": offset,
-        "days": [(value, counts.get(value, 0)) for value in (
-            first + timedelta(days=index) for index in range(month_days)
-        )],
-        "previous": (first - timedelta(days=1)).replace(day=1) if first > date.min else None,
-        "next": last + timedelta(days=1) if last < date.max else None,
-        "rows": build_appointment_rows(appointments),
-        "service_id": service_id,
-    }
+    boundaries = {minute for start, end in intervals for minute in (*range(start, end, 30), end)}
+    timed = []
+    untimed = []
+    for appointment in appointments:
+        starts_at = appointment.preferred_time
+        doctor = appointment.service_id == service.id or (
+            appointment.service_id is None and appointment.service == service.name
+        )
+        if starts_at is None:
+            if doctor:
+                untimed.append(appointment)
+            continue
+        start = minute_of(starts_at)
+        end = min(
+            24 * 60,
+            start + appointment.duration_minutes + int(bool(starts_at.second or starts_at.microsecond)),
+        )
+        boundaries.update((start, end))
+        timed.append((start, end, doctor, appointment))
+
+    rows = []
+    for start, _ in pairwise(sorted(boundaries)):
+        appointments_here = [appointment for s, _, doctor, appointment in timed if doctor and s == start]
+        doctor_occupied = any(s <= start < e and doctor for s, e, doctor, _ in timed)
+        other_occupied = any(s <= start < e and not doctor for s, e, doctor, _ in timed)
+        working_end = next((hi for lo, hi in intervals if lo <= start < hi), None)
+        suggested_end = None
+        if working_end is not None and not (doctor_occupied or other_occupied):
+            next_appointment = next((s for s, _, _, _ in timed if s > start), working_end)
+            suggested_end = format_minute(min(start + service.duration_minutes, working_end, next_appointment))
+        rows.append({
+            "start": format_minute(start),
+            "visits": build_appointment_rows(appointments_here),
+            "doctor_occupied": doctor_occupied,
+            "other_occupied": other_occupied,
+            "suggested_end": suggested_end,
+        })
+    return {**context, "rows": rows, "untimed": build_appointment_rows(untimed)}
 
 
 def admin_context(
-    session: Session, request: Request, diary_day: date | None = None, diary_service_id: int = 0,
+    session: Session, request: Request, diary_day: date | None = None,
 ) -> dict[str, Any]:
     ensure_seed_data(session)
     today = current_date()
 
-    diary_services = list(session.exec(
-        select(BookingService)
-        .where(
-            or_(
-                BookingService.is_active,
-                select(Appointment.id).where(Appointment.service_id == BookingService.id).exists(),
-            )
-        )
-        .order_by(BookingService.is_active.desc(), BookingService.sort_order, BookingService.id)
-    ))
-    services = [service for service in diary_services if service.is_active]
-    if not any(service.id == diary_service_id for service in diary_services):
-        diary_service_id = 0
+    services = get_active_services(session)
     records = category_records(session)
     closed_dates = list(
         session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
@@ -491,12 +532,15 @@ def admin_context(
         service_closed_days.setdefault(item.service_id, {})[item.closed_on.isoformat()] = {
             "id": item.id, "version": item.updated_at.isoformat(), "reason": item.reason,
         }
-    latest_appointments = list(
-        session.exec(
-            select(Appointment)
-            .order_by(Appointment.created_at.desc(), Appointment.id.desc())
-            .limit(8)
-        ).all()
+    service = diary_service(services)
+    day = diary_day or today
+    schedule = schedules.get(service.id) if service is not None else None
+    diary_intervals = schedule.intervals if schedule is not None else default_intervals
+    online_closed = service is not None and (
+        not service.is_available_on(day)
+        or day.isoformat() in service_closed_days.get(service.id, {})
+        or any(item.closed_on == day for item in closed_dates)
+        or not diary_intervals
     )
 
     return {
@@ -504,8 +548,7 @@ def admin_context(
         "app_name": settings.app_name,
         "admin_asset_version": ADMIN_ASSET_VERSION,
         "today": today,
-        "diary": appointment_diary(session, diary_day or today, diary_service_id),
-        "diary_services": diary_services,
+        "diary": appointment_diary(session, day, service, diary_intervals, online_closed),
         "services": services,
         "weekdays": [(1 << index, label) for index, label in enumerate(WEEKDAY_LABELS)],
         "all_weekdays": ALL_WEEKDAYS,
@@ -543,20 +586,6 @@ def admin_context(
             for item in closed_dates
         },
         "status_options": STATUS_OPTIONS,
-        "appointment_rows": build_appointment_rows(latest_appointments),
-        "appointment_return_url": "/admin#appointments",
-        "metrics": {
-            "today_appointments": count_rows(
-                session,
-                Appointment,
-                Appointment.preferred_date == today,
-            ),
-            "new_appointments": count_rows(
-                session,
-                Appointment,
-                Appointment.status == AppointmentStatus.new,
-            ),
-        },
         "format_date": format_date,
         "format_time": format_time,
     }
@@ -1068,9 +1097,8 @@ def admin(
     request: Request,
     session: SessionDep,
     day: date | None = None,
-    service_id: Annotated[int, Query(ge=0, le=2_147_483_647)] = 0,
 ) -> HTMLResponse:
-    return templates.TemplateResponse(request, "admin.html", admin_context(session, request, day, service_id))
+    return templates.TemplateResponse(request, "admin.html", admin_context(session, request, day))
 
 
 @admin_router.get("/appointments", response_class=HTMLResponse)
@@ -1124,7 +1152,7 @@ def create_manual_appointment(
         status=AppointmentStatus.confirmed, duration_minutes=duration,
     ))
     session.commit()
-    return_to = f"/admin?day={day.isoformat()}&service_id={service_id}#appointment-diary"
+    return_to = f"/admin?day={day.isoformat()}#appointment-diary"
     if request.headers.get("accept") == "application/json":
         return JSONResponse({"redirect": return_to}, status_code=201)
     return RedirectResponse(return_to, status_code=303)

@@ -1,92 +1,63 @@
-{% macro diary_url(day) %}/admin?day={{ day.isoformat() }}{% if diary.service_id %}&amp;service_id={{ diary.service_id }}{% endif %}#appointment-diary{% endmacro %}
-<section class="admin-panel admin-diary" id="appointment-diary" aria-labelledby="diary-heading">
-  <div class="admin-panel-heading">
-    <h2 id="diary-heading">Розклад прийомів</h2>
-    {% if diary.date != today %}<a class="admin-button" href="{{ diary_url(today) }}">Сьогодні</a>{% endif %}
-  </div>
-  <form class="admin-diary-filter" method="get" action="/admin#appointment-diary" data-diary-filter>
-    <input type="hidden" name="day" value="{{ diary.date.isoformat() }}" />
-    <label class="admin-field">Розклад послуги
-      <select name="service_id">
-        <option value="0">Усі послуги</option>
-        {% for service in diary_services %}
-        <option value="{{ service.id }}"{% if service.id == diary.service_id %} selected{% endif %}>{{ service.name }}{% if not service.is_active %} (архів){% endif %}</option>
+{% macro diary_url(day) %}/admin?day={{ day.isoformat() }}#appointment-diary{% endmacro %}
+{% macro diary_visit(row) %}
+  {% set visit = row.appointment %}
+  <div class="admin-notebook-visit">
+    <div class="admin-notebook-client">
+      <strong>{{ visit.name or "Без імені" }}</strong>
+      {% if visit.phone_normalized %}
+      <a href="tel:{{ visit.phone_normalized }}">{{ visit.phone }}</a>
+      {% elif visit.phone %}<span>{{ visit.phone }}</span>{% endif %}
+      {% if row.end_time %}<small>до {{ row.end_time }}</small>{% endif %}
+      {% if visit.message %}
+      <details class="admin-comment">
+        <summary>Коментар</summary>
+        <p>{{ visit.message }}</p>
+      </details>
+      {% endif %}
+    </div>
+    <form class="admin-status-form admin-notebook-status" action="/admin/appointments/{{ visit.id }}/status"
+          method="post" data-admin-edit="appointments" data-id="{{ visit.id }}" data-version="{{ visit.updated_at.isoformat() }}">
+      {% include "csrf_field.html" %}
+      <input type="hidden" name="return_to" value="{{ diary.return_url }}" />
+      <select name="status" aria-label="Статус запису {{ visit.name or visit.phone }}">
+        {% for option in status_options %}
+        <option value="{{ option.value }}"{% if option.value == row.status_value %} selected{% endif %}>{{ option.label }}</option>
         {% endfor %}
       </select>
-    </label>
-    <noscript><button class="admin-button" type="submit">Показати</button></noscript>
-  </form>
-  <div class="admin-diary-layout">
-    <nav class="admin-calendar admin-diary-calendar" aria-label="Календар прийомів">
-      <div class="admin-calendar-nav">
-        {% if diary.previous %}
-        <a class="admin-button" href="{{ diary_url(diary.previous) }}" aria-label="Попередній місяць">←</a>
-        {% else %}<span></span>{% endif %}
-        <h3>{{ diary.month }}</h3>
-        {% if diary.next %}
-        <a class="admin-button" href="{{ diary_url(diary.next) }}" aria-label="Наступний місяць">→</a>
-        {% else %}<span></span>{% endif %}
+    </form>
+  </div>
+{% endmacro %}
+<section class="admin-notebook" id="appointment-diary" aria-labelledby="diary-heading">
+  <header class="admin-notebook-header">
+    <nav class="admin-notebook-nav" aria-label="Гортання щоденника">
+      {% if diary.previous %}
+      <a class="admin-button" href="{{ diary_url(diary.previous) }}" aria-label="Попередній день">←</a>
+      {% else %}<span></span>{% endif %}
+      <div class="admin-notebook-date">
+        <p>{{ diary.weekday }}</p>
+        <h1 id="diary-heading"><time datetime="{{ diary.date.isoformat() }}">{{ format_date(diary.date) }}</time></h1>
       </div>
-      <div class="admin-calendar-grid" aria-hidden="true">
-        {% for _, label in weekdays %}<span class="admin-calendar-week">{{ label }}</span>{% endfor %}
-      </div>
-      <div class="admin-calendar-grid">
-        {% for _ in range(diary.offset) %}<span aria-hidden="true"></span>{% endfor %}
-        {% for day, count in diary.days %}
-        <a class="admin-calendar-day" href="{{ diary_url(day) }}" data-diary-day="{{ day.isoformat() }}"
-           aria-label="{{ format_date(day) }}{% if count %}, кількість записів {{ count }}{% endif %}"
-           {% if day == diary.date %}aria-current="date"{% endif %}>
-          {{ day.day }}
-          {% if count %}<span class="admin-diary-marker" aria-hidden="true"></span>{% endif %}
-        </a>
-        {% endfor %}
-      </div>
+      {% if diary.next %}
+      <a class="admin-button" href="{{ diary_url(diary.next) }}" aria-label="Наступний день">→</a>
+      {% else %}<span></span>{% endif %}
     </nav>
-    <div class="admin-diary-day">
-      <h3>{{ weekdays[diary.date.weekday()][1] }}, <time datetime="{{ diary.date.isoformat() }}">{{ format_date(diary.date) }}</time></h3>
-      {% if diary.rows %}
-      <ul class="admin-diary-visits" aria-label="Активні записи на вибраний день">
-        {% for row in diary.rows %}
-        {% set visit = row.appointment %}
-        <li>
-          <div class="admin-diary-time">
-            {% if visit.preferred_time %}
-            <time>{{ format_time(visit.preferred_time) }}</time><span>до {{ row.end_time }}</span>
-            {% else %}<span>Без часу</span>{% endif %}
-          </div>
-          <div class="admin-diary-client">
-            <strong>{{ visit.name or "Без імені" }}</strong>
-            {% if visit.phone_normalized %}
-            <a href="tel:{{ visit.phone_normalized }}">{{ visit.phone }}</a>
-            {% elif visit.phone %}<span>{{ visit.phone }}</span>{% endif %}
-            <span>{{ visit.service }}</span>
-          </div>
-          <span class="status-pill status-{{ row.status_value }}">{{ row.status_label }}</span>
-        </li>
-        {% endfor %}
-      </ul>
-      {% else %}
-      <p class="admin-diary-empty">На цей день ще немає активних записів.</p>
-      {% endif %}
-      {% if services %}
-      <form class="admin-diary-form" action="/admin/appointments/manual" method="post"
-            data-manual-appointment aria-labelledby="manual-appointment-heading">
-        <h4 id="manual-appointment-heading">Додати запис вручну</h4>
+    {% if diary.service %}
+    <p class="admin-notebook-service">{{ diary.service.name }}</p>
+    {% endif %}
+  </header>
+  {% if diary.service %}
+  <div class="admin-notebook-actions">
+    <details class="admin-notebook-editor" id="manual-appointment">
+      <summary>Додати запис</summary>
+      <form class="admin-notebook-form" action="/admin/appointments/manual" method="post" data-manual-appointment>
         {% include "csrf_field.html" %}
         <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
-        <label class="admin-field admin-diary-service">Послуга
-          <select name="service_id" required>
-            <option value="">Оберіть послугу</option>
-            {% for service in services %}
-            <option value="{{ service.id }}"{% if service.id == diary.service_id %} selected{% endif %}>{{ service.name }}</option>
-            {% endfor %}
-          </select>
-        </label>
+        <input type="hidden" name="service_id" value="{{ diary.service.id }}" />
         <label class="admin-field">Ім’я та прізвище
           <input name="name" />
         </label>
         <label class="admin-field">Телефон або контакт
-          <input type="text" name="phone" />
+          <input name="phone" />
         </label>
         <label class="admin-field">Початок
           <input type="time" name="preferred_time" required />
@@ -94,10 +65,44 @@
         <label class="admin-field">Кінець
           <input type="time" name="end_time" required />
         </label>
-        <button class="admin-button admin-primary" type="submit">Додати запис</button>
-        <p class="admin-diary-feedback" data-manual-feedback role="status"></p>
+        <button class="admin-button admin-primary" type="submit">Додати до розкладу</button>
+        <p class="admin-notebook-note" data-manual-feedback role="status"></p>
       </form>
-      {% endif %}
-    </div>
+    </details>
+    {% if diary.date != today %}<a class="admin-button" href="{{ diary_url(today) }}">Сьогодні</a>{% endif %}
   </div>
+  {% if diary.online_closed %}<p class="admin-notebook-note">Онлайн-запис на цей день закритий.</p>{% endif %}
+  {% if diary.rows or diary.untimed %}
+  <ul class="admin-notebook-lines" aria-label="Записи на вибраний день">
+    {% for row in diary.rows %}
+    <li class="admin-notebook-line"{% if row.doctor_occupied %} data-occupied{% endif %}>
+      <time datetime="{{ row.start }}">{{ row.start }}</time>
+      <div class="admin-notebook-line-content">
+        {% for visit in row.visits %}{{ diary_visit(visit) }}{% endfor %}
+        {% if not row.visits %}
+          {% if row.doctor_occupied %}
+          <span class="admin-notebook-muted">Прийом триває</span>
+          {% elif row.other_occupied %}
+          <span class="admin-notebook-muted">Зайнято іншою послугою</span>
+          {% elif row.suggested_end %}
+          <button class="admin-notebook-slot" type="button" data-notebook-start="{{ row.start }}"
+                  data-notebook-end="{{ row.suggested_end }}" aria-label="Додати запис на {{ row.start }}">+</button>
+          {% else %}
+          <span class="admin-notebook-muted">Поза графіком</span>
+          {% endif %}
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+    {% for row in diary.untimed %}
+    <li class="admin-notebook-line" data-occupied>
+      <span class="admin-notebook-muted">Без часу</span>
+      <div class="admin-notebook-line-content">{{ diary_visit(row) }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% else %}
+  <p class="admin-notebook-note">Послугу для щоденника не знайдено. Перевірте, що огляд лікаря є серед активних послуг.</p>
+  {% endif %}
 </section>

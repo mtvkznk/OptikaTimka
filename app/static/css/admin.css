@@ -185,7 +185,6 @@
   font-size: 0.93rem;
 }
 
-.admin-today,
 .admin-count {
   border: 1px solid var(--admin-line);
   border-radius: 0.55rem;
@@ -195,52 +194,6 @@
   font-size: 0.84rem;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-}
-
-.admin-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.9rem;
-  margin-bottom: 1.4rem;
-}
-
-.admin-metric {
-  display: grid;
-  gap: 0.45rem;
-  min-width: 0;
-  border: 1px solid var(--admin-line);
-  border-radius: 0.85rem;
-  padding: clamp(0.95rem, 2vw, 1.35rem);
-  color: var(--admin-text);
-  background: #fff;
-  font-size: 0.91rem;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.admin-metric:hover {
-  border-color: #7094a8;
-}
-
-.admin-metric-emphasis {
-  border-color: #c0ddce;
-  background: var(--admin-accent-soft);
-}
-
-.admin-metric strong {
-  color: var(--admin-nav);
-  font-size: 2rem;
-  letter-spacing: -0.04em;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.admin-metric strong small,
-.admin-metric-hint {
-  color: var(--admin-muted);
-  font-size: 0.8rem;
-  font-weight: 550;
-  letter-spacing: 0;
 }
 
 .admin-panel {
@@ -892,103 +845,180 @@
   text-underline-offset: 0.2em;
 }
 
-.admin-diary { scroll-margin-top: 5rem; }
-.admin-diary-filter { max-width: 21rem; margin-block-end: 0.85rem; }
-
-.admin-diary-layout {
-  display: grid;
-  grid-template-columns: minmax(15rem, 21rem) minmax(0, 1fr);
-  align-items: start;
-  gap: clamp(1rem, 3vw, 2rem);
-}
-
-.admin-diary-calendar {
-  width: 100%;
-  background: var(--admin-bg);
-}
-
-.admin-diary-calendar .admin-calendar-day {
-  position: relative;
-  display: grid;
-  place-items: center;
-  line-height: 1;
-  text-decoration: none;
-}
-
-.admin-diary-calendar .admin-calendar-day[aria-current="date"] {
-  border-color: var(--admin-accent);
-  color: #fff;
-  background: var(--admin-accent);
-}
-
-.admin-diary-marker {
-  position: absolute;
-  inset-block-end: 0.24rem;
-  width: 0.27rem;
-  height: 0.27rem;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.admin-diary-day h3,
-.admin-diary-form h4 { margin: 0; }
-
-.admin-diary-visits {
-  list-style: none;
-  display: grid;
-  gap: 0.45rem;
-  margin: 0.65rem 0 0;
-  padding: 0;
-}
-
-.admin-diary-visits li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 0.35rem clamp(0.6rem, 2vw, 1rem);
+.admin-notebook {
+  --notebook-time: clamp(3.1rem, 9vw, 5.4rem);
+  --notebook-line: #d9e2e9;
+  --notebook-ink: #203c58;
+  max-width: 54rem;
+  margin-inline: auto;
+  padding: clamp(0.75rem, 3vw, 2rem);
   border: 1px solid var(--admin-line);
-  border-radius: 0.6rem;
-  padding: 0.65rem 0.75rem;
+  border-radius: 0.85rem;
+  background: #fffefa;
+  box-shadow: 0 8px 24px rgb(28 44 37 / 5%);
+  scroll-margin-top: 5rem;
 }
 
-.admin-diary-time,
-.admin-diary-client { display: grid; }
-.admin-diary-time { font-variant-numeric: tabular-nums; }
-.admin-diary-time time { font-weight: 700; }
-.admin-diary-time span,
-.admin-diary-client span,
-.admin-diary-empty { color: var(--admin-muted); font-size: 0.85rem; }
-.admin-diary-client { overflow-wrap: anywhere; }
-.admin-diary-client a { width: fit-content; color: var(--admin-accent); }
+.admin-notebook-header { margin-block-end: 1.2rem; text-align: center; }
 
-.admin-diary-form {
+.admin-notebook-nav {
+  display: grid;
+  grid-template-columns: 2.7rem minmax(0, 1fr) 2.7rem;
+  align-items: center;
+  gap: 0.65rem;
+  max-width: 30rem;
+  margin-inline: auto;
+}
+
+.admin-notebook-date p,
+.admin-notebook-service {
+  margin: 0;
+  color: var(--admin-muted);
+  overflow-wrap: anywhere;
+}
+
+.admin-notebook-date p { color: #865752; font-weight: 650; }
+.admin-notebook-date h1 {
+  margin: 0.1rem 0 0;
+  color: var(--notebook-ink);
+  font-size: clamp(1.65rem, 4.6vw, 2.75rem);
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.admin-notebook-service { margin-block-start: 0.35rem; }
+
+.admin-layout:has([data-admin-view="appointments"]:not([hidden])) .admin-save-bar:has([data-admin-discard][hidden]) {
+  display: none;
+}
+
+.admin-notebook-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.6rem;
+  margin-block-end: 0.8rem;
+}
+
+.admin-notebook-editor summary {
+  width: fit-content;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #bdd2c9;
+  border-radius: 0.55rem;
+  color: var(--admin-accent);
+  background: #f1f8f3;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-notebook-editor[open] { grid-column: 1 / -1; }
+.admin-notebook-editor[open] + a { grid-column: 2; }
+
+.admin-notebook-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: end;
   gap: 0.65rem;
-  margin-block-start: 1rem;
-  padding: 0.85rem;
-  border-radius: 0.65rem;
-  background: var(--admin-bg);
+  align-items: end;
+  margin-block-start: 0.65rem;
+  padding: 0.75rem;
+  border: 1px solid var(--admin-line);
+  border-radius: 0.55rem;
+  background: #f5f8f5;
 }
 
-.admin-diary-form h4,
-.admin-diary-service,
-.admin-diary-feedback { grid-column: 1 / -1; }
-.admin-diary-form button { justify-self: start; }
-.admin-diary-form input { min-width: 0; }
-.admin-diary-feedback { margin: 0; color: #9a2524; font-size: 0.85rem; }
-.admin-diary-feedback:empty { display: none; }
+.admin-notebook-form input { min-width: 0; }
+.admin-notebook-form button { justify-self: start; }
+.admin-notebook-form [role="status"] { grid-column: 1 / -1; color: #9a2524; }
+.admin-notebook-form [role="status"]:empty { display: none; }
+
+.admin-notebook-note,
+.admin-notebook-muted {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 0.85rem;
+}
+
+.admin-notebook-note { margin-block-end: 0.7rem; }
+
+.admin-notebook-lines {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border-block-start: 1px solid var(--notebook-line);
+  list-style: none;
+}
+
+.admin-notebook-line {
+  display: grid;
+  grid-template-columns: var(--notebook-time) minmax(0, 1fr);
+  min-height: 2.9rem;
+  border-bottom: 1px solid var(--notebook-line);
+}
+
+.admin-notebook-line > time,
+.admin-notebook-line > span {
+  padding: 0.66rem 0.55rem 0.55rem 0;
+  color: var(--notebook-ink);
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.admin-notebook-line-content {
+  display: grid;
+  align-content: center;
+  gap: 0.5rem;
+  min-width: 0;
+  border-left: 1px solid #d9a5a1;
+  padding: 0.35rem clamp(0.45rem, 2vw, 1rem);
+}
+
+.admin-notebook-line[data-occupied] .admin-notebook-line-content {
+  box-shadow: inset 0.2rem 0 #609280;
+  background: #eef6ef;
+}
+
+.admin-notebook-visit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.45rem 0.8rem;
+  padding-block: 0.15rem;
+}
+
+.admin-notebook-client {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.7rem;
+  overflow-wrap: anywhere;
+}
+.admin-notebook-client small { color: var(--admin-muted); }
+.admin-notebook-client a { color: var(--admin-accent); }
+.admin-notebook-status select { width: auto; min-height: 2rem; padding-block: 0.2rem; }
+
+.admin-notebook-slot {
+  justify-self: start;
+  width: 2.25rem;
+  min-height: 2rem;
+  padding: 0;
+  border: 1px solid #d4e0d9;
+  border-radius: 0.4rem;
+  color: var(--admin-accent);
+  background: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.admin-notebook-slot:hover { background: var(--admin-accent-soft); }
 
 @media (max-width: 56rem) {
-  .admin-diary { scroll-margin-top: 8rem; }
-  .admin-diary-layout { grid-template-columns: minmax(0, 1fr); }
+  .admin-notebook { scroll-margin-top: 8rem; }
 }
 
-@media (max-width: 30rem) {
-  .admin-diary-visits li { grid-template-columns: auto minmax(0, 1fr); }
-  .admin-diary-visits .status-pill { grid-column: 2; justify-self: start; }
-  .admin-diary-form .admin-field:nth-of-type(-n+3) { grid-column: 1 / -1; }
+@media (max-width: 34rem) {
+  .admin-notebook-visit { grid-template-columns: minmax(0, 1fr); }
+  .admin-notebook-form .admin-field:nth-of-type(-n+2) { grid-column: 1 / -1; }
 }
 
 .admin-calendar-day[data-state="closed"],
@@ -1102,24 +1132,6 @@
     display: none;
   }
 
-  .admin-metrics {
-    gap: 0.5rem;
-  }
-
-  .admin-metric {
-    gap: 0.3rem;
-    padding: 0.7rem;
-    font-size: 0.78rem;
-  }
-
-  .admin-metric strong {
-    font-size: 1.55rem;
-  }
-
-  .admin-metric-hint {
-    font-size: 0.7rem;
-  }
-
   .admin-table,
   .admin-table tbody {
     display: grid;
@@ -1199,7 +1211,4 @@
     padding-inline: 0.7rem;
   }
 
-  .admin-metric {
-    padding: 0.52rem;
-  }
 }
