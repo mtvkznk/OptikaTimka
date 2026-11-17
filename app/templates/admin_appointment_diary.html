@@ -1,0 +1,85 @@
+{% macro diary_url(day) %}/admin?day={{ day.isoformat() }}#appointment-diary{% endmacro %}
+<section class="admin-panel admin-diary" id="appointment-diary" aria-labelledby="diary-heading">
+  <div class="admin-panel-heading">
+    <h2 id="diary-heading">Розклад прийомів</h2>
+    {% if diary.date != today %}<a class="admin-button" href="{{ diary_url(today) }}">Сьогодні</a>{% endif %}
+  </div>
+  <div class="admin-diary-layout">
+    <nav class="admin-calendar admin-diary-calendar" aria-label="Календар прийомів">
+      <div class="admin-calendar-nav">
+        {% if diary.previous %}
+        <a class="admin-button" href="{{ diary_url(diary.previous) }}" aria-label="Попередній місяць">←</a>
+        {% else %}<span></span>{% endif %}
+        <h3>{{ diary.month }}</h3>
+        {% if diary.next %}
+        <a class="admin-button" href="{{ diary_url(diary.next) }}" aria-label="Наступний місяць">→</a>
+        {% else %}<span></span>{% endif %}
+      </div>
+      <div class="admin-calendar-grid" aria-hidden="true">
+        {% for _, label in weekdays %}<span class="admin-calendar-week">{{ label }}</span>{% endfor %}
+      </div>
+      <div class="admin-calendar-grid">
+        {% for _ in range(diary.offset) %}<span aria-hidden="true"></span>{% endfor %}
+        {% for day, count in diary.days %}
+        <a class="admin-calendar-day" href="{{ diary_url(day) }}" data-diary-day="{{ day.isoformat() }}"
+           aria-label="{{ format_date(day) }}{% if count %}, кількість записів {{ count }}{% endif %}"
+           {% if day == diary.date %}aria-current="date"{% endif %}>
+          {{ day.day }}
+          {% if count %}<span class="admin-diary-marker" aria-hidden="true"></span>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </nav>
+    <div class="admin-diary-day">
+      <h3>{{ weekdays[diary.date.weekday()][1] }}, <time datetime="{{ diary.date.isoformat() }}">{{ format_date(diary.date) }}</time></h3>
+      {% if diary.rows %}
+      <ul class="admin-diary-visits" aria-label="Активні записи на вибраний день">
+        {% for row in diary.rows %}
+        {% set visit = row.appointment %}
+        <li>
+          <div class="admin-diary-time">
+            {% if visit.preferred_time %}
+            <time>{{ format_time(visit.preferred_time) }}</time><span>до {{ row.end_time }}</span>
+            {% else %}<span>Без часу</span>{% endif %}
+          </div>
+          <div class="admin-diary-client">
+            <strong>{{ visit.name }}</strong>
+            {% if visit.phone_normalized %}
+            <a href="tel:{{ visit.phone_normalized }}">{{ visit.phone }}</a>
+            {% elif visit.phone %}<span>{{ visit.phone }}</span>{% endif %}
+            <span>{{ visit.service }}</span>
+          </div>
+          <span class="status-pill status-{{ row.status_value }}">{{ row.status_label }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="admin-diary-empty">На цей день ще немає активних записів.</p>
+      {% endif %}
+      <form class="admin-diary-form" action="/admin/appointments/manual" method="post"
+            data-manual-appointment data-return-to="{{ diary_url(diary.date) }}" aria-labelledby="manual-appointment-heading">
+        <h4 id="manual-appointment-heading">Додати запис вручну</h4>
+        {% include "csrf_field.html" %}
+        <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
+        <label class="admin-field">Ім’я та прізвище
+          <input name="name" maxlength="120" required />
+        </label>
+        <label class="admin-field">Номер телефону
+          <input type="tel" name="phone" inputmode="tel" maxlength="40" required />
+        </label>
+        <label class="admin-field">Час
+          <input type="time" name="preferred_time" required />
+        </label>
+        <label class="admin-field">Тривалість
+          <select name="duration_minutes">
+            {% for duration in diary.durations %}
+            <option value="{{ duration }}"{% if duration == 30 %} selected{% endif %}>{{ duration }} хв</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="admin-button admin-primary" type="submit">Додати запис</button>
+        <p class="admin-diary-feedback" data-manual-feedback role="status"></p>
+      </form>
+    </div>
+  </div>
+</section>

@@ -67,6 +67,37 @@ if (adminViews.length) {
   window.addEventListener("hashchange", syncAdminView);
 }
 
+const manualAppointment = document.querySelector("[data-manual-appointment]");
+manualAppointment?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = manualAppointment.querySelector("button");
+  const feedback = manualAppointment.querySelector("[data-manual-feedback]");
+  if (button.disabled) return;
+  button.disabled = true;
+  feedback.textContent = "";
+  const fallback = "Не вдалося додати запис. Перевірте поля або оновіть сторінку.";
+  let saved = false;
+  try {
+    const response = await fetch(manualAppointment.action, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      body: new URLSearchParams(new FormData(manualAppointment)),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      feedback.textContent = typeof body?.detail === "string" ? body.detail : fallback;
+      return;
+    }
+    saved = true;
+    history.replaceState(null, "", manualAppointment.dataset.returnTo);
+    location.reload();
+  } catch {
+    feedback.textContent = fallback;
+  } finally {
+    button.disabled = saved;
+  }
+});
+
 function revealEditor(form) {
   const view = form.closest("[data-admin-view]");
   if (view && view.hidden) {

@@ -3,6 +3,7 @@ import hashlib
 import logging
 import re
 import secrets
+from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -191,8 +192,9 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
+MANUAL_APPOINTMENT_DURATIONS = (15, 20, 30, 45, 60, 90)
 ASSET_VERSION = "20261114-time-columns"
-ADMIN_ASSET_VERSION = "20261115-catalog-order"
+ADMIN_ASSET_VERSION = "20261117-appointment-diary"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -338,6 +340,11 @@ def build_appointment_rows(appointments: list[Appointment]) -> list[dict[str, An
             "appointment": appointment,
             "status_value": status_value(appointment),
             "status_label": status_label(appointment.status),
+            "end_time": (
+                "{:02d}:{:02d}".format(*divmod(
+                    minute_of(appointment.preferred_time) + appointment.duration_minutes, 60,
+                )) if appointment.preferred_time is not None else None
+            ),
         }
         for appointment in appointments
     ]
@@ -417,7 +424,38 @@ def apply_sort_order(session: Session, model: type[Any], ids: list[int]) -> None
     session.commit()
 
 
-def admin_context(session: Session, request: Request) -> dict[str, Any]:
+def appointment_diary(session: Session, day: date) -> dict[str, Any]:
+    first = day.replace(day=1)
+    offset, month_days = monthrange(day.year, day.month)
+    last = day.replace(day=month_days)
+    active = Appointment.status != AppointmentStatus.canceled
+    counts = dict(session.exec(
+        select(Appointment.preferred_date, func.count())
+        .where(active, Appointment.preferred_date.between(first, last))
+        .group_by(Appointment.preferred_date)
+    ).all())
+    appointments = list(session.exec(
+        select(Appointment)
+        .where(active, Appointment.preferred_date == day)
+        .order_by(Appointment.preferred_time.is_(None), Appointment.preferred_time, Appointment.id)
+    ))
+    return {
+        "date": day,
+        "month": f"{MONTH_TITLE_LABELS[day.month]} {day.year}",
+        "offset": offset,
+        "days": [(value, counts.get(value, 0)) for value in (
+            first + timedelta(days=index) for index in range(month_days)
+        )],
+        "previous": (first - timedelta(days=1)).replace(day=1) if first > date.min else None,
+        "next": last + timedelta(days=1) if last < date.max else None,
+        "rows": build_appointment_rows(appointments),
+        "durations": MANUAL_APPOINTMENT_DURATIONS,
+    }
+
+
+def admin_context(
+    session: Session, request: Request, diary_day: date | None = None,
+) -> dict[str, Any]:
     ensure_seed_data(session)
     today = current_date()
 
@@ -453,6 +491,7 @@ def admin_context(session: Session, request: Request) -> dict[str, Any]:
         "app_name": settings.app_name,
         "admin_asset_version": ADMIN_ASSET_VERSION,
         "today": today,
+        "diary": appointment_diary(session, diary_day or today),
         "services": services,
         "weekdays": [(1 << index, label) for index, label in enumerate(WEEKDAY_LABELS)],
         "all_weekdays": ALL_WEEKDAYS,
@@ -1011,8 +1050,8 @@ def logout(request: Request, session: SessionDep) -> RedirectResponse:
 
 
 @admin_router.get("", response_class=HTMLResponse)
-def admin(request: Request, session: SessionDep) -> HTMLResponse:
-    return templates.TemplateResponse(request, "admin.html", admin_context(session, request))
+def admin(request: Request, session: SessionDep, day: date | None = None) -> HTMLResponse:
+    return templates.TemplateResponse(request, "admin.html", admin_context(session, request, day))
 
 
 @admin_router.get("/appointments", response_class=HTMLResponse)
@@ -1029,6 +1068,38 @@ def admin_appointments(
         request,
         "admin_appointments.html",
         appointments_context(session, request, page, q.strip(), visit_date, status_filter),
+    )
+
+
+@admin_router.post("/appointments/manual", response_model=None)
+def create_manual_appointment(
+    request: Request, session: SessionDep, form_data: FormDataDep,
+) -> Response:
+    payload = validated_form(AppointmentCreate, {
+        "name": form_data.get("name", ""),
+        "phone": form_data.get("phone", ""),
+        "preferred_date": form_data.get("preferred_date", ""),
+        "preferred_time": form_data.get("preferred_time", ""),
+        "service": "Ручний запис",
+    })
+    duration = form_int(form_data, "duration_minutes", 30)
+    start = minute_of(payload.preferred_time)
+    if duration not in MANUAL_APPOINTMENT_DURATIONS or start + duration > 24 * 60:
+        raise HTTPException(422, "Виберіть тривалість, що вміщується в цей день.")
+
+    lock_booking_writes(session)
+    check_booking_overlap(session, payload.preferred_date, start, duration)
+    session.add(Appointment.model_validate(payload, update={
+        "status": AppointmentStatus.confirmed,
+        "duration_minutes": duration,
+        "phone_normalized": payload.phone,
+    }))
+    session.commit()
+    if request.headers.get("accept") == "application/json":
+        return JSONResponse({"status": "ok"}, status_code=201)
+    return RedirectResponse(
+        f"/admin?day={payload.preferred_date.isoformat()}#appointment-diary",
+        status_code=303,
     )
 
 

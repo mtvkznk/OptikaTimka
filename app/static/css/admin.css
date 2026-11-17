@@ -892,6 +892,103 @@
   text-underline-offset: 0.2em;
 }
 
+.admin-diary { scroll-margin-top: 5rem; }
+
+.admin-diary-layout {
+  display: grid;
+  grid-template-columns: minmax(15rem, 21rem) minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(1rem, 3vw, 2rem);
+}
+
+.admin-diary-calendar {
+  width: 100%;
+  background: var(--admin-bg);
+}
+
+.admin-diary-calendar .admin-calendar-day {
+  position: relative;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.admin-diary-calendar .admin-calendar-day[aria-current="date"] {
+  border-color: var(--admin-accent);
+  color: #fff;
+  background: var(--admin-accent);
+}
+
+.admin-diary-marker {
+  position: absolute;
+  inset-block-end: 0.24rem;
+  width: 0.27rem;
+  height: 0.27rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.admin-diary-day h3,
+.admin-diary-form h4 { margin: 0; }
+
+.admin-diary-visits {
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.65rem 0 0;
+  padding: 0;
+}
+
+.admin-diary-visits li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.35rem clamp(0.6rem, 2vw, 1rem);
+  border: 1px solid var(--admin-line);
+  border-radius: 0.6rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.admin-diary-time,
+.admin-diary-client { display: grid; }
+.admin-diary-time { font-variant-numeric: tabular-nums; }
+.admin-diary-time time { font-weight: 700; }
+.admin-diary-time span,
+.admin-diary-client span,
+.admin-diary-empty { color: var(--admin-muted); font-size: 0.85rem; }
+.admin-diary-client { overflow-wrap: anywhere; }
+.admin-diary-client a { width: fit-content; color: var(--admin-accent); }
+
+.admin-diary-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 0.65rem;
+  margin-block-start: 1rem;
+  padding: 0.85rem;
+  border-radius: 0.65rem;
+  background: var(--admin-bg);
+}
+
+.admin-diary-form h4,
+.admin-diary-feedback { grid-column: 1 / -1; }
+.admin-diary-form button { justify-self: start; }
+.admin-diary-form input { min-width: 0; }
+.admin-diary-feedback { margin: 0; color: #9a2524; font-size: 0.85rem; }
+.admin-diary-feedback:empty { display: none; }
+
+@media (max-width: 56rem) {
+  .admin-diary { scroll-margin-top: 8rem; }
+  .admin-diary-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 30rem) {
+  .admin-diary-visits li { grid-template-columns: auto minmax(0, 1fr); }
+  .admin-diary-visits .status-pill { grid-column: 2; justify-self: start; }
+  .admin-diary-form .admin-field:nth-of-type(-n+2) { grid-column: 1 / -1; }
+}
+
 .admin-calendar-day[data-state="closed"],
 .admin-calendar-legend [data-calendar-key="closed"]::before {
   border-color: #e4bdbd;
