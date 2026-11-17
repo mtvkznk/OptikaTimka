@@ -67,6 +67,9 @@ if (adminViews.length) {
   window.addEventListener("hashchange", syncAdminView);
 }
 
+const diaryFilter = document.querySelector("[data-diary-filter]");
+diaryFilter?.addEventListener("change", () => diaryFilter.requestSubmit());
+
 const manualAppointment = document.querySelector("[data-manual-appointment]");
 manualAppointment?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -83,13 +86,13 @@ manualAppointment?.addEventListener("submit", async (event) => {
       headers: { Accept: "application/json" },
       body: new URLSearchParams(new FormData(manualAppointment)),
     });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body?.redirect) {
       feedback.textContent = typeof body?.detail === "string" ? body.detail : fallback;
       return;
     }
     saved = true;
-    history.replaceState(null, "", manualAppointment.dataset.returnTo);
+    history.replaceState(null, "", body.redirect);
     location.reload();
   } catch {
     feedback.textContent = fallback;

@@ -2,7 +2,17 @@ from datetime import UTC, date, datetime, time
 from enum import Enum
 
 from pydantic import EmailStr, field_validator, model_validator
-from sqlalchemy import JSON, Column, DateTime, Index, Integer, LargeBinary, UniqueConstraint, text
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    LargeBinary,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, SQLModel
 
@@ -223,6 +233,11 @@ class Appointment(AppointmentBase, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(sa_type=Text)
+    phone: str = Field(sa_type=Text)
+    service_id: int | None = Field(
+        default=None, foreign_key="bookingservice.id", ondelete="SET NULL", index=True,
+    )
     duration_minutes: int = Field(
         default=60, sa_column=Column(Integer, nullable=False, server_default="60"),
     )

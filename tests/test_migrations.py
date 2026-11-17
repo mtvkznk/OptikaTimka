@@ -86,6 +86,7 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
         assert row["phone_normalized"] == "+380980000001"
         assert row["email_normalized"] == "google@example.com"
         assert row["duration_minutes"] == 75
+        assert row["service_id"] == connection.execute(sa.text("SELECT id FROM bookingservice")).scalar_one()
         assert connection.execute(sa.text("SELECT weekdays_mask FROM bookingservice")).scalar_one() == 127
         customers = connection.execute(sa.text("SELECT * FROM customer ORDER BY id")).mappings().all()
         assert customers[0]["phone"] is None
@@ -94,6 +95,12 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
         assert connection.execute(sa.text("SELECT COUNT(*) FROM customersession")).scalar_one() == 0
     command.downgrade(config, "20260916_0003")
     command.upgrade(config, "head")
+    with engine.begin() as connection:
+        connection.execute(sa.text("UPDATE appointment SET phone = :phone"), {"phone": "x" * 80})
+    with pytest.raises(RuntimeError, match="Downgrade would lose appointment contacts"):
+        command.downgrade(config, "20261115_0011")
+    with engine.connect() as connection:
+        assert connection.execute(sa.text("SELECT phone FROM appointment")).scalar_one() == "x" * 80
 
 
 def test_migration_refuses_to_silently_cancel_duplicate_bookings(
@@ -130,12 +137,14 @@ def test_remove_phone_login_preserves_customer_sessions_and_bookings(
             customer_id=customer.id, token_hash="existing-session-hash",
             expires_at=utc_now() + timedelta(days=1),
         )
-        appointment = Appointment(
-            name="Existing Client", phone="+380671234567", service="Exam", customer_id=customer.id,
-        )
-        session.add_all([login, appointment])
+        appointment = sa.Table("appointment", sa.MetaData(), autoload_with=engine)
+        session.add(login)
         session.flush()
-        customer_id, login_id, appointment_id = customer.id, login.id, appointment.id
+        appointment_id = session.execute(appointment.insert().values(
+            name="Existing Client", phone="+380671234567", service="Exam", customer_id=customer.id,
+            message="", status="new", created_at=utc_now(), updated_at=utc_now(),
+        ).returning(appointment.c.id)).scalar_one()
+        customer_id, login_id = customer.id, login.id
         session.commit()
     command.upgrade(config, "head")
     with Session(engine) as session:

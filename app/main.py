@@ -100,7 +100,7 @@ from app.security import (
     read_form_data,
     require_admin,
 )
-from app.validation import normalize_email
+from app.validation import normalize_email, normalize_phone
 
 IS_PRODUCTION = settings.environment == "production"
 if IS_PRODUCTION:
@@ -192,9 +192,8 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-MANUAL_APPOINTMENT_DURATIONS = (15, 20, 30, 45, 60, 90)
 ASSET_VERSION = "20261114-time-columns"
-ADMIN_ASSET_VERSION = "20261117-appointment-diary"
+ADMIN_ASSET_VERSION = "20261117-service-diaries"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -424,19 +423,21 @@ def apply_sort_order(session: Session, model: type[Any], ids: list[int]) -> None
     session.commit()
 
 
-def appointment_diary(session: Session, day: date) -> dict[str, Any]:
+def appointment_diary(session: Session, day: date, service_id: int) -> dict[str, Any]:
     first = day.replace(day=1)
     offset, month_days = monthrange(day.year, day.month)
     last = day.replace(day=month_days)
-    active = Appointment.status != AppointmentStatus.canceled
+    filters = [Appointment.status != AppointmentStatus.canceled]
+    if service_id:
+        filters.append(Appointment.service_id == service_id)
     counts = dict(session.exec(
         select(Appointment.preferred_date, func.count())
-        .where(active, Appointment.preferred_date.between(first, last))
+        .where(*filters, Appointment.preferred_date.between(first, last))
         .group_by(Appointment.preferred_date)
     ).all())
     appointments = list(session.exec(
         select(Appointment)
-        .where(active, Appointment.preferred_date == day)
+        .where(*filters, Appointment.preferred_date == day)
         .order_by(Appointment.preferred_time.is_(None), Appointment.preferred_time, Appointment.id)
     ))
     return {
@@ -449,17 +450,29 @@ def appointment_diary(session: Session, day: date) -> dict[str, Any]:
         "previous": (first - timedelta(days=1)).replace(day=1) if first > date.min else None,
         "next": last + timedelta(days=1) if last < date.max else None,
         "rows": build_appointment_rows(appointments),
-        "durations": MANUAL_APPOINTMENT_DURATIONS,
+        "service_id": service_id,
     }
 
 
 def admin_context(
-    session: Session, request: Request, diary_day: date | None = None,
+    session: Session, request: Request, diary_day: date | None = None, diary_service_id: int = 0,
 ) -> dict[str, Any]:
     ensure_seed_data(session)
     today = current_date()
 
-    services = get_active_services(session)
+    diary_services = list(session.exec(
+        select(BookingService)
+        .where(
+            or_(
+                BookingService.is_active,
+                select(Appointment.id).where(Appointment.service_id == BookingService.id).exists(),
+            )
+        )
+        .order_by(BookingService.is_active.desc(), BookingService.sort_order, BookingService.id)
+    ))
+    services = [service for service in diary_services if service.is_active]
+    if not any(service.id == diary_service_id for service in diary_services):
+        diary_service_id = 0
     records = category_records(session)
     closed_dates = list(
         session.exec(select(ClosedDate).order_by(ClosedDate.closed_on, ClosedDate.id)).all()
@@ -491,7 +504,8 @@ def admin_context(
         "app_name": settings.app_name,
         "admin_asset_version": ADMIN_ASSET_VERSION,
         "today": today,
-        "diary": appointment_diary(session, diary_day or today),
+        "diary": appointment_diary(session, diary_day or today, diary_service_id),
+        "diary_services": diary_services,
         "services": services,
         "weekdays": [(1 << index, label) for index, label in enumerate(WEEKDAY_LABELS)],
         "all_weekdays": ALL_WEEKDAYS,
@@ -1050,8 +1064,13 @@ def logout(request: Request, session: SessionDep) -> RedirectResponse:
 
 
 @admin_router.get("", response_class=HTMLResponse)
-def admin(request: Request, session: SessionDep, day: date | None = None) -> HTMLResponse:
-    return templates.TemplateResponse(request, "admin.html", admin_context(session, request, day))
+def admin(
+    request: Request,
+    session: SessionDep,
+    day: date | None = None,
+    service_id: Annotated[int, Query(ge=0, le=2_147_483_647)] = 0,
+) -> HTMLResponse:
+    return templates.TemplateResponse(request, "admin.html", admin_context(session, request, day, service_id))
 
 
 @admin_router.get("/appointments", response_class=HTMLResponse)
@@ -1075,32 +1094,40 @@ def admin_appointments(
 def create_manual_appointment(
     request: Request, session: SessionDep, form_data: FormDataDep,
 ) -> Response:
-    payload = validated_form(AppointmentCreate, {
-        "name": form_data.get("name", ""),
-        "phone": form_data.get("phone", ""),
-        "preferred_date": form_data.get("preferred_date", ""),
-        "preferred_time": form_data.get("preferred_time", ""),
-        "service": "Ручний запис",
-    })
-    duration = form_int(form_data, "duration_minutes", 30)
-    start = minute_of(payload.preferred_time)
-    if duration not in MANUAL_APPOINTMENT_DURATIONS or start + duration > 24 * 60:
-        raise HTTPException(422, "Виберіть тривалість, що вміщується в цей день.")
+    name = form_data.get("name", "").strip()
+    phone = form_data.get("phone", "").strip()
+    if not name and not phone:
+        raise HTTPException(422, "Введіть ім’я або контакт.")
+    if "\0" in name or "\0" in phone:
+        raise HTTPException(422, "Перевірте символи в імені та контакті.")
+    day = form_date(form_data, "preferred_date")
+    start_time = form_time(form_data, "preferred_time")
+    end_time = form_time(form_data, "end_time")
+    if any(value.tzinfo or value.second or value.microsecond for value in (start_time, end_time)):
+        raise HTTPException(422, "Вкажіть час у годинах і хвилинах.")
+    start = minute_of(start_time)
+    duration = (minute_of(end_time) or 24 * 60) - start
+    if duration <= 0:
+        raise HTTPException(422, "Час завершення має бути пізнішим за час початку.")
+    service_id = form_int(form_data, "service_id")
+    if not 0 < service_id <= 2_147_483_647:
+        raise HTTPException(422, "Виберіть активну послугу.")
 
     lock_booking_writes(session)
-    check_booking_overlap(session, payload.preferred_date, start, duration)
-    session.add(Appointment.model_validate(payload, update={
-        "status": AppointmentStatus.confirmed,
-        "duration_minutes": duration,
-        "phone_normalized": payload.phone,
-    }))
+    service = session.get(BookingService, service_id)
+    if service is None or not service.is_active:
+        raise HTTPException(422, "Виберіть активну послугу.")
+    check_booking_overlap(session, day, start, duration)
+    session.add(Appointment(
+        name=name, phone=phone, phone_normalized=normalize_phone(phone),
+        service=service.name, service_id=service.id, preferred_date=day, preferred_time=start_time,
+        status=AppointmentStatus.confirmed, duration_minutes=duration,
+    ))
     session.commit()
+    return_to = f"/admin?day={day.isoformat()}&service_id={service_id}#appointment-diary"
     if request.headers.get("accept") == "application/json":
-        return JSONResponse({"status": "ok"}, status_code=201)
-    return RedirectResponse(
-        f"/admin?day={payload.preferred_date.isoformat()}#appointment-diary",
-        status_code=303,
-    )
+        return JSONResponse({"redirect": return_to}, status_code=201)
+    return RedirectResponse(return_to, status_code=303)
 
 
 @admin_router.post("/changes")
@@ -1253,6 +1280,7 @@ def create_appointment(
     check_booking_overlap(session, day, start, duration)
 
     appointment = Appointment.model_validate(payload)
+    appointment.service_id = service.id
     appointment.duration_minutes = duration
     appointment.phone_normalized = payload.phone
     appointment.email_normalized = normalize_email(payload.email)

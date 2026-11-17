@@ -1,9 +1,21 @@
-{% macro diary_url(day) %}/admin?day={{ day.isoformat() }}#appointment-diary{% endmacro %}
+{% macro diary_url(day) %}/admin?day={{ day.isoformat() }}{% if diary.service_id %}&amp;service_id={{ diary.service_id }}{% endif %}#appointment-diary{% endmacro %}
 <section class="admin-panel admin-diary" id="appointment-diary" aria-labelledby="diary-heading">
   <div class="admin-panel-heading">
     <h2 id="diary-heading">Розклад прийомів</h2>
     {% if diary.date != today %}<a class="admin-button" href="{{ diary_url(today) }}">Сьогодні</a>{% endif %}
   </div>
+  <form class="admin-diary-filter" method="get" action="/admin#appointment-diary" data-diary-filter>
+    <input type="hidden" name="day" value="{{ diary.date.isoformat() }}" />
+    <label class="admin-field">Розклад послуги
+      <select name="service_id">
+        <option value="0">Усі послуги</option>
+        {% for service in diary_services %}
+        <option value="{{ service.id }}"{% if service.id == diary.service_id %} selected{% endif %}>{{ service.name }}{% if not service.is_active %} (архів){% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript><button class="admin-button" type="submit">Показати</button></noscript>
+  </form>
   <div class="admin-diary-layout">
     <nav class="admin-calendar admin-diary-calendar" aria-label="Календар прийомів">
       <div class="admin-calendar-nav">
@@ -43,7 +55,7 @@
             {% else %}<span>Без часу</span>{% endif %}
           </div>
           <div class="admin-diary-client">
-            <strong>{{ visit.name }}</strong>
+            <strong>{{ visit.name or "Без імені" }}</strong>
             {% if visit.phone_normalized %}
             <a href="tel:{{ visit.phone_normalized }}">{{ visit.phone }}</a>
             {% elif visit.phone %}<span>{{ visit.phone }}</span>{% endif %}
@@ -56,30 +68,36 @@
       {% else %}
       <p class="admin-diary-empty">На цей день ще немає активних записів.</p>
       {% endif %}
+      {% if services %}
       <form class="admin-diary-form" action="/admin/appointments/manual" method="post"
-            data-manual-appointment data-return-to="{{ diary_url(diary.date) }}" aria-labelledby="manual-appointment-heading">
+            data-manual-appointment aria-labelledby="manual-appointment-heading">
         <h4 id="manual-appointment-heading">Додати запис вручну</h4>
         {% include "csrf_field.html" %}
         <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
-        <label class="admin-field">Ім’я та прізвище
-          <input name="name" maxlength="120" required />
-        </label>
-        <label class="admin-field">Номер телефону
-          <input type="tel" name="phone" inputmode="tel" maxlength="40" required />
-        </label>
-        <label class="admin-field">Час
-          <input type="time" name="preferred_time" required />
-        </label>
-        <label class="admin-field">Тривалість
-          <select name="duration_minutes">
-            {% for duration in diary.durations %}
-            <option value="{{ duration }}"{% if duration == 30 %} selected{% endif %}>{{ duration }} хв</option>
+        <label class="admin-field admin-diary-service">Послуга
+          <select name="service_id" required>
+            <option value="">Оберіть послугу</option>
+            {% for service in services %}
+            <option value="{{ service.id }}"{% if service.id == diary.service_id %} selected{% endif %}>{{ service.name }}</option>
             {% endfor %}
           </select>
+        </label>
+        <label class="admin-field">Ім’я та прізвище
+          <input name="name" />
+        </label>
+        <label class="admin-field">Телефон або контакт
+          <input type="text" name="phone" />
+        </label>
+        <label class="admin-field">Початок
+          <input type="time" name="preferred_time" required />
+        </label>
+        <label class="admin-field">Кінець
+          <input type="time" name="end_time" required />
         </label>
         <button class="admin-button admin-primary" type="submit">Додати запис</button>
         <p class="admin-diary-feedback" data-manual-feedback role="status"></p>
       </form>
+      {% endif %}
     </div>
   </div>
 </section>

@@ -13,7 +13,7 @@
     {% set appointment = row.appointment %}
     <tr role="row">
       <td role="cell" class="admin-client">
-        <strong>{{ appointment.name }}</strong>
+        <strong>{{ appointment.name or "Без імені" }}</strong>
         {% if appointment.phone_normalized %}
         <a href="tel:{{ appointment.phone_normalized }}">{{ appointment.phone }}</a>
         {% elif appointment.phone %}
@@ -44,7 +44,7 @@
         <form class="admin-status-form" action="/admin/appointments/{{ appointment.id }}/status" method="post" data-admin-edit="appointments" data-id="{{ appointment.id }}" data-version="{{ appointment.updated_at.isoformat() }}">
           {% include "csrf_field.html" %}
           <input type="hidden" name="return_to" value="{{ appointment_return_url }}" />
-          <select name="status" aria-label="Статус запису {{ appointment.name }}">
+          <select name="status" aria-label="Статус запису {{ appointment.name or appointment.phone }}">
             {% for option in status_options %}
             <option value="{{ option.value }}"{% if option.value == row.status_value %} selected{% endif %}>{{ option.label }}</option>
             {% endfor %}

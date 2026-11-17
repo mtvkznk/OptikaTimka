@@ -14,6 +14,7 @@ from app.main import current_date
 from app.models import (
     Appointment,
     AppointmentStatus,
+    BookingService,
     CatalogCategory,
     ClosedDate,
     ServiceClosedDate,
@@ -25,6 +26,11 @@ def test_appointment_diary_filters_and_orders_the_selected_day(
     client: TestClient, app_db: Engine,
 ) -> None:
     with Session(app_db) as session:
+        service = BookingService(name="Diary service")
+        other_service = BookingService(name="Other service")
+        session.add_all([service, other_service])
+        session.flush()
+        service_id = service.id
         for name, day, starts, status in (
             ("Later in the diary", date(2026, 12, 1), time(14, 30), AppointmentStatus.new),
             ("Earlier in the diary", date(2026, 12, 1), time(11), AppointmentStatus.confirmed),
@@ -32,48 +38,64 @@ def test_appointment_diary_filters_and_orders_the_selected_day(
             ("Visit on another day", date(2026, 12, 2), time(10), AppointmentStatus.confirmed),
         ):
             session.add(Appointment(
-                name=name, phone="+380980000001", service="Test service",
+                name=name, phone="+380980000001", service=service.name, service_id=service_id,
                 preferred_date=day, preferred_time=starts, status=status,
             ))
+        session.add(Appointment(
+            name="Visit for another service", phone="+380980000001",
+            service=other_service.name, service_id=other_service.id,
+            preferred_date=date(2026, 12, 1), preferred_time=time(16),
+        ))
+        # Changing the current service name must preserve historical diary membership.
+        service.name = "Updated diary service"
         session.commit()
 
-    response = client.get("/admin", params={"day": "2026-12-01"})
+    response = client.get("/admin", params={"day": "2026-12-01", "service_id": service_id})
     assert response.status_code == 200
     agenda = response.text.split('id="appointment-diary"', 1)[1].split('id="appointments"', 1)[0]
     assert agenda.index("Earlier in the diary") < agenda.index("Later in the diary")
     assert "Canceled visit" not in agenda and "Visit on another day" not in agenda
+    assert "Visit for another service" not in agenda
+    assert "Updated diary service" in agenda
     assert 'aria-label="01.12.2026, кількість записів 2"' in agenda
-    assert 'day=2026-11-01#appointment-diary' in agenda
-    assert 'day=2027-01-01#appointment-diary' in agenda
+    assert f'day=2026-11-01&amp;service_id={service_id}#appointment-diary' in agenda
+    assert f'day=2027-01-01&amp;service_id={service_id}#appointment-diary' in agenda
 
 
 def test_manual_appointment_reserves_public_availability(
     client: TestClient, anonymous_client: TestClient, app_db: Engine,
 ) -> None:
     day = (current_date() + timedelta(days=2)).isoformat()
-    service = anonymous_client.get("/api/booking-services").json()[0]["name"]
+    services = anonymous_client.get("/api/booking-services").json()
+    service, other_service = services[:2]
     request = {
-        "name": "Test client", "phone": "067 123 45 67",
-        "preferred_date": day, "preferred_time": "10:10",
+        "name": "Test client " * 18, "phone": "Contact from the paper diary " * 5,
+        "preferred_date": day, "preferred_time": "10:10", "end_time": "11:47",
+        "service_id": str(service["id"]),
     }
     endpoint = "/admin/appointments/manual"
     assert anonymous_client.post(endpoint, data=request).status_code == 401
     result = client.post(endpoint, data=request, follow_redirects=False)
     assert result.status_code == 303
-    assert result.headers["location"] == f"/admin?day={day}#appointment-diary"
-    assert client.post(endpoint, data={**request, "preferred_time": "10:35"}).status_code == 409
+    assert result.headers["location"] == f"/admin?day={day}&service_id={service['id']}#appointment-diary"
+    assert client.post(endpoint, data={
+        **request, "preferred_time": "10:35", "service_id": str(other_service["id"]),
+    }).status_code == 409
+    assert client.post(endpoint, data={**request, "end_time": "10:00"}).status_code == 422
 
     slots = anonymous_client.get("/api/availability", params={
-        "preferred_date": day, "service": service,
+        "preferred_date": day, "service": other_service["name"],
     }).json()
     assert slots and all(
-        slot["end_time"] <= "10:10:00" or slot["start_time"] >= "10:40:00" for slot in slots
+        slot["end_time"] <= "10:10:00" or slot["start_time"] >= "11:47:00" for slot in slots
     )
     with Session(app_db) as session:
         appointment = session.exec(select(Appointment)).one()
-        assert appointment.phone == appointment.phone_normalized == "+380671234567"
+        assert appointment.name == request["name"].strip()
+        assert appointment.phone == request["phone"].strip()
+        assert appointment.phone_normalized is None
         assert appointment.status == AppointmentStatus.confirmed and appointment.customer_id is None
-        assert appointment.duration_minutes == 30
+        assert appointment.duration_minutes == 97 and appointment.service_id == service["id"]
 
 
 def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:
