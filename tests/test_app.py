@@ -70,6 +70,7 @@ def test_admin_dashboard_renders_controls(client: TestClient) -> None:
     assert "Адмінпанель" in response.text
     assert "Останні записи" not in response.text
     assert 'id="appointment-diary"' in response.text
+    assert 'href="/admin/appointments">Усі записи' in response.text
     assert 'aria-label="Наступний день"' in response.text
     assert "Загальний графік" in response.text
     assert "Послуги" in response.text

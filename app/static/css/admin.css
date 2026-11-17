@@ -898,6 +898,12 @@
   margin-block-end: 0.8rem;
 }
 
+.admin-notebook-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: 1rem;
+}
+
 .admin-notebook-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
