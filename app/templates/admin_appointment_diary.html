@@ -51,7 +51,11 @@
     <a class="admin-button" href="{{ diary_url(today) }}">Сьогодні</a>
   </div>
   {% endif %}
-  {% if diary.online_closed %}<p class="admin-notebook-note">Онлайн-запис на цей день закритий.</p>{% endif %}
+  {% if diary.online_closed %}
+  <p class="admin-notebook-note">Онлайн-запис на цей день закритий.</p>
+  {% elif diary.online_not_yet_open %}
+  <p class="admin-notebook-note">Онлайн-запис на цей день ще не відкрився.</p>
+  {% endif %}
   {% if diary.rows or diary.untimed %}
   <ul class="admin-notebook-lines" aria-label="Записи на вибраний день">
     {% for row in diary.rows %}
@@ -68,10 +72,10 @@
           <button class="admin-notebook-slot" type="button" data-notebook-start="{{ row.start }}"
                   aria-controls="manual-appointment" aria-expanded="false"
                   aria-label="Додати запис на {{ row.start }}" title="Додати запис на {{ row.start }}">+</button>
-          {% elif row.inside_schedule %}
-          <span class="admin-notebook-muted">Замало часу для прийому</span>
+          {% elif row.is_past %}
+          <span class="admin-notebook-muted">Час минув</span>
           {% else %}
-          <span class="admin-notebook-muted">Поза графіком</span>
+          <span class="admin-notebook-muted">Замало часу для прийому</span>
           {% endif %}
         {% endif %}
       </div>

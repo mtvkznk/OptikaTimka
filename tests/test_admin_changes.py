@@ -28,6 +28,8 @@ from app.models import (
 def test_doctor_notebook_orders_the_day_without_showing_other_clients(
     client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
 ) -> None:
+    now = datetime(2026, 11, 17, 18, 55, tzinfo=main.KYIV_TZ)
+    monkeypatch.setattr(main, "kyiv_now", lambda: now)
     with Session(app_db) as session:
         service = BookingService(name="Diary service")
         other_service = BookingService(name="Other service")
@@ -110,7 +112,7 @@ def test_phone_only_notebook_appointment_uses_doctor_service_duration(
         assert appointment.duration_minutes == 35 and appointment.service_id == service["id"]
 
 
-def test_client_slots_keep_service_hours_when_today_has_a_manual_booking(
+def test_notebook_and_online_form_share_future_service_slots(
     client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
 ) -> None:
     now = datetime(2026, 11, 17, 18, 55, tzinfo=main.KYIV_TZ)
@@ -118,21 +120,54 @@ def test_client_slots_keep_service_hours_when_today_has_a_manual_booking(
     service = client.get("/api/booking-services").json()[0]
     with Session(app_db) as session:
         session.add(ServiceSchedule(service_id=service["id"], intervals=[(14 * 60, 21 * 60)]))
+        session.add(Appointment(
+            name="Earlier patient", phone="+380980000001", service=service["name"],
+            service_id=service["id"], preferred_date=now.date(), preferred_time=time(15),
+        ))
         session.commit()
 
     params = {"preferred_date": now.date().isoformat(), "service": service["name"]}
+    manual = {
+        "preferred_date": params["preferred_date"], "phone": "0671234567",
+    }
 
-    def starts() -> list[str]:
-        response = client.get("/api/availability", params=params)
-        assert response.status_code == 200
-        return [slot["start_time"] for slot in response.json()]
+    def check_starts(expected: list[str]) -> str:
+        online = client.get("/api/availability", params=params)
+        assert online.status_code == 200
+        assert [slot["start_time"] for slot in online.json()] == [f"{start}:00" for start in expected]
+        notebook = client.get("/admin", params={"day": params["preferred_date"]})
+        assert notebook.status_code == 200
+        assert re.findall(r'data-notebook-start="([^"]+)"', notebook.text) == expected
+        return notebook.text
 
-    assert starts() == ["19:00:00", "19:30:00", "20:00:00", "20:30:00"]
+    notebook = check_starts(["19:00", "19:30", "20:00", "20:30"])
+    assert "Час минув" in notebook and "Earlier patient" in notebook
+    now = now.replace(hour=19, minute=0)
+    check_starts(["19:30", "20:00", "20:30"])
+    for response in (
+        client.post("/admin/appointments/manual", data={**manual, "preferred_time": "19:00"}),
+        client.post("/api/appointments", json={
+            **manual, "preferred_time": "19:00", "name": "Client", "service": service["name"],
+        }),
+    ):
+        assert response.status_code == 409
+        assert "Цей час уже минув" in response.json()["detail"]
+
     result = client.post("/admin/appointments/manual", data={
-        "preferred_date": params["preferred_date"], "preferred_time": "19:10", "phone": "0671234567",
+        **manual, "preferred_time": "19:40",
     }, follow_redirects=False)
     assert result.status_code == 303
-    assert starts() == ["20:00:00", "20:30:00"]
+    assert "19:40" in check_starts(["20:30"])
+    now = now.replace(hour=21)
+    check_starts([])
+
+    previous_day = (now.date() - timedelta(days=1)).isoformat()
+    old_notebook = client.get("/admin", params={"day": previous_day})
+    assert old_notebook.status_code == 200
+    assert "Час минув" in old_notebook.text and "data-notebook-start=" not in old_notebook.text
+    assert client.post("/admin/appointments/manual", data={
+        **manual, "preferred_date": previous_day, "preferred_time": "14:00",
+    }).status_code == 409
 
 
 def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:

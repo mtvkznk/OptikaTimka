@@ -5,7 +5,6 @@ import re
 import secrets
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from itertools import pairwise
 from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
@@ -36,8 +35,10 @@ from app.booking import (
     available_starts,
     check_booking_overlap,
     check_reactivation,
+    first_future_minute,
     lock_booking_writes,
     minute_of,
+    occupied_interval,
     occupied_intervals,
     service_is_closed,
     working_intervals,
@@ -192,7 +193,7 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261117-booking-confirmation"
+ASSET_VERSION = "20261117-booking-availability"
 ADMIN_ASSET_VERSION = "20261117-notebook-records"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
@@ -444,7 +445,7 @@ def diary_service(services: list[BookingService]) -> BookingService | None:
 
 def appointment_diary(
     session: Session, day: date, service: BookingService | None,
-    intervals: list[Interval], online_closed: bool,
+    intervals: list[Interval], online_closed: bool, *, now: datetime, window_end: date,
 ) -> dict[str, Any]:
     context = {
         "date": day,
@@ -453,6 +454,7 @@ def appointment_diary(
         "next": day + timedelta(days=1) if day < date.max else None,
         "service": service,
         "online_closed": online_closed,
+        "online_not_yet_open": day > window_end,
         "return_url": f"/admin?day={day.isoformat()}#appointment-diary",
     }
     if service is None:
@@ -464,9 +466,7 @@ def appointment_diary(
         .order_by(Appointment.preferred_time, Appointment.id)
     ))
     duration = service.duration_minutes
-    boundaries = {
-        minute for start, end in intervals for minute in (*range(start, end, duration), end)
-    }
+    starts = {minute for start, end in intervals for minute in range(start, end, duration)}
     timed = []
     untimed = []
     for appointment in appointments:
@@ -478,31 +478,27 @@ def appointment_diary(
             if doctor:
                 untimed.append(appointment)
             continue
-        start = minute_of(starts_at)
-        end = min(
-            24 * 60,
-            start + appointment.duration_minutes + int(bool(starts_at.second or starts_at.microsecond)),
-        )
-        boundaries.update((start, end))
+        start, end = occupied_interval(starts_at, appointment.duration_minutes)
+        starts.add(start)
         timed.append((start, end, doctor, appointment))
 
+    earliest = first_future_minute(day, now)
+    available = {
+        minute_of(slot.start_time)
+        for slot in available_starts(intervals, [(s, e) for s, e, _, _ in timed], duration, earliest)
+    }
     rows = []
-    for start, _ in pairwise(sorted(boundaries)):
+    for start in sorted(starts):
         appointments_here = [appointment for s, _, doctor, appointment in timed if doctor and s == start]
         doctor_occupied = any(s <= start < e and doctor for s, e, doctor, _ in timed)
         other_occupied = any(s <= start < e and not doctor for s, e, doctor, _ in timed)
-        working_end = next((hi for lo, hi in intervals if lo <= start < hi), None)
-        can_book = False
-        if working_end is not None and not (doctor_occupied or other_occupied):
-            next_appointment = next((s for s, _, _, _ in timed if s > start), working_end)
-            can_book = start + duration <= min(working_end, next_appointment)
         rows.append({
             "start": format_minute(start),
             "visits": build_appointment_rows(appointments_here),
             "doctor_occupied": doctor_occupied,
             "other_occupied": other_occupied,
-            "inside_schedule": working_end is not None,
-            "can_book": can_book,
+            "is_past": start < earliest,
+            "can_book": start in available,
         })
     return {**context, "rows": rows, "untimed": build_appointment_rows(untimed)}
 
@@ -511,7 +507,8 @@ def admin_context(
     session: Session, request: Request, diary_day: date | None = None,
 ) -> dict[str, Any]:
     ensure_seed_data(session)
-    today = current_date()
+    now = kyiv_now()
+    today, window_end = booking_window(now)
 
     services = get_active_services(session)
     records = category_records(session)
@@ -548,7 +545,9 @@ def admin_context(
         "app_name": settings.app_name,
         "admin_asset_version": ADMIN_ASSET_VERSION,
         "today": today,
-        "diary": appointment_diary(session, day, service, diary_intervals, online_closed),
+        "diary": appointment_diary(
+            session, day, service, diary_intervals, online_closed, now=now, window_end=window_end,
+        ),
         "services": services,
         "weekdays": [(1 << index, label) for index, label in enumerate(WEEKDAY_LABELS)],
         "all_weekdays": ALL_WEEKDAYS,
@@ -1137,6 +1136,8 @@ def create_manual_appointment(
     start = minute_of(start_time)
 
     lock_booking_writes(session)
+    if start < first_future_minute(day, kyiv_now()):
+        raise HTTPException(409, "Цей час уже минув. Оберіть інший час.")
     service = diary_service(get_active_services(session))
     if service is None:
         raise HTTPException(409, "Огляд лікаря зараз недоступний для запису.")
@@ -1228,7 +1229,7 @@ def available_time_slots(
         or service_is_closed(session, booking_service.id, preferred_date)
     ):
         return []
-    earliest = minute_of(now.time()) + 1 if preferred_date == today else 0
+    earliest = first_future_minute(preferred_date, now)
     booked = occupied_intervals(session, preferred_date)
     if booking_service is not None:
         return available_starts(
@@ -1292,15 +1293,15 @@ def create_appointment(
         raise HTTPException(400, "Оберіть майбутню дату.")
     if day > window_end:
         raise HTTPException(400, "Запис доступний не більше ніж на 30 днів вперед.")
-    if day == today and payload.preferred_time <= now.time():
-        raise HTTPException(400, "Оберіть майбутній час прийому.")
+    start = minute_of(payload.preferred_time)
+    if start < first_future_minute(day, now):
+        raise HTTPException(409, "Цей час уже минув. Оберіть інший час.")
     if session.exec(select(ClosedDate).where(ClosedDate.closed_on == day)).first():
         raise HTTPException(400, "На цю дату запис закритий.")
     if not service.is_available_on(day):
         raise HTTPException(400, "Ця послуга недоступна в обраний день тижня.")
     if service_is_closed(session, service.id, day):
         raise HTTPException(400, "Запис на цю послугу закритий на обрану дату.")
-    start = minute_of(payload.preferred_time)
     if not any(
         opens <= start and start + duration <= closes
         for opens, closes in service_working_intervals(session, service.id)

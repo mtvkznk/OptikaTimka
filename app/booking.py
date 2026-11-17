@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import date, datetime, time
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -17,6 +17,18 @@ class BookingTime(BaseModel):
 
 def minute_of(value: time) -> int:
     return value.hour * 60 + value.minute
+
+
+def first_future_minute(day: date, now: datetime) -> int:
+    if day < now.date():
+        return 24 * 60
+    return minute_of(now.time()) + 1 if day == now.date() else 0
+
+
+def occupied_interval(start_time: time, duration: int) -> Interval:
+    start = minute_of(start_time)
+    end = start + duration + int(bool(start_time.second or start_time.microsecond))
+    return start, end
 
 
 def lock_booking_writes(session: Session) -> None:
@@ -55,12 +67,9 @@ def occupied_intervals(session: Session, day: date, exclude_id: int | None = Non
     )
     if exclude_id is not None:
         statement = statement.where(Appointment.id != exclude_id)
-    occupied = []
-    for start_time, duration in session.exec(statement):
-        start = minute_of(start_time)
-        end = start + duration + int(bool(start_time.second or start_time.microsecond))
-        occupied.append((start, end))
-    return sorted(occupied)
+    return sorted(
+        occupied_interval(start_time, duration) for start_time, duration in session.exec(statement)
+    )
 
 
 def check_booking_overlap(

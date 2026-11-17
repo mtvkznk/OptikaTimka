@@ -110,8 +110,11 @@ async function refreshAvailability() {
     if (!response.ok) throw new Error("Availability request failed");
     const slots = await response.json();
     if (request.signal.aborted) return;
+    const isToday = date.closest(".calendar-day").classList.contains("is-today");
     if (!slots.length) {
-      availabilityStatus.textContent = "На цю дату немає вільного часу для цієї послуги.";
+      availabilityStatus.textContent = isToday
+        ? "На сьогодні вже немає вільних годин. Оберіть іншу дату."
+        : "На цю дату немає вільного часу для цієї послуги.";
       return;
     }
 
@@ -135,7 +138,9 @@ async function refreshAvailability() {
       });
     timeGrid.replaceChildren(...columns);
     timeGrid.hidden = false;
-    availabilityStatus.textContent = formatDate(date.value);
+    availabilityStatus.textContent = isToday
+      ? formatDate(date.value) + " · Вільні години, що залишилися на сьогодні"
+      : formatDate(date.value);
   } catch {
     if (request.signal.aborted) return;
     availabilityStatus.textContent = "Не вдалося завантажити вільні години.";
