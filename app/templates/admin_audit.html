@@ -1,0 +1,32 @@
+{% extends "admin_base.html" %}
+{% block title %}Журнал дій{% endblock %}
+{% block content %}
+<header class="admin-page-heading">
+  <h1>Журнал дій</h1>
+</header>
+<section class="admin-panel" aria-label="Дії адміністраторів">
+  {% if events %}
+  <ul class="admin-audit-list">
+    {% for event, local_time in events %}
+    <li>
+      <time datetime="{{ local_time.isoformat() }}">{{ local_time.strftime("%d.%m.%Y · %H:%M") }}</time>
+      <div>
+        <strong>{{ audit_labels.get(event.action, event.action) }}</strong>
+        <p>{{ event.detail }}</p>
+      </div>
+      <span class="admin-audit-actor">{{ event.actor }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>Тут з’являться зміни графіка, закриття й відкриття годин та видалення прийомів.</p>
+  {% endif %}
+  {% if pages > 1 %}
+  <nav class="admin-pagination" aria-label="Сторінки журналу">
+    {% if page > 1 %}<a class="admin-button" href="/admin/audit?page={{ page - 1 }}">← Попередня</a>{% endif %}
+    <span>{{ page }} / {{ pages }}</span>
+    {% if page < pages %}<a class="admin-button" href="/admin/audit?page={{ page + 1 }}">Наступна →</a>{% endif %}
+  </nav>
+  {% endif %}
+</section>
+{% endblock %}

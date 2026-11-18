@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, PositiveInt, StringConstraints, model_val
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.admin_audit import add_admin_audit
 from app.booking import (
     Interval,
     check_reactivation,
@@ -45,6 +46,7 @@ from app.product_photos import (
     product_photo_url,
     update_product_photo,
 )
+from app.schedule_review import appointments_outside_schedule
 
 MAX_PERIOD_DAYS = 366
 CategorySlug = Annotated[
@@ -222,6 +224,7 @@ class ServiceAvailabilityChange(BaseModel):
 
 
 class AdminChanges(BaseModel):
+    schedule_acknowledgement: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     appointments: list[AppointmentChange] = Field(default_factory=list, max_length=1000)
     services: list[ServiceChange] = Field(default_factory=list, max_length=500)
     categories: list[CategoryChange] = Field(default_factory=list, max_length=500)
@@ -595,12 +598,80 @@ def apply_service_availability(session: Session, changes: list[ServiceAvailabili
         apply_closed_date_changes(session, [], change.closed_days, change.id)
 
 
-def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
+def closure_summary(days: ClosedDayChanges) -> str:
+    parts = []
+    if days.close:
+        dates = ", ".join(day.strftime("%d.%m.%Y") for day in days.close[:5])
+        if len(days.close) > 5:
+            dates += f" і ще {len(days.close) - 5}"
+        parts.append(f"закрито: {dates}")
+    if days.reopen:
+        parts.append(f"відкрито дат: {len(days.reopen)}")
+    return ", ".join(parts)
+
+
+def hours_summary(schedule: ScheduleHours | None) -> str:
+    if schedule is None:
+        return "успадковані години"
+    if schedule.workday is None:
+        return "без робочих годин"
+    opens = schedule.workday.start_time.strftime("%H:%M")
+    closes = schedule.workday.end_time.strftime("%H:%M")
+    breaks = ", ".join(
+        f"{pause.start_time:%H:%M}–{pause.end_time:%H:%M}" for pause in schedule.breaks
+    )
+    return f"{opens}–{closes}" + (f", перерви: {breaks}" if breaks else "")
+
+
+def schedule_edit_details(session: Session, changes: AdminChanges) -> list[str]:
+    details = []
+    if changes.work_schedule is not None:
+        details.append("Загальний графік · " + hours_summary(changes.work_schedule))
+    elif changes.time_slots or changes.remove_time_slots:
+        details.append("Загальний графік · робочі години")
+    general_closures = closure_summary(changes.closed_days)
+    if general_closures or changes.closed_periods:
+        periods = f"періодів: {len(changes.closed_periods)}" if changes.closed_periods else ""
+        details.append("Загальний графік · " + ", ".join(filter(None, [general_closures, periods])))
+    for edit in changes.services:
+        service = session.get(BookingService, edit.id) if edit.id is not None else None
+        if service is not None and (service.weekdays_mask, service.is_active) != (
+            edit.weekdays_mask, edit.is_active,
+        ):
+            details.append(f"{service.name} · доступні дні або стан послуги")
+    for removal in changes.remove_services:
+        service = session.get(BookingService, removal.id)
+        if service is not None and service.is_active:
+            details.append(f"{service.name} · послугу вимкнено")
+    for edit in changes.service_availability:
+        service = session.get(BookingService, edit.id)
+        name = service.name if service is not None else f"Послуга №{edit.id}"
+        parts = []
+        if edit.schedule_version is not None:
+            parts.append("типові години: " + hours_summary(edit.schedule))
+        if edit.weekday_schedules:
+            weekdays = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд")
+            parts.extend(
+                f"{weekdays[day]}: {hours_summary(change.schedule)}"
+                for day, change in sorted(edit.weekday_schedules.items())
+            )
+        if closures := closure_summary(edit.closed_days):
+            parts.append(closures)
+        if parts:
+            details.append(f"{name} · {', '.join(parts)}")
+    return details
+
+
+def apply_admin_changes(session: Session, changes: AdminChanges, *, actor: str, now: datetime) -> None:
     photos = {
         payload: prepare_photo(payload)
         for payload in {change.photo for change in changes.products} - {"", "remove"}
     }
     lock_booking_writes(session)
+    schedule_edits = schedule_edit_details(session, changes)
+    outside_before = (
+        appointments_outside_schedule(session, now, include_canceled=True) if schedule_edits else {}
+    )
     if changes.category_order is not None:
         changes.category_order.check(list(category_names(session)))
     if changes.product_order is not None:
@@ -635,3 +706,21 @@ def apply_admin_changes(session: Session, changes: AdminChanges) -> None:
         apply_work_schedule(session, changes.work_schedule)
     apply_closed_date_changes(session, changes.closed_periods, changes.closed_days)
     apply_service_availability(session, changes.service_availability)
+    if schedule_edits:
+        session.flush()
+        affected = {
+            visit_id: info for visit_id, info in appointments_outside_schedule(session, now).items()
+            if visit_id not in outside_before
+        }
+        if affected:
+            draft = changes.model_dump_json(exclude={"schedule_acknowledgement"})
+            token = hashlib.sha256(f"{draft}:{list(affected.items())}".encode()).hexdigest()
+            if changes.schedule_acknowledgement != token:
+                raise HTTPException(409, {
+                    "kind": "schedule_review",
+                    "token": token,
+                    "total": len(affected),
+                    "appointments": list(affected.values())[:8],
+                })
+        for detail in schedule_edits:
+            add_admin_audit(session, actor, "schedule_changed", detail)

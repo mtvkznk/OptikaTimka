@@ -20,9 +20,10 @@
             {{ wordmark("Адмінпанель") }}
           </a>
           <nav class="admin-nav" aria-label="Розділи адмінпанелі">
-            <a href="/admin" data-admin-nav="appointments" aria-current="page">Записи</a>
+            <a href="/admin" data-admin-nav="appointments"{% if not audit_page %} aria-current="page"{% endif %}>Записи</a>
             <a href="/admin#services" data-admin-nav="schedule">Послуги й графік</a>
             <a href="/admin#catalog" data-admin-nav="catalog">Каталог</a>
+            <a href="/admin/audit"{% if audit_page %} aria-current="page"{% endif %}>Журнал дій</a>
           </nav>
           <nav class="admin-exits" aria-label="Повернення на сайт">
             <a href="/cabinet">Кабінет <span aria-hidden="true">↗</span></a>
@@ -33,6 +34,18 @@
       <main class="admin-main" id="admin-content" tabindex="-1">
         {% block content %}{% endblock %}
       </main>
+      <dialog class="admin-review-dialog" data-schedule-review aria-labelledby="schedule-review-title">
+        <form method="dialog">
+          <h2 id="schedule-review-title">Прийоми поза новим графіком</h2>
+          <p data-schedule-review-count></p>
+          <ul data-schedule-review-visits></ul>
+          <p>Ці прийоми залишаться в «Усі записи». Узгодь час із пацієнтами.</p>
+          <div class="admin-review-actions">
+            <button class="admin-button" value="cancel" autofocus>Повернутися до редагування</button>
+            <button class="admin-button admin-primary" value="save">Зберегти графік</button>
+          </div>
+        </form>
+      </dialog>
       <div class="admin-save-bar">
         <div class="admin-save-inner">
           <p data-save-message role="status">Усі зміни збережено.</p>

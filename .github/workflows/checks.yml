@@ -8,6 +8,38 @@ permissions:
   contents: read
 
 jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install application and Chromium
+        run: |
+          python -m pip install --require-hashes -r requirements.lock
+          npm install --prefix "$RUNNER_TEMP/optika-browser" --no-audit --no-fund playwright@1.65.0
+          "$RUNNER_TEMP/optika-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Browser tests
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE"
+          export OPTIKA_PLAYWRIGHT="$RUNNER_TEMP/optika-browser/node_modules/playwright"
+          python tests/browser/preview.py > "$RUNNER_TEMP/browser-preview.log" 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          if ! curl --fail --silent --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:8017/health; then
+            cat "$RUNNER_TEMP/browser-preview.log"
+            exit 1
+          fi
+          node --test tests/browser/flows.cjs
+
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -930,6 +930,25 @@ function clearDraft() {
   persistDraft();
 }
 
+function reviewSchedule({ appointments, total }) {
+  const dialog = document.querySelector("[data-schedule-review]");
+  const count = dialog.querySelector("[data-schedule-review-count]");
+  const list = dialog.querySelector("[data-schedule-review-visits]");
+  count.textContent = "Майбутніх прийомів, яких торкнеться зміна: " + total + ".";
+  const rows = appointments.map(({ date, time, service }) => date + " · " + time + " · " + service);
+  if (rows.length < total) rows.push("І ще: " + (total - rows.length));
+  list.replaceChildren(...rows.map((text) => {
+    const item = document.createElement("li");
+    item.textContent = text;
+    return item;
+  }));
+  dialog.returnValue = "cancel";
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "save"), { once: true });
+    dialog.showModal();
+  });
+}
+
 saveButton.addEventListener("click", async () => {
   if (saving || processingPhotos.size || !numberOfChanges()) return;
   const invalidSchedule = [
@@ -972,14 +991,25 @@ saveButton.addEventListener("click", async () => {
   showSaveState("Зберігаємо зміни…");
   const fallback = "Не вдалося зберегти зміни. Чернетка залишилася в цій вкладці.";
   try {
-    const response = await fetch("/admin/changes", {
+    const payload = payloadOfDraft();
+    const send = () => fetch("/admin/changes", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body: JSON.stringify(payloadOfDraft()),
+      body: JSON.stringify(payload),
     });
+    let response = await send();
+    let detail = response.ok ? null : (await response.json().catch(() => null))?.detail;
+    while (response.status === 409 && detail?.kind === "schedule_review") {
+      if (!await reviewSchedule(detail)) {
+        showSaveState();
+        return;
+      }
+      payload.schedule_acknowledgement = detail.token;
+      response = await send();
+      detail = response.ok ? null : (await response.json().catch(() => null))?.detail;
+    }
     if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      showSaveState(typeof body?.detail === "string" ? body.detail : fallback, true);
+      showSaveState(typeof detail === "string" ? detail : fallback, true);
       return;
     }
     clearDraft();

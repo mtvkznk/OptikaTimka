@@ -15,6 +15,7 @@ from app.admin_changes import service_schedule_version
 from app.config import settings
 from app.main import current_date
 from app.models import (
+    AdminAuditEvent,
     Appointment,
     AppointmentStatus,
     BookingService,
@@ -24,6 +25,16 @@ from app.models import (
     ServiceSchedule,
     ServiceWeekdaySchedule,
 )
+
+
+def confirm_schedule_change(client: TestClient, draft: dict) -> None:
+    response = client.post("/admin/changes", json=draft)
+    assert response.status_code == 409
+    warning = response.json()["detail"]
+    assert warning["kind"] == "schedule_review" and warning["total"] == 1
+    assert client.post("/admin/changes", json={
+        **draft, "schedule_acknowledgement": warning["token"],
+    }).status_code == 200
 
 
 def test_doctor_notebook_orders_the_day_without_showing_other_clients(
@@ -641,9 +652,10 @@ def test_work_schedule_sets_hours_and_booking_uses_remaining_time(client: TestCl
         "13:00:00", "13:45:00", "14:30:00", "15:15:00", "16:00:00", "16:45:00",
     ]
 
-    assert client.post("/admin/changes", json={
+    change = {
         "work_schedule": {"version": updated["version"]},
-    }).status_code == 200
+    }
+    confirm_schedule_change(client, change)
     assert client.get("/api/availability", params=params).json() == []
     assert schedule()["start_time"] == ""
 
@@ -728,10 +740,13 @@ def test_weekday_hours_apply_per_service_in_booking_and_notebook(
         "4": {"version": missing, "schedule": {}},
     }
 
-    def save(schedules: dict) -> int:
-        return client.post("/admin/changes", json={"service_availability": [{
+    def draft(schedules: dict) -> dict:
+        return {"service_availability": [{
             "id": doctor["id"], "weekday_schedules": schedules,
-        }]}).status_code
+        }]}
+
+    def save(schedules: dict) -> int:
+        return client.post("/admin/changes", json=draft(schedules)).status_code
 
     def starts(service: dict, day: str) -> list[str]:
         response = client.get("/api/availability", params={
@@ -767,7 +782,7 @@ def test_weekday_hours_apply_per_service_in_booking_and_notebook(
     assert save({"2": {"version": missing, "schedule": None}}) == 409
     with Session(app_db) as session:
         version = service_schedule_version(session.get(ServiceWeekdaySchedule, (doctor["id"], 2)))
-    assert save({"2": {"version": version, "schedule": None}}) == 200
+    confirm_schedule_change(client, draft({"2": {"version": version, "schedule": None}}))
     assert starts(doctor, wednesday)[0] == "10:00:00"
     assert starts(doctor, thursday) == ["11:00:00", "11:30:00"]
 
@@ -793,6 +808,56 @@ def test_open_booking_forms_reject_a_time_removed_by_a_schedule_change(client: T
     manual = {**form, "expected_duration_minutes": str(doctor["duration_minutes"])}
     assert client.post("/admin/appointments/manual", data=manual).status_code == 409
     assert client.post("/api/appointments", json={**form, "preferred_time": "09:45"}).status_code == 201
+
+
+def test_schedule_review_rolls_back_until_the_current_affected_visits_are_confirmed(
+    client: TestClient, anonymous_client: TestClient, app_db: Engine,
+) -> None:
+    doctor = client.get("/api/booking-services").json()[0]
+    day = current_date() + timedelta(days=2)
+    appointment = {
+        "preferred_date": day.isoformat(), "service": doctor["name"],
+        "name": "Private test patient", "phone": "+380501234567",
+    }
+    assert client.post("/api/appointments", json={
+        **appointment, "preferred_time": "10:00",
+    }).status_code == 201
+    draft = {"service_availability": [{
+        "id": doctor["id"], "schedule_version": service_schedule_version(None),
+        "schedule": {"workday": {"start_time": "11:00", "end_time": "17:00"}},
+    }]}
+    first = client.post("/admin/changes", json=draft)
+    assert first.status_code == 409
+    warning = first.json()["detail"]
+    assert warning["kind"] == "schedule_review" and warning["total"] == 1
+    assert warning["appointments"] == [{
+        "date": day.strftime("%d.%m.%Y"), "time": "10:00", "service": doctor["name"],
+    }]
+    assert "Private test patient" not in first.text and appointment["phone"] not in first.text
+    with Session(app_db) as session:
+        assert session.get(ServiceSchedule, doctor["id"]) is None
+        assert session.exec(select(AdminAuditEvent)).first() is None
+    assert anonymous_client.get("/admin/audit").status_code == 401
+
+    assert client.post("/api/appointments", json={
+        **appointment, "preferred_time": "10:30",
+    }).status_code == 201
+    stale = client.post("/admin/changes", json={
+        **draft, "schedule_acknowledgement": warning["token"],
+    })
+    assert stale.status_code == 409
+    updated = stale.json()["detail"]
+    assert updated["total"] == 2 and updated["token"] != warning["token"]
+    assert client.post("/admin/changes", json={
+        **draft, "schedule_acknowledgement": updated["token"],
+    }).status_code == 200
+    with Session(app_db) as session:
+        assert len(session.exec(select(Appointment)).all()) == 2
+        event = session.exec(select(AdminAuditEvent)).one()
+        assert event.actor == "admin" and event.action == "schedule_changed"
+    seen = client.get("/admin/audit").text
+    assert "Змінено графік" in seen and "типові години" in seen
+    assert "Private test patient" not in seen and appointment["phone"] not in seen
 
 
 def test_batch_applies_booking_service_and_period_together(client: TestClient, app_db: Engine) -> None:
@@ -915,10 +980,10 @@ def test_delete_catalog_rows_keeps_empty_lists_and_allows_readding(
     def versions(rows: list[dict]) -> list[dict]:
         return [{"id": row["id"], "version": row["updated_at"]} for row in rows]
 
-    response = client.post("/admin/changes", json={
+    change = {
         "remove_services": versions(services), "remove_time_slots": versions(slots),
-    })
-    assert response.status_code == 200, response.text
+    }
+    confirm_schedule_change(client, change)
     assert client.get("/api/booking-services").json() == []
     assert client.get("/api/time-slots").json() == []
     dashboard = client.get("/admin").text

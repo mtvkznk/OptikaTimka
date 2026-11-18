@@ -3,7 +3,7 @@ import hashlib
 import logging
 import re
 import secrets
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.admin_audit import AUDIT_LABELS, add_admin_audit
 from app.admin_changes import (
     AdminChanges,
     apply_admin_changes,
@@ -39,11 +40,14 @@ from app.booking import (
     check_booking_overlap,
     check_reactivation,
     first_future_minute,
+    get_active_time_slots,
     lock_booking_writes,
     minute_of,
     occupied_interval,
     occupied_intervals,
     service_is_closed,
+    weekday_schedules_by_service,
+    weekly_working_intervals,
     working_intervals,
 )
 from app.catalog import (
@@ -59,6 +63,7 @@ from app.config import settings
 from app.database import get_session
 from app.models import (
     ALL_WEEKDAYS,
+    AdminAuditEvent,
     AnalyticsEvent,
     AnalyticsEventCreate,
     AnalyticsEventRead,
@@ -199,7 +204,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261118-booking-refresh"
-ADMIN_ASSET_VERSION = "20261118-notebook-status"
+ADMIN_ASSET_VERSION = "20261118-schedule-review"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -284,16 +289,6 @@ def get_booking_service(session: Session, name: str) -> BookingService:
     return service
 
 
-def get_active_time_slots(session: Session) -> list[AvailableTimeSlot]:
-    return list(
-        session.exec(
-            select(AvailableTimeSlot)
-            .where(AvailableTimeSlot.is_active)
-            .order_by(AvailableTimeSlot.sort_order, AvailableTimeSlot.id)
-        ).all()
-    )
-
-
 def service_working_intervals(session: Session, service_id: int, day: date) -> list[Interval]:
     schedule: ServiceWeekdaySchedule | ServiceSchedule | None = session.get(
         ServiceWeekdaySchedule, (service_id, day.weekday()),
@@ -303,25 +298,6 @@ def service_working_intervals(session: Session, service_id: int, day: date) -> l
     if schedule is not None:
         return [tuple(interval) for interval in schedule.intervals]
     return working_intervals(get_active_time_slots(session))
-
-
-def weekday_schedules_by_service(
-    session: Session, service_ids: list[int],
-) -> dict[int, dict[int, ServiceWeekdaySchedule]]:
-    schedules: dict[int, dict[int, ServiceWeekdaySchedule]] = {}
-    for row in session.exec(
-        select(ServiceWeekdaySchedule).where(ServiceWeekdaySchedule.service_id.in_(service_ids))
-    ):
-        schedules.setdefault(row.service_id, {})[row.weekday] = row
-    return schedules
-
-
-def weekly_working_intervals(
-    default_intervals: list[Interval], schedule: ServiceSchedule | None,
-    overrides: dict[int, ServiceWeekdaySchedule],
-) -> list[list[Interval]]:
-    base = schedule.intervals if schedule is not None else default_intervals
-    return [overrides[day].intervals if day in overrides else base for day in range(7)]
 
 
 def bookable_weekdays(service: BookingService, week: list[list[Interval]]) -> int:
@@ -1183,6 +1159,27 @@ def admin_appointments(
     )
 
 
+@admin_router.get("/audit", response_class=HTMLResponse)
+def admin_audit(
+    request: Request, session: SessionDep, page: Annotated[int, Query(ge=1, le=100_000)] = 1,
+) -> HTMLResponse:
+    page_size = 50
+    pages = max(1, (count_rows(session, AdminAuditEvent) + page_size - 1) // page_size)
+    page = min(page, pages)
+    events = session.exec(
+        select(AdminAuditEvent).order_by(AdminAuditEvent.created_at.desc(), AdminAuditEvent.id.desc())
+        .offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    return templates.TemplateResponse(request, "admin_audit.html", {
+        "app_name": settings.app_name, "admin_asset_version": ADMIN_ASSET_VERSION,
+        "audit_page": True, "page": page, "pages": pages, "audit_labels": AUDIT_LABELS,
+        "events": [
+            (event, event.created_at.replace(tzinfo=event.created_at.tzinfo or UTC).astimezone(KYIV_TZ))
+            for event in events
+        ],
+    })
+
+
 def diary_slot_from_form(form_data: dict[str, str]) -> tuple[date, time]:
     day = form_date(form_data, "preferred_date")
     start_time = form_time(form_data, "preferred_time")
@@ -1273,6 +1270,10 @@ def change_booking_block(
     block = session.get(BookingBlock, (service.id, day, start))
     if action == "open":
         if block is not None:
+            add_admin_audit(
+                session, request.state.admin_actor, "slot_reopened",
+                f"{service.name} · {format_date(day)} · {format_minute(start)}–{format_minute(block.end_minute)}",
+            )
             session.delete(block)
     elif block is None:
         check_diary_day(session, service, day, start, now=kyiv_now())
@@ -1285,16 +1286,23 @@ def change_booking_block(
         session.add(BookingBlock(
             service_id=service.id, day=day, start_minute=start, end_minute=start + duration,
         ))
+        add_admin_audit(
+            session, request.state.admin_actor, "slot_closed",
+            f"{service.name} · {format_date(day)} · {format_minute(start)}–{format_minute(start + duration)}",
+        )
 
     session.commit()
     return diary_action_response(request, day, anchor=f"notebook-slot-{start_time:%H%M}")
 
 
 @admin_router.post("/changes")
-def save_admin_changes(changes: AdminChanges, session: SessionDep) -> dict[str, str]:
+def save_admin_changes(changes: AdminChanges, request: Request, session: SessionDep) -> dict[str, str]:
     try:
-        apply_admin_changes(session, changes)
+        apply_admin_changes(session, changes, actor=request.state.admin_actor, now=kyiv_now())
         session.commit()
+    except HTTPException:
+        session.rollback()
+        raise
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(
@@ -1532,6 +1540,10 @@ def delete_appointment(
     if upcoming and form_data.get("confirmed") != "true":
         raise HTTPException(409, {"confirmation_required": "upcoming_appointment_removal"})
 
+    add_admin_audit(
+        session, request.state.admin_actor, "appointment_deleted",
+        f"Прийом №{appointment.id} · {appointment.service} · {format_date(day)} {format_time(starts_at)}",
+    )
     session.delete(appointment)
     session.commit()
     if request.headers.get("accept") == "application/json":
@@ -1572,6 +1584,7 @@ def reorder_services(payload: ReorderPayload, session: SessionDep) -> dict[str, 
 @admin_router.post("/services/{service_id}")
 def update_service(
     service_id: int,
+    request: Request,
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:
@@ -1591,6 +1604,10 @@ def update_service(
             "is_active": form_data.get("is_active") == "on",
         },
     )
+    if (service.weekdays_mask, service.is_active) != (payload.weekdays_mask, payload.is_active):
+        add_admin_audit(
+            session, request.state.admin_actor, "schedule_changed", f"{service.name} · доступні дні або стан послуги",
+        )
     service.sqlmodel_update(payload.model_dump())
     service.updated_at = utc_now()
     session.add(service)
@@ -1599,7 +1616,7 @@ def update_service(
 
 
 @admin_router.post("/time-slots")
-def create_time_slot(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+def create_time_slot(request: Request, session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
     lock_booking_writes(session)
     sort_order = session.exec(select(func.max(AvailableTimeSlot.sort_order))).one() or 0
     payload = validated_form(
@@ -1613,6 +1630,10 @@ def create_time_slot(session: SessionDep, form_data: FormDataDep) -> RedirectRes
     )
     slot = AvailableTimeSlot.model_validate(payload)
     session.add(slot)
+    add_admin_audit(
+        session, request.state.admin_actor, "schedule_changed",
+        f"Загальний графік · додано {format_time(slot.start_time)}–{format_time(slot.end_time)}",
+    )
     session.commit()
     return RedirectResponse(url="/admin#time-slots", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -1626,6 +1647,7 @@ def reorder_time_slots(payload: ReorderPayload, session: SessionDep) -> dict[str
 @admin_router.post("/time-slots/{slot_id}")
 def update_time_slot(
     slot_id: int,
+    request: Request,
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:
@@ -1643,6 +1665,10 @@ def update_time_slot(
             "is_active": form_data.get("is_active") == "on",
         },
     )
+    add_admin_audit(
+        session, request.state.admin_actor, "schedule_changed",
+        f"Загальний графік · змінено {format_time(slot.start_time)}–{format_time(slot.end_time)}",
+    )
     slot.sqlmodel_update(payload.model_dump())
     slot.updated_at = utc_now()
     session.add(slot)
@@ -1651,7 +1677,7 @@ def update_time_slot(
 
 
 @admin_router.post("/closed-dates")
-def create_closed_date(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
+def create_closed_date(request: Request, session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
     lock_booking_writes(session)
     payload = validated_form(
         ClosedDateCreate,
@@ -1662,6 +1688,10 @@ def create_closed_date(session: SessionDep, form_data: FormDataDep) -> RedirectR
     )
     closed_date = ClosedDate.model_validate(payload)
     session.add(closed_date)
+    add_admin_audit(
+        session, request.state.admin_actor, "schedule_changed",
+        f"Загальний графік · закрито {format_date(closed_date.closed_on)}",
+    )
     session.commit()
     return RedirectResponse(url="/admin#closed-dates", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -1669,6 +1699,7 @@ def create_closed_date(session: SessionDep, form_data: FormDataDep) -> RedirectR
 @admin_router.post("/closed-dates/{closed_date_id}")
 def update_closed_date(
     closed_date_id: int,
+    request: Request,
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:
@@ -1686,6 +1717,10 @@ def update_closed_date(
             "reason": form_data.get("reason", "").strip(),
         },
     )
+    add_admin_audit(
+        session, request.state.admin_actor, "schedule_changed",
+        f"Загальний графік · закриту дату {format_date(closed_date.closed_on)} змінено на {format_date(payload.closed_on)}",
+    )
     closed_date.sqlmodel_update(payload.model_dump())
     closed_date.updated_at = utc_now()
     session.add(closed_date)
@@ -1694,7 +1729,7 @@ def update_closed_date(
 
 
 @admin_router.post("/closed-dates/{closed_date_id}/delete")
-def delete_closed_date(closed_date_id: int, session: SessionDep) -> RedirectResponse:
+def delete_closed_date(closed_date_id: int, request: Request, session: SessionDep) -> RedirectResponse:
     lock_booking_writes(session)
     closed_date = session.get(ClosedDate, closed_date_id)
     if closed_date is None:
@@ -1703,6 +1738,10 @@ def delete_closed_date(closed_date_id: int, session: SessionDep) -> RedirectResp
         )
 
     session.delete(closed_date)
+    add_admin_audit(
+        session, request.state.admin_actor, "schedule_changed",
+        f"Загальний графік · відкрито {format_date(closed_date.closed_on)}",
+    )
     session.commit()
     return RedirectResponse(url="/admin#closed-dates", status_code=status.HTTP_303_SEE_OTHER)
 

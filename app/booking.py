@@ -13,6 +13,8 @@ from app.models import (
     BookingBlock,
     BookingService,
     ServiceClosedDate,
+    ServiceSchedule,
+    ServiceWeekdaySchedule,
 )
 
 Interval = tuple[int, int]
@@ -57,6 +59,32 @@ def working_intervals(slots: list[AvailableTimeSlot]) -> list[Interval]:
         else:
             intervals.append((start, end))
     return intervals
+
+
+def get_active_time_slots(session: Session) -> list[AvailableTimeSlot]:
+    return list(session.exec(
+        select(AvailableTimeSlot).where(AvailableTimeSlot.is_active)
+        .order_by(AvailableTimeSlot.sort_order, AvailableTimeSlot.id)
+    ))
+
+
+def weekday_schedules_by_service(
+    session: Session, service_ids: list[int],
+) -> dict[int, dict[int, ServiceWeekdaySchedule]]:
+    schedules: dict[int, dict[int, ServiceWeekdaySchedule]] = {}
+    for row in session.exec(
+        select(ServiceWeekdaySchedule).where(ServiceWeekdaySchedule.service_id.in_(service_ids))
+    ):
+        schedules.setdefault(row.service_id, {})[row.weekday] = row
+    return schedules
+
+
+def weekly_working_intervals(
+    default_intervals: list[Interval], schedule: ServiceSchedule | None,
+    overrides: dict[int, ServiceWeekdaySchedule],
+) -> list[list[Interval]]:
+    base = schedule.intervals if schedule is not None else default_intervals
+    return [overrides[day].intervals if day in overrides else base for day in range(7)]
 
 
 def service_is_closed(session: Session, service_id: int, day: date) -> bool:

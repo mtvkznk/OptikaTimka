@@ -26,7 +26,7 @@ CSRF_COOKIE_NAME = "optika_csrf"
 MAX_BODY_BYTES = 65_536
 MAX_ADMIN_CHANGES_BYTES = 2 * 1024 * 1024
 CSRF_TTL_SECONDS = 24 * 60 * 60
-CSRF_FORM_PAGES = frozenset({"/booking", "/cabinet", "/admin", "/admin/appointments"})
+CSRF_FORM_PAGES = frozenset({"/booking", "/cabinet", "/admin", "/admin/appointments", "/admin/audit"})
 basic_auth = HTTPBasic(auto_error=False, realm="Optika Timka admin")
 
 
@@ -350,7 +350,9 @@ def require_admin(
     credentials: Annotated[HTTPBasicCredentials | None, Depends(basic_auth)],
 ) -> None:
     if settings.google_admin_configured:
-        if is_google_admin(get_customer_by_session(request, session)):
+        customer = get_customer_by_session(request, session)
+        if customer is not None and is_google_admin(customer):
+            request.state.admin_actor = customer.email or f"Google {customer.google_sub}"
             return
         raise HTTPException(403, "Увійдіть у кабінет через Google-акаунт адміністратора.")
     if not settings.admin_password:
@@ -365,6 +367,7 @@ def require_admin(
             settings.admin_password.get_secret_value().encode(),
         )
         if username_ok and password_ok:
+            request.state.admin_actor = settings.admin_username
             return
     rate_limit(session, request, "admin-login", 10, 300)
     raise HTTPException(

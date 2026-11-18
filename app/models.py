@@ -212,6 +212,16 @@ class BookingBlock(SQLModel, table=True):
     end_minute: int
 
 
+class AdminAuditEvent(SQLModel, table=True):
+    __table_args__ = (Index("ix_adminauditevent_created_id", "created_at", "id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+    actor: str = Field(max_length=255)
+    action: str = Field(max_length=40)
+    detail: str = Field(sa_type=Text)
+
+
 class ServiceSchedule(SQLModel, table=True):
     service_id: int = Field(primary_key=True, foreign_key="bookingservice.id", ondelete="CASCADE")
     intervals: list[tuple[int, int]] = Field(sa_type=JSON)

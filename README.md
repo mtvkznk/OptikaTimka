@@ -172,7 +172,8 @@ Tests include migration upgrades/downgrades, identity isolation, CSRF failures,
 authentication limits, and concurrent booking conflicts.
 
 GitHub Actions runs SQLite and PostgreSQL tests on Python 3.12 and 3.14, Ruff,
-Bandit, and the dependency audit. The workflow has no deployment steps.
+Bandit, and the dependency audit. It also runs the Playwright scenarios in
+`tests/browser` against a temporary, seeded SQLite database. The workflow has no deployment steps.
 
 To refresh the runtime lock deliberately:
 
