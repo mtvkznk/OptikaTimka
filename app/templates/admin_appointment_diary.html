@@ -120,6 +120,7 @@
     {% include "csrf_field.html" %}
     <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
     <input type="hidden" name="preferred_time" />
+    <input type="hidden" name="expected_duration_minutes" value="{{ diary.service.duration_minutes }}" />
     <label class="admin-field">Ім’я та прізвище (необов’язково)
       <input name="name" />
     </label>

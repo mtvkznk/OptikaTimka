@@ -772,6 +772,29 @@ def test_weekday_hours_apply_per_service_in_booking_and_notebook(
     assert starts(doctor, thursday) == ["11:00:00", "11:30:00"]
 
 
+def test_open_booking_forms_reject_a_time_removed_by_a_schedule_change(client: TestClient) -> None:
+    doctor = client.get("/api/booking-services").json()[0]
+    day = current_date() + timedelta(days=2)
+    params = {"preferred_date": day.isoformat(), "service": doctor["name"]}
+    assert "09:30:00" in {
+        slot["start_time"] for slot in client.get("/api/availability", params=params).json()
+    }
+    assert client.post("/admin/changes", json={
+        "service_availability": [{
+            "id": doctor["id"], "schedule_version": service_schedule_version(None),
+            "schedule": {"workday": {"start_time": "09:15", "end_time": "12:15"}},
+        }],
+    }).status_code == 200
+    form = {
+        **params, "name": "Test client", "phone": "+380501234567", "preferred_time": "09:30",
+        "expected_duration_minutes": doctor["duration_minutes"],
+    }
+    assert client.post("/api/appointments", json=form).status_code == 409
+    manual = {**form, "expected_duration_minutes": str(doctor["duration_minutes"])}
+    assert client.post("/admin/appointments/manual", data=manual).status_code == 409
+    assert client.post("/api/appointments", json={**form, "preferred_time": "09:45"}).status_code == 201
+
+
 def test_batch_applies_booking_service_and_period_together(client: TestClient, app_db: Engine) -> None:
     day = current_date() + timedelta(days=5)
     with Session(app_db) as session:

@@ -32,8 +32,10 @@ from app.admin_changes import (
 from app.booking import (
     BookingTime,
     Interval,
+    available_start_minutes,
     available_starts,
     blocked_intervals,
+    booking_start_fits,
     check_booking_overlap,
     check_reactivation,
     first_future_minute,
@@ -196,7 +198,7 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261117-booking-availability"
+ASSET_VERSION = "20261118-booking-refresh"
 ADMIN_ASSET_VERSION = "20261118-notebook-status"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
@@ -336,17 +338,6 @@ def count_rows(session: Session, model: type[Any], *conditions: Any) -> int:
     return int(session.exec(statement).one())
 
 
-def status_value(appointment: Appointment) -> str:
-    if isinstance(appointment.status, AppointmentStatus):
-        return appointment.status.value
-    return str(appointment.status)
-
-
-def status_label(value: AppointmentStatus | str) -> str:
-    key = value.value if isinstance(value, AppointmentStatus) else str(value)
-    return STATUS_LABELS.get(key, key)
-
-
 def format_date(value: date | None) -> str:
     if value is None:
         return "-"
@@ -381,14 +372,16 @@ def booking_window(now: datetime | None = None) -> tuple[date, date]:
 
 
 def build_appointment_rows(appointments: list[Appointment]) -> list[dict[str, Any]]:
-    return [
-        {
+    rows = []
+    for appointment in appointments:
+        value = appointment.status
+        key = value.value if isinstance(value, AppointmentStatus) else str(value)
+        rows.append({
             "appointment": appointment,
-            "status_value": status_value(appointment),
-            "status_label": status_label(appointment.status),
-        }
-        for appointment in appointments
-    ]
+            "status_value": key,
+            "status_label": STATUS_LABELS.get(key, key),
+        })
+    return rows
 
 
 def next_month(value: date) -> date:
@@ -542,10 +535,9 @@ def appointment_diary(
         timed.append((start, end, doctor, appointment))
 
     earliest = first_future_minute(day, now)
-    available = {
-        minute_of(slot.start_time)
-        for slot in available_starts(intervals, blocks + [(s, e) for s, e, _, _ in timed], duration, earliest)
-    }
+    available = set(available_start_minutes(
+        intervals, blocks + [(s, e) for s, e, _, _ in timed], duration, earliest,
+    ))
     rows = []
     for start in sorted(starts):
         appointments_here = [appointment for s, _, doctor, appointment in timed if doctor and s == start]
@@ -1245,10 +1237,13 @@ def create_manual_appointment(
     now = kyiv_now()
     check_diary_day(session, service, day, start, now=now)
     duration = service.duration_minutes
-    if not any(
-        opens <= start and start + duration <= closes
-        for opens, closes in service_working_intervals(session, service.id, day)
-    ):
+    from_notebook = "expected_duration_minutes" in form_data
+    if from_notebook and form_int(form_data, "expected_duration_minutes") != duration:
+        raise HTTPException(409, "Тривалість послуги змінилася. Оновіть зошит і виберіть час ще раз.")
+    working = service_working_intervals(session, service.id, day)
+    if not booking_start_fits(working, start, duration, on_grid=from_notebook):
+        if from_notebook:
+            raise HTTPException(409, "Години змінилися. Оновіть зошит і виберіть час ще раз.")
         raise HTTPException(409, "Для прийому не вистачає часу до кінця робочого проміжку.")
     check_booking_overlap(session, day, start, duration, service_id=service.id)
     initial_status = AppointmentStatus.confirmed if day == now.date() else AppointmentStatus.new
@@ -1282,9 +1277,8 @@ def change_booking_block(
     elif block is None:
         check_diary_day(session, service, day, start, now=kyiv_now())
         duration = service.duration_minutes
-        if form_int(form_data, "slot_duration") != duration or not any(
-            opens <= start and start + duration <= closes and (start - opens) % duration == 0
-            for opens, closes in service_working_intervals(session, service.id, day)
+        if form_int(form_data, "slot_duration") != duration or not booking_start_fits(
+            service_working_intervals(session, service.id, day), start, duration, on_grid=True,
         ):
             raise HTTPException(409, "Години змінилися. Оновіть зошит і виберіть час ще раз.")
         check_booking_overlap(session, day, start, duration, service_id=service.id)
@@ -1439,10 +1433,11 @@ def create_appointment(
         raise HTTPException(400, "Ця послуга недоступна в обраний день тижня.")
     if service_is_closed(session, service.id, day):
         raise HTTPException(400, "Запис на цю послугу закритий на обрану дату.")
-    if not any(
-        opens <= start and start + duration <= closes
-        for opens, closes in service_working_intervals(session, service.id, day)
-    ):
+    from_calendar = payload.expected_duration_minutes is not None
+    working = service_working_intervals(session, service.id, day)
+    if not booking_start_fits(working, start, duration, on_grid=from_calendar):
+        if from_calendar:
+            raise HTTPException(409, "Робочі години змінилися. Виберіть час ще раз.")
         raise HTTPException(400, "Для цієї послуги оберіть час у межах робочого графіка.")
     check_booking_overlap(session, day, start, duration, service_id=service.id)
 
@@ -1492,7 +1487,6 @@ def record_analytics_event(
 @admin_router.post("/appointments/{appointment_id}/status")
 def update_appointment_status(
     appointment_id: int,
-    request: Request,
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:

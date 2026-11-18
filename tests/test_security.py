@@ -22,6 +22,7 @@ from app.models import (
     utc_now,
 )
 from app.security import (
+    CSRF_COOKIE_NAME,
     GOOGLE_SESSION_PREFIX,
     SESSION_COOKIE_NAME,
     PathOnlyAccessLog,
@@ -170,6 +171,28 @@ def test_csrf_is_bound_to_login_session(anonymous_client: TestClient, app_db: En
     )
     assert response.status_code == 403
     assert anonymous_client.post("/auth/logout", follow_redirects=False).status_code == 303
+
+
+@pytest.mark.parametrize("send_form", [False, True])
+@pytest.mark.parametrize("signed_in", [False, True])
+def test_csrf_tokens_from_two_tabs_require_a_shared_login_session(
+    raw_client: TestClient, app_db: Engine, send_form: bool, signed_in: bool,
+) -> None:
+    if signed_in:
+        sign_in_customer(
+            raw_client, app_db,
+            Customer(google_sub="two-tabs", email="tabs@example.com", email_verified=True),
+        )
+    first = csrf_headers(raw_client)
+    raw_client.cookies.delete(cookie_name(CSRF_COOKIE_NAME))
+    assert csrf_headers(raw_client) != first
+    if send_form:
+        response = raw_client.post(
+            "/auth/logout", data={"csrf_token": first["X-CSRF-Token"]}, follow_redirects=False,
+        )
+    else:
+        response = raw_client.post("/auth/logout", headers=first, follow_redirects=False)
+    assert response.status_code == (303 if signed_in else 403)
 
 
 def test_body_limits_cover_declared_and_streamed_bodies(raw_client: TestClient) -> None:
@@ -566,6 +589,26 @@ def test_only_one_booking_can_win_a_race(raw_client: TestClient, second_start: s
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(submit, ["10:00:00", second_start]))
     assert sorted(results) == [201, 409]
+
+
+def test_booking_and_closing_its_slot_are_mutually_exclusive(
+    raw_client: TestClient, client: TestClient,
+) -> None:
+    doctor = raw_client.get("/api/booking-services").json()[0]
+    visit = booking(service=doctor["name"])
+    headers = csrf_headers(raw_client)
+    block = {
+        "preferred_date": visit["preferred_date"], "preferred_time": visit["preferred_time"],
+        "service_id": str(doctor["id"]), "slot_duration": str(doctor["duration_minutes"]),
+        "block_action": "close",
+    }
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        booked = executor.submit(raw_client.post, "/api/appointments", json=visit, headers=headers)
+        closed = executor.submit(
+            raw_client.post, "/admin/appointments/slot-block", data=block,
+            headers={**headers, "Accept": "application/json"}, auth=client.auth,
+        )
+    assert (booked.result().status_code, closed.result().status_code) in {(201, 409), (409, 200)}
 
 
 def test_cancel_releases_slot_and_reactivation_cannot_double_book(client: TestClient) -> None:

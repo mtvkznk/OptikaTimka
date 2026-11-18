@@ -100,6 +100,15 @@ def valid_csrf_token(token: str, session_token: str) -> bool:
     )
 
 
+def csrf_matches(submitted: str, cookie_token: str, session_token: str) -> bool:
+    if secrets.compare_digest(submitted.encode(), cookie_token.encode()):
+        return True
+    # Separate tabs can receive different tokens when they open at the same time.
+    return session_token.startswith(GOOGLE_SESSION_PREFIX) and valid_csrf_token(
+        submitted, session_token,
+    )
+
+
 def parse_form_body(body: bytes, content_type: str) -> dict[str, str]:
     if content_type.split(";", 1)[0].strip().lower() != "application/x-www-form-urlencoded":
         raise HTTPException(415, "Форма має бути надіслана у стандартному форматі.")
@@ -228,9 +237,7 @@ class SecurityMiddleware:
                 content_type.split(";", 1)[0].strip().lower() == "application/x-www-form-urlencoded"
             )
             if not token_valid or (
-                not needs_form_field and not secrets.compare_digest(
-                    submitted.encode(), cookie_token.encode()
-                )
+                not needs_form_field and not csrf_matches(submitted, cookie_token, session_token)
             ):
                 await reject(403, "Оновіть сторінку та повторіть дію.")
                 return
@@ -255,7 +262,7 @@ class SecurityMiddleware:
                 except HTTPException as exc:
                     await reject(exc.status_code, str(exc.detail))
                     return
-                if not secrets.compare_digest(submitted.encode(), cookie_token.encode()):
+                if not csrf_matches(submitted, cookie_token, session_token):
                     await reject(403, "Оновіть сторінку та повторіть дію.")
                     return
 

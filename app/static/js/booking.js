@@ -107,6 +107,14 @@ async function refreshAvailability() {
       "/api/availability?" + query,
       { signal: request.signal },
     );
+    if (response.status === 400) {
+      const payload = await response.json().catch(() => null);
+      if (!request.signal.aborted) {
+        availabilityStatus.textContent = typeof payload?.detail === "string"
+          ? payload.detail : "Оберіть іншу дату або послугу.";
+      }
+      return;
+    }
     if (!response.ok) throw new Error("Availability request failed");
     const slots = await response.json();
     if (request.signal.aborted) return;
@@ -221,14 +229,9 @@ form.addEventListener("submit", async (event) => {
       }),
     });
 
-    if (response.status === 409) {
-      const payload = await response.json().catch(() => null);
-      refreshAvailability();
-      showError(payload?.detail ?? "Цей час уже зайнятий. Оберіть інший час.");
-      return;
-    }
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
+      if (response.status === 400 || response.status === 409) refreshAvailability();
       if (Array.isArray(payload?.detail) && payload.detail.some((error) => error.loc?.includes("phone"))) {
         fieldsets.forEach((fieldset) => { fieldset.disabled = false; });
         showError("Введіть номер у форматі 067 123 45 67 або +380 67 123 45 67.", form.elements.namedItem("phone"));

@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from datetime import date, datetime, time
 
 from fastapi import HTTPException
@@ -116,19 +117,31 @@ def check_reactivation(session: Session, appointment: Appointment) -> None:
         )
 
 
-def available_starts(
+def booking_start_fits(
+    working: list[Interval], start: int, duration: int, *, on_grid: bool,
+) -> bool:
+    return any(
+        opens <= start and start + duration <= closes
+        and (not on_grid or (start - opens) % duration == 0)
+        for opens, closes in working
+    )
+
+
+def available_start_minutes(
     working: list[Interval], occupied: list[Interval], duration: int, earliest: int,
-) -> list[BookingTime]:
-    options: list[BookingTime] = []
+) -> Iterator[int]:
     for opens, closes in working:
         # Round forward on the working interval's grid, including on the current day.
         skipped_slots = max(0, (earliest - opens + duration - 1) // duration)
         for start in range(opens + skipped_slots * duration, closes - duration + 1, duration):
-            end = start + duration
-            if overlaps(start, end, occupied):
-                continue
-            options.append(BookingTime(
-                start_time=time(*divmod(start, 60)),
-                end_time=time(*divmod(end, 60)),
-            ))
-    return options
+            if not overlaps(start, start + duration, occupied):
+                yield start
+
+
+def available_starts(
+    working: list[Interval], occupied: list[Interval], duration: int, earliest: int,
+) -> list[BookingTime]:
+    return [
+        BookingTime(start_time=time(*divmod(start, 60)), end_time=time(*divmod(start + duration, 60)))
+        for start in available_start_minutes(working, occupied, duration, earliest)
+    ]
