@@ -74,6 +74,27 @@ if (manualAppointment) {
   let selectedSlot = null;
   let savingAppointment = false;
 
+  async function submitDiaryForm(form, feedbackNode, fallback) {
+    feedbackNode.textContent = "";
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: new URLSearchParams(new FormData(form)),
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && body?.redirect) {
+        history.replaceState(null, "", body.redirect);
+        location.reload();
+        return true;
+      }
+      feedbackNode.textContent = typeof body?.detail === "string" ? body.detail : fallback;
+    } catch {
+      feedbackNode.textContent = fallback;
+    }
+    return false;
+  }
+
   const setExpanded = (slot, expanded) => {
     slot.setAttribute("aria-expanded", String(expanded));
     const action = expanded ? "Зберегти запис на " : "Додати запис на ";
@@ -93,7 +114,7 @@ if (manualAppointment) {
       setExpanded(button, true);
       manualAppointment.elements.namedItem("preferred_time").value = button.dataset.notebookStart;
       feedback.textContent = "";
-      button.after(manualAppointment);
+      button.closest(".admin-notebook-slot-actions").after(manualAppointment);
       manualAppointment.hidden = false;
       phone.focus();
     });
@@ -121,26 +142,21 @@ if (manualAppointment) {
     const fallback = "Не вдалося додати запис. Перевірте поля або оновіть сторінку.";
     button.disabled = true;
     savingAppointment = true;
-    feedback.textContent = "";
-    try {
-      const response = await fetch(manualAppointment.action, {
-        method: "POST",
-        headers: { Accept: "application/json" },
-        body: new URLSearchParams(new FormData(manualAppointment)),
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok || !body?.redirect) {
-        feedback.textContent = typeof body?.detail === "string" ? body.detail : fallback;
-      } else {
-        history.replaceState(null, "", body.redirect);
-        location.reload();
-        return;
-      }
-    } catch {
-      feedback.textContent = fallback;
-    }
+    if (await submitDiaryForm(manualAppointment, feedback, fallback)) return;
     button.disabled = false;
     savingAppointment = false;
+  });
+
+  document.querySelectorAll("[data-notebook-block]").forEach((form) => {
+    const button = form.querySelector("button");
+    const message = form.closest(".admin-notebook-line-content").querySelector("[data-notebook-block-feedback]");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (savingAppointment) return;
+      savingAppointment = button.disabled = true;
+      if (await submitDiaryForm(form, message, "Не вдалося змінити доступність години. Спробуйте ще раз.")) return;
+      savingAppointment = button.disabled = false;
+    });
   });
 }
 

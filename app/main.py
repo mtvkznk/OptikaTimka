@@ -33,6 +33,7 @@ from app.booking import (
     BookingTime,
     Interval,
     available_starts,
+    blocked_intervals,
     check_booking_overlap,
     check_reactivation,
     first_future_minute,
@@ -40,6 +41,7 @@ from app.booking import (
     minute_of,
     occupied_interval,
     occupied_intervals,
+    overlaps,
     service_is_closed,
     working_intervals,
 )
@@ -66,6 +68,7 @@ from app.models import (
     AvailableTimeSlot,
     AvailableTimeSlotCreate,
     AvailableTimeSlotRead,
+    BookingBlock,
     BookingService,
     BookingServiceCreate,
     BookingServiceRead,
@@ -195,7 +198,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261117-booking-availability"
-ADMIN_ASSET_VERSION = "20261117-weekday-schedules"
+ADMIN_ASSET_VERSION = "20261118-notebook-blocks"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -521,6 +524,9 @@ def appointment_diary(
     duration = service.duration_minutes
     intervals = week[day.weekday()]
     starts = {minute for start, end in intervals for minute in range(start, end, duration)}
+    blocks = blocked_intervals(session, day)
+    block_starts = {start for start, _ in blocks}
+    starts.update(block_starts)
     timed = []
     untimed = []
     for appointment in appointments:
@@ -539,7 +545,7 @@ def appointment_diary(
     earliest = first_future_minute(day, now)
     available = {
         minute_of(slot.start_time)
-        for slot in available_starts(intervals, [(s, e) for s, e, _, _ in timed], duration, earliest)
+        for slot in available_starts(intervals, blocks + [(s, e) for s, e, _, _ in timed], duration, earliest)
     }
     rows = []
     for start in sorted(starts):
@@ -551,6 +557,8 @@ def appointment_diary(
             "visits": build_appointment_rows(appointments_here),
             "doctor_occupied": doctor_occupied,
             "other_occupied": other_occupied,
+            "can_reopen": start in block_starts,
+            "is_blocked": any(lo <= start < hi for lo, hi in blocks),
             "is_past": start < earliest,
             "can_book": start in available,
         })
@@ -1184,23 +1192,15 @@ def admin_appointments(
     )
 
 
-@admin_router.post("/appointments/manual", response_model=None)
-def create_manual_appointment(
-    request: Request, session: SessionDep, form_data: FormDataDep,
-) -> Response:
-    name = form_data.get("name", "").strip()
-    phone = form_data.get("phone", "").strip()
-    if not name and not phone:
-        raise HTTPException(422, "Введіть ім’я або контакт.")
-    if "\0" in name or "\0" in phone:
-        raise HTTPException(422, "Перевірте символи в імені та контакті.")
+def diary_slot_from_form(form_data: dict[str, str]) -> tuple[date, time]:
     day = form_date(form_data, "preferred_date")
     start_time = form_time(form_data, "preferred_time")
     if start_time.tzinfo or start_time.second or start_time.microsecond:
         raise HTTPException(422, "Вкажіть час у годинах і хвилинах.")
-    start = minute_of(start_time)
+    return day, start_time
 
-    lock_booking_writes(session)
+
+def diary_service_for_slot(session: Session, day: date, start: int) -> BookingService:
     if start < first_future_minute(day, kyiv_now()):
         raise HTTPException(409, "Цей час уже минув. Оберіть інший час.")
     service = diary_service(get_active_services(session))
@@ -1212,6 +1212,32 @@ def create_manual_appointment(
         or session.exec(select(ClosedDate.id).where(ClosedDate.closed_on == day)).first() is not None
     ):
         raise HTTPException(409, "Цей день закритий для запису на огляд лікаря.")
+    return service
+
+
+def diary_action_response(
+    request: Request, day: date, status_code: int = 200, *, anchor: str = "appointment-diary",
+) -> Response:
+    return_to = f"/admin?day={day.isoformat()}#{anchor}"
+    if request.headers.get("accept") == "application/json":
+        return JSONResponse({"redirect": return_to}, status_code=status_code)
+    return RedirectResponse(return_to, status_code=303)
+
+
+@admin_router.post("/appointments/manual", response_model=None)
+def create_manual_appointment(
+    request: Request, session: SessionDep, form_data: FormDataDep,
+) -> Response:
+    name = form_data.get("name", "").strip()
+    phone = form_data.get("phone", "").strip()
+    if not name and not phone:
+        raise HTTPException(422, "Введіть ім’я або контакт.")
+    if "\0" in name or "\0" in phone:
+        raise HTTPException(422, "Перевірте символи в імені та контакті.")
+    day, start_time = diary_slot_from_form(form_data)
+    start = minute_of(start_time)
+    lock_booking_writes(session)
+    service = diary_service_for_slot(session, day, start)
     duration = service.duration_minutes
     if not any(
         opens <= start and start + duration <= closes
@@ -1225,10 +1251,37 @@ def create_manual_appointment(
         status=AppointmentStatus.confirmed, duration_minutes=duration,
     ))
     session.commit()
-    return_to = f"/admin?day={day.isoformat()}#appointment-diary"
-    if request.headers.get("accept") == "application/json":
-        return JSONResponse({"redirect": return_to}, status_code=201)
-    return RedirectResponse(return_to, status_code=303)
+    return diary_action_response(request, day, status_code=201)
+
+
+@admin_router.post("/appointments/slot-block", response_model=None)
+def change_booking_block(
+    request: Request, session: SessionDep, form_data: FormDataDep,
+) -> Response:
+    day, start_time = diary_slot_from_form(form_data)
+    start = minute_of(start_time)
+    action = form_data.get("block_action")
+    if action not in {"close", "open"}:
+        raise HTTPException(422, "Некоректна дія для години запису.")
+
+    lock_booking_writes(session)
+    block = session.get(BookingBlock, (day, start))
+    if action == "open":
+        if block is not None:
+            session.delete(block)
+    elif block is None:
+        service = diary_service_for_slot(session, day, start)
+        duration = service.duration_minutes
+        if form_int(form_data, "slot_duration") != duration or not any(
+            opens <= start and start + duration <= closes and (start - opens) % duration == 0
+            for opens, closes in service_working_intervals(session, service.id, day)
+        ):
+            raise HTTPException(409, "Години змінилися. Оновіть зошит і виберіть час ще раз.")
+        check_booking_overlap(session, day, start, duration)
+        session.add(BookingBlock(day=day, start_minute=start, end_minute=start + duration))
+
+    session.commit()
+    return diary_action_response(request, day, anchor=f"notebook-slot-{start_time:%H%M}")
 
 
 @admin_router.post("/changes")
@@ -1302,16 +1355,18 @@ def available_time_slots(
         return []
     earliest = first_future_minute(preferred_date, now)
     booked = occupied_intervals(session, preferred_date)
+    blocks = blocked_intervals(session, preferred_date)
     if booking_service is not None:
         return available_starts(
             service_working_intervals(session, booking_service.id, preferred_date),
-            booked, booking_service.duration_minutes, earliest,
+            booked + blocks, booking_service.duration_minutes, earliest,
         )
     # Keep returning configured slots to clients that do not supply a service.
     return [
         slot for slot in get_active_time_slots(session)
         if (start := minute_of(slot.start_time)) >= earliest
         and not any(booked_start <= start < booked_end for booked_start, booked_end in booked)
+        and not overlaps(start, minute_of(slot.end_time), blocks)
     ]
 
 

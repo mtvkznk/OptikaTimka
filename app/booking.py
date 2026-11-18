@@ -5,7 +5,13 @@ from pydantic import BaseModel
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
-from app.models import Appointment, AppointmentStatus, AvailableTimeSlot, ServiceClosedDate
+from app.models import (
+    Appointment,
+    AppointmentStatus,
+    AvailableTimeSlot,
+    BookingBlock,
+    ServiceClosedDate,
+)
 
 Interval = tuple[int, int]
 
@@ -72,21 +78,32 @@ def occupied_intervals(session: Session, day: date, exclude_id: int | None = Non
     )
 
 
+def blocked_intervals(session: Session, day: date) -> list[Interval]:
+    rows = session.exec(
+        select(BookingBlock.start_minute, BookingBlock.end_minute).where(BookingBlock.day == day)
+    )
+    return [(start, end) for start, end in rows]
+
+
+def overlaps(start: int, end: int, intervals: list[Interval]) -> bool:
+    return any(start < other_end and other_start < end for other_start, other_end in intervals)
+
+
 def check_booking_overlap(
     session: Session, day: date, start: int, duration: int, exclude_id: int | None = None,
 ) -> None:
-    if any(
-        start < booked_end and booked_start < start + duration
-        for booked_start, booked_end in occupied_intervals(session, day, exclude_id)
-    ):
+    end = start + duration
+    if overlaps(start, end, occupied_intervals(session, day, exclude_id)):
         raise HTTPException(409, "Цей час уже зайнятий. Оберіть інший час.")
+    if overlaps(start, end, blocked_intervals(session, day)):
+        raise HTTPException(409, "Цей час закритий для запису. Оберіть інший час.")
 
 
 def check_reactivation(session: Session, appointment: Appointment) -> None:
     if appointment.preferred_date is not None and appointment.preferred_time is not None:
+        start, end = occupied_interval(appointment.preferred_time, appointment.duration_minutes)
         check_booking_overlap(
-            session, appointment.preferred_date, minute_of(appointment.preferred_time),
-            appointment.duration_minutes, appointment.id,
+            session, appointment.preferred_date, start, end - start, appointment.id,
         )
 
 
@@ -99,7 +116,7 @@ def available_starts(
         skipped_slots = max(0, (earliest - opens + duration - 1) // duration)
         for start in range(opens + skipped_slots * duration, closes - duration + 1, duration):
             end = start + duration
-            if any(start < blocked_end and blocked_start < end for blocked_start, blocked_end in occupied):
+            if overlaps(start, end, occupied):
                 continue
             options.append(BookingTime(
                 start_time=time(*divmod(start, 60)),

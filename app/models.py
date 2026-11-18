@@ -198,6 +198,19 @@ class ClosedDateRead(SQLModel):
     updated_at: datetime
 
 
+class BookingBlock(SQLModel, table=True):
+    __table_args__ = (
+        CheckConstraint(
+            "start_minute >= 0 AND start_minute < end_minute AND end_minute <= 1440",
+            name="ck_booking_block_interval",
+        ),
+    )
+
+    day: date = Field(primary_key=True)
+    start_minute: int = Field(primary_key=True)
+    end_minute: int
+
+
 class ServiceSchedule(SQLModel, table=True):
     service_id: int = Field(primary_key=True, foreign_key="bookingservice.id", ondelete="CASCADE")
     intervals: list[tuple[int, int]] = Field(sa_type=JSON)

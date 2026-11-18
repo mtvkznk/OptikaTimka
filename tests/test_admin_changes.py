@@ -113,6 +113,71 @@ def test_phone_only_notebook_appointment_uses_doctor_service_duration(
         assert appointment.duration_minutes == 35 and appointment.service_id == service["id"]
 
 
+def test_notebook_closes_and_reopens_free_time_without_overlapping_bookings(
+    client: TestClient, anonymous_client: TestClient, app_db: Engine,
+) -> None:
+    doctor, other = client.get("/api/booking-services").json()[:2]
+    day = current_date() + timedelta(days=2)
+    with Session(app_db) as session:
+        session.get(BookingService, other["id"]).duration_minutes = 60
+        booked = Appointment(
+            name="Existing visit", phone="+380980000001", service=doctor["name"],
+            service_id=doctor["id"], preferred_date=day, preferred_time=time(10, 15),
+            duration_minutes=30,
+        )
+        canceled = Appointment(
+            name="Canceled visit", phone="+380980000002", service=doctor["name"],
+            service_id=doctor["id"], preferred_date=day, preferred_time=time(9, 30),
+            duration_minutes=30, status=AppointmentStatus.canceled,
+        )
+        session.add_all([booked, canceled])
+        session.commit()
+        canceled_id = canceled.id
+
+    notebook = f"/admin?day={day.isoformat()}"
+    endpoint = "/admin/appointments/slot-block"
+    form = {
+        "preferred_date": day.isoformat(), "preferred_time": "09:30",
+        "block_action": "close", "slot_duration": "30",
+    }
+
+    def starts(service: dict) -> list[str]:
+        response = anonymous_client.get("/api/availability", params={
+            "preferred_date": day, "service": service["name"],
+        })
+        assert response.status_code == 200
+        return [slot["start_time"] for slot in response.json()]
+
+    html = client.get(notebook).text
+    assert 'aria-label="Закрити час 09:30"' in html
+    assert 'aria-label="Закрити час 10:00"' not in html
+    assert "09:30:00" in starts(doctor) and "09:00:00" in starts(other)
+    assert anonymous_client.post(endpoint, data=form).status_code == 401
+    assert client.post(endpoint, data={**form, "preferred_time": "10:00"}).status_code == 409
+    assert client.post(endpoint, data={**form, "slot_duration": "60"}).status_code == 409
+    response = client.post(endpoint, data=form, headers={"Accept": "application/json"})
+    assert response.status_code == 200
+    assert response.json()["redirect"] == f"{notebook}#notebook-slot-0930"
+    assert client.post(endpoint, data=form, follow_redirects=False).status_code == 303
+    assert "09:30:00" not in starts(doctor) and "09:00:00" not in starts(other)
+    html = client.get(notebook).text
+    assert 'aria-label="Відкрити час 09:30"' in html and "Existing visit" in html
+    assert 'aria-label="Додати запис на 09:30"' not in html
+    booking = {
+        "preferred_date": day.isoformat(), "preferred_time": "09:30", "phone": "+380501234567",
+    }
+    assert client.post("/admin/appointments/manual", data=booking).status_code == 409
+    assert client.post("/api/appointments", json={
+        **booking, "name": "Test client", "service": doctor["name"],
+    }).status_code == 409
+    assert client.post(f"/admin/appointments/{canceled_id}/status", data={
+        "status": "confirmed",
+    }).status_code == 409
+
+    assert client.post(endpoint, data={**form, "block_action": "open"}, follow_redirects=False).status_code == 303
+    assert "09:30:00" in starts(doctor) and "09:00:00" in starts(other)
+
+
 def test_notebook_skips_days_closed_for_the_doctor(
     client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
 ) -> None:

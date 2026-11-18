@@ -27,6 +27,18 @@
     </form>
   </div>
 {% endmacro %}
+{% macro diary_block_control(row, reopening=false) %}
+  {% set label = ("Відкрити час " if reopening else "Закрити час ") ~ row.start %}
+  <form action="/admin/appointments/slot-block" method="post" data-notebook-block>
+    {% include "csrf_field.html" %}
+    <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
+    <input type="hidden" name="preferred_time" value="{{ row.start }}" />
+    <input type="hidden" name="slot_duration" value="{{ diary.service.duration_minutes }}" />
+    <input type="hidden" name="block_action" value="{{ 'open' if reopening else 'close' }}" />
+    <button class="admin-notebook-slot{% if not reopening %} admin-notebook-slot-danger{% endif %}"
+            type="submit" aria-label="{{ label }}" title="{{ label }}">{{ "↺" if reopening else "−" }}</button>
+  </form>
+{% endmacro %}
 <section class="admin-notebook" id="appointment-diary" aria-labelledby="diary-heading">
   <header class="admin-notebook-header">
     {% if diary.date %}
@@ -61,7 +73,7 @@
   {% if diary.rows or diary.untimed %}
   <ul class="admin-notebook-lines" aria-label="Записи на вибраний день">
     {% for row in diary.rows %}
-    <li class="admin-notebook-line"{% if row.doctor_occupied %} data-occupied{% endif %}>
+    <li class="admin-notebook-line" id="notebook-slot-{{ row.start | replace(':', '') }}"{% if row.doctor_occupied %} data-occupied{% endif %}>
       <time datetime="{{ row.start }}">{{ row.start }}</time>
       <div class="admin-notebook-line-content">
         {% for visit in row.visits %}{{ diary_visit(visit) }}{% endfor %}
@@ -70,14 +82,25 @@
           <span class="admin-notebook-muted">Прийом триває</span>
           {% elif row.other_occupied %}
           <span class="admin-notebook-muted">Зайнято</span>
+          {% elif row.is_blocked %}
+          <div class="admin-notebook-slot-actions">
+            {% if row.can_reopen %}{{ diary_block_control(row, reopening=true) }}{% endif %}
+            <span class="admin-notebook-closed">Закрито</span>
+          </div>
           {% elif row.can_book %}
-          <button class="admin-notebook-slot" type="button" data-notebook-start="{{ row.start }}"
-                  aria-controls="manual-appointment" aria-expanded="false"
-                  aria-label="Додати запис на {{ row.start }}" title="Додати запис на {{ row.start }}">+</button>
+          <div class="admin-notebook-slot-actions">
+            <button class="admin-notebook-slot" type="button" data-notebook-start="{{ row.start }}"
+                    aria-controls="manual-appointment" aria-expanded="false"
+                    aria-label="Додати запис на {{ row.start }}" title="Додати запис на {{ row.start }}">+</button>
+            {{ diary_block_control(row) }}
+          </div>
           {% elif row.is_past %}
           <span class="admin-notebook-muted">Час минув</span>
           {% else %}
           <span class="admin-notebook-muted">Замало часу для прийому</span>
+          {% endif %}
+          {% if row.can_book or row.can_reopen %}
+          <p class="admin-notebook-slot-error" data-notebook-block-feedback role="alert"></p>
           {% endif %}
         {% endif %}
       </div>
