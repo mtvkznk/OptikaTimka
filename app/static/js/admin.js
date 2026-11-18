@@ -76,14 +76,20 @@ if (manualAppointment) {
 
   async function submitDiaryForm(form, feedbackNode, fallback) {
     feedbackNode.textContent = "";
+    const fields = new URLSearchParams(new FormData(form));
     try {
       const response = await fetch(form.action, {
         method: "POST",
         headers: { Accept: "application/json" },
-        body: new URLSearchParams(new FormData(form)),
+        body: fields,
       });
       const body = await response.json().catch(() => null);
       if (response.ok && body?.redirect) {
+        const edit = draft.edits["appointments:" + form.dataset.notebookMove];
+        if (edit && body.version && edit.identity.version === fields.get("version")) {
+          edit.identity.version = body.version;
+          persistDraft();
+        }
         history.replaceState(null, "", body.redirect);
         location.reload();
         return true;
@@ -147,14 +153,17 @@ if (manualAppointment) {
     savingAppointment = false;
   });
 
-  document.querySelectorAll("[data-notebook-block]").forEach((form) => {
+  document.querySelectorAll("[data-notebook-block], [data-notebook-move]").forEach((form) => {
     const button = form.querySelector("button");
     const message = form.closest(".admin-notebook-line-content").querySelector("[data-notebook-block-feedback]");
+    const fallback = form.hasAttribute("data-notebook-move")
+      ? "Не вдалося перенести запис. Спробуйте ще раз."
+      : "Не вдалося змінити доступність години. Спробуйте ще раз.";
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (savingAppointment) return;
       savingAppointment = button.disabled = true;
-      if (await submitDiaryForm(form, message, "Не вдалося змінити доступність години. Спробуйте ще раз.")) return;
+      if (await submitDiaryForm(form, message, fallback)) return;
       savingAppointment = button.disabled = false;
     });
   });

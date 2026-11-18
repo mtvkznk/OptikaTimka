@@ -1,4 +1,4 @@
-{% macro diary_url(day) %}/admin?day={{ day.isoformat() }}#appointment-diary{% endmacro %}
+{% macro diary_url(day, keep_move=true) %}/admin?day={{ day.isoformat() }}{{ diary.move_query if keep_move else '' }}#appointment-diary{% endmacro %}
 {% macro diary_visit(row) %}
   {% set visit = row.appointment %}
   <div class="admin-notebook-visit" data-status="{{ row.status_value }}">
@@ -15,6 +15,7 @@
       </details>
       {% endif %}
     </div>
+    <div class="admin-notebook-visit-actions">
     <form class="admin-status-form admin-notebook-status" action="/admin/appointments/{{ visit.id }}/status"
           method="post" data-admin-edit="appointments" data-id="{{ visit.id }}" data-version="{{ visit.updated_at.isoformat() }}">
       {% include "csrf_field.html" %}
@@ -25,6 +26,10 @@
         {% endfor %}
       </select>
     </form>
+    {% if not diary.moving %}
+    <a class="admin-button admin-button-small" href="/admin?day={{ diary.date.isoformat() }}&amp;move={{ visit.id }}#appointment-diary">Перенести</a>
+    {% endif %}
+    </div>
   </div>
 {% endmacro %}
 {% macro diary_block_control(row, reopening=false) %}
@@ -62,6 +67,17 @@
     <p class="admin-notebook-service">{{ diary.service.name }}</p>
     {% endif %}
   </header>
+  {% if move_error %}<p class="admin-notebook-note" role="alert">{{ move_error }}</p>{% endif %}
+  {% if diary.moving %}
+  <div class="admin-notebook-moving">
+    <div>
+      <strong>Перенесення запису</strong>
+      <p>{{ diary.moving.name or diary.moving.phone or "Прийом №" ~ diary.moving.id }} · {{ format_date(diary.moving.preferred_date) }} {{ format_time(diary.moving.preferred_time) }}</p>
+      <p>Гортайте дні й натисніть «Підтвердити перенесення» біля потрібної години.</p>
+    </div>
+    <a class="admin-button admin-button-small" href="{{ diary_url(diary.date, keep_move=false) if diary.date else '/admin#appointment-diary' }}">Скасувати</a>
+  </div>
+  {% endif %}
   {% if diary.date %}
   {% if diary.home_day and diary.date != diary.home_day %}
   <div class="admin-notebook-actions">
@@ -71,6 +87,9 @@
   {% if diary.online_not_yet_open %}
   <p class="admin-notebook-note">Онлайн-запис на цей день ще не відкрився.</p>
   {% endif %}
+  {% if diary.moving and not diary.has_available %}
+  <p class="admin-notebook-note">На цю дату немає вільних годин. Оберіть інший день стрілками.</p>
+  {% endif %}
   {% if diary.rows or diary.untimed %}
   <ul class="admin-notebook-lines" aria-label="Записи на вибраний день">
     {% for row in diary.rows %}
@@ -79,11 +98,19 @@
       <div class="admin-notebook-line-content">
         {% for visit in row.visits %}{{ diary_visit(visit) }}{% endfor %}
         {% if not row.visits %}
-          {% if row.doctor_occupied %}
+          {% if row.can_move %}
+          <form action="/admin/appointments/{{ diary.moving.id }}/move" method="post" data-notebook-move="{{ diary.moving.id }}">
+            {% include "csrf_field.html" %}
+            <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
+            <input type="hidden" name="preferred_time" value="{{ row.start }}" />
+            <input type="hidden" name="version" value="{{ diary.moving.updated_at.isoformat() }}" />
+            <button class="admin-button admin-button-small" type="submit" aria-label="Підтвердити перенесення на {{ row.start }}">Підтвердити перенесення</button>
+          </form>
+          {% elif row.doctor_occupied %}
           <span class="admin-notebook-muted">Прийом триває</span>
           {% elif row.is_blocked %}
           <div class="admin-notebook-slot-actions">
-            {% if row.can_reopen %}{{ diary_block_control(row, reopening=true) }}{% endif %}
+            {% if row.can_reopen and not diary.moving %}{{ diary_block_control(row, reopening=true) }}{% endif %}
             <span class="admin-notebook-closed">Закрито</span>
           </div>
           {% elif row.other_occupied %}
@@ -100,7 +127,7 @@
           {% else %}
           <span class="admin-notebook-muted">Замало часу для прийому</span>
           {% endif %}
-          {% if row.can_book or row.can_reopen %}
+          {% if row.can_book or row.can_reopen or row.can_move %}
           <p class="admin-notebook-slot-error" data-notebook-block-feedback role="alert"></p>
           {% endif %}
         {% endif %}

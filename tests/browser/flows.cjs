@@ -169,3 +169,34 @@ test("catalog draft publishes a new category and its product together", async t 
   await page.getByText("Тестова оправа", { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 320);
 });
+
+test("rescheduling stays in the notebook and confirms with a free hour", async t => {
+  const context = await browserContext(t, { admin: true, width: 320 });
+  const page = await context.newPage();
+  const day = "2026-11-27";
+  const next = "2026-11-28";
+  await manualBooking(page, day, "10:00", "0670000015");
+  const visit = row(page, "10:00");
+  await visit.getByRole("combobox").selectOption("confirmed");
+  await visit.getByRole("link", { name: "Перенести" }).click();
+  await page.getByText("Перенесення запису", { exact: true }).waitFor();
+  await page.getByRole("link", { name: "Наступний день" }).click();
+  assert.match(page.url(), new RegExp("day=" + next + "&move="));
+  assert.equal(await page.locator("[data-notebook-start]").count(), 0);
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  await page.getByRole("link", { name: "Скасувати" }).click();
+  assert.equal(await page.locator("[data-notebook-move]").count(), 0);
+  await page.getByRole("link", { name: "Попередній день" }).click();
+  await visit.getByRole("link", { name: "Перенести" }).click();
+  await page.getByRole("link", { name: "Наступний день" }).click();
+  await page.getByRole("button", { name: "Підтвердити перенесення на 11:00" }).click();
+  await row(page, "11:00").getByText("0670000015", { exact: true }).waitFor();
+  assert.equal(page.url(), root + "/admin?day=" + next + "#notebook-slot-1100");
+  assert.equal(await row(page, "11:00").locator("[data-status]").getAttribute("data-status"), "new");
+  assert.equal(await row(page, "11:00").getByRole("combobox").inputValue(), "confirmed");
+  await page.getByRole("button", { name: "Зберегти зміни" }).click();
+  await row(page, "11:00").locator('[data-status="confirmed"]').waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 320);
+  await page.goto(root + "/admin?day=" + day);
+  await page.getByRole("button", { name: "Додати запис на 10:00" }).waitFor();
+});

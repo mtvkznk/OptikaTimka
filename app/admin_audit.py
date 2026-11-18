@@ -7,6 +7,7 @@ AUDIT_LABELS = {
     "slot_closed": "Закрито години запису",
     "slot_reopened": "Відкрито години запису",
     "appointment_deleted": "Видалено прийом",
+    "appointment_moved": "Перенесено прийом",
 }
 
 

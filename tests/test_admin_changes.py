@@ -18,6 +18,7 @@ from app.models import (
     AdminAuditEvent,
     Appointment,
     AppointmentStatus,
+    BookingBlock,
     BookingService,
     CatalogCategory,
     ClosedDate,
@@ -208,6 +209,73 @@ def test_notebook_closes_and_reopens_free_time_without_overlapping_bookings(
         "status": "canceled",
     }, follow_redirects=False).status_code == 303
     assert "09:30:00" in starts(doctor) and "09:00:00" in starts(other)
+
+
+def test_notebook_move_uses_original_duration_and_frees_the_old_hour(
+    client: TestClient, anonymous_client: TestClient, app_db: Engine,
+) -> None:
+    doctor, other = client.get("/api/booking-services").json()[:2]
+    today = current_date()
+    original = today + timedelta(days=2)
+    target = original + timedelta(days=1)
+    closed = target + timedelta(days=1)
+    with Session(app_db) as session:
+        visit = Appointment(
+            name="Move this patient", phone="+380980000001", service=doctor["name"],
+            service_id=doctor["id"], preferred_date=original, preferred_time=time(10),
+            duration_minutes=45, status=AppointmentStatus.confirmed,
+        )
+        session.add_all([
+            visit,
+            Appointment(
+                name="Other visit", phone="+380980000002", service=other["name"],
+                service_id=other["id"], preferred_date=target, preferred_time=time(10, 45),
+                duration_minutes=15,
+            ),
+            BookingBlock(service_id=doctor["id"], day=target, start_minute=540, end_minute=585),
+            ClosedDate(closed_on=closed),
+        ])
+        session.commit()
+        visit_id = visit.id
+        version = visit.updated_at.isoformat()
+
+    def starts(day: date) -> list[str]:
+        response = client.get("/api/availability", params={
+            "preferred_date": day.isoformat(), "service": doctor["name"],
+        })
+        assert response.status_code == 200
+        return [option["start_time"] for option in response.json()]
+
+    assert "10:00:00" not in starts(original)
+    html = client.get("/admin", params={"day": target, "move": visit_id}).text
+    assert 'move_version=' in html
+    assert 'aria-label="Підтвердити перенесення на 09:45"' in html
+    assert 'aria-label="Підтвердити перенесення на 09:00"' not in html
+    assert 'aria-label="Підтвердити перенесення на 10:30"' not in html
+    assert "data-notebook-start=" not in html
+
+    endpoint = f"/admin/appointments/{visit_id}/move"
+    form = {"preferred_date": target.isoformat(), "preferred_time": "09:45", "version": version}
+    assert anonymous_client.post(endpoint, data=form).status_code == 401
+    assert client.post(endpoint, data={**form, "preferred_time": "10:30"}).status_code == 409
+    assert client.post(endpoint, data={**form, "preferred_time": "09:00"}).status_code == 409
+    assert client.post(endpoint, data={**form, "preferred_date": closed.isoformat()}).status_code == 409
+    assert client.post(endpoint, data={**form, "preferred_date": today.isoformat(), "preferred_time": "00:00"}).status_code == 409
+
+    moved = client.post(endpoint, data=form, headers={"Accept": "application/json"})
+    assert moved.status_code == 200
+    assert moved.json()["redirect"] == f"/admin?day={target.isoformat()}#notebook-slot-0945"
+    assert client.post(endpoint, data=form).status_code == 409
+    assert "10:00:00" in starts(original) and "09:30:00" not in starts(target)
+    with Session(app_db) as session:
+        moved_visit = session.get(Appointment, visit_id)
+        assert (moved_visit.preferred_date, moved_visit.preferred_time) == (target, time(9, 45))
+        assert moved_visit.updated_at.isoformat() == moved.json()["version"]
+        assert moved_visit.status == AppointmentStatus.confirmed and moved_visit.duration_minutes == 45
+        assert moved_visit.phone == "+380980000001" and moved_visit.service_id == doctor["id"]
+        audit = session.exec(select(AdminAuditEvent)).one()
+        assert audit.action == "appointment_moved" and audit.actor == "admin"
+        assert "Move this patient" not in audit.detail and moved_visit.phone not in audit.detail
 
 
 def test_notebook_skips_days_closed_for_the_doctor(

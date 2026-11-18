@@ -1038,6 +1038,28 @@
 .admin-notebook-slot-error:empty { display: none; }
 .admin-notebook-closed { color: #8a2c2c; }
 
+.admin-notebook-moving {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  margin-bottom: 0.9rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--admin-line);
+  border-radius: 0.55rem;
+  background: var(--admin-accent-soft);
+  overflow-wrap: anywhere;
+}
+.admin-notebook-moving p { margin: 0.25rem 0 0; }
+.admin-notebook-visit-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.admin-notebook-visit-actions .admin-status-form { margin-top: 0; }
+
 .admin-review-dialog {
   width: min(34rem, calc(100% - 2rem));
   max-height: calc(100% - 2rem);

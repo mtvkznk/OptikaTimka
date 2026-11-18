@@ -204,7 +204,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261118-booking-refresh"
-ADMIN_ASSET_VERSION = "20261118-schedule-review"
+ADMIN_ASSET_VERSION = "20261118-notebook-move"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -300,10 +300,13 @@ def service_working_intervals(session: Session, service_id: int, day: date) -> l
     return working_intervals(get_active_time_slots(session))
 
 
-def bookable_weekdays(service: BookingService, week: list[list[Interval]]) -> int:
+def bookable_weekdays(
+    service: BookingService, week: list[list[Interval]], *, duration: int | None = None,
+) -> int:
+    duration = service.duration_minutes if duration is None else duration
     return service.weekdays_mask & sum(
         1 << day for day, intervals in enumerate(week)
-        if any(end - start >= service.duration_minutes for start, end in intervals)
+        if any(end - start >= duration for start, end in intervals)
     )
 
 
@@ -458,12 +461,24 @@ def find_diary_day(
     return None
 
 
+def appointment_belongs_to_service(visit: Appointment, service: BookingService) -> bool:
+    if visit.service_id is None:
+        return visit.service == service.name
+    return visit.service_id == service.id
+
+
 def appointment_diary(
     session: Session, requested_day: date, service: BookingService | None,
     week: list[list[Interval]], closed_days: set[date], *, now: datetime, window_end: date,
+    moving: Appointment | None = None,
 ) -> dict[str, Any]:
-    if service is None or not (weekdays := bookable_weekdays(service, week)):
-        return {"service": service, "date": None}
+    context = {"service": service, "date": None, "moving": moving}
+    if service is None:
+        return context
+    duration = moving.duration_minutes if moving is not None else service.duration_minutes
+    weekdays = bookable_weekdays(service, week, duration=duration)
+    if not weekdays:
+        return context
 
     today = now.date()
     home_day = find_diary_day(weekdays, closed_days, today)
@@ -471,25 +486,26 @@ def appointment_diary(
     if day is None:
         day = find_diary_day(weekdays, closed_days, requested_day, step=-1, include_day=False)
     if day is None:
-        return {"service": service, "date": None}
+        return context
 
-    context = {
+    context.update({
         "date": day,
         "weekday": WEEKDAY_NAMES[day.weekday()],
         "previous": find_diary_day(weekdays, closed_days, day, step=-1, include_day=False),
         "next": find_diary_day(weekdays, closed_days, day, include_day=False),
         "home_day": home_day,
-        "service": service,
         "online_not_yet_open": day > window_end,
         "return_url": f"/admin?day={day.isoformat()}#appointment-diary",
-    }
+        "move_query": "&" + urlencode({
+            "move": moving.id, "move_version": moving.updated_at.isoformat(),
+        }) if moving is not None else "",
+    })
 
     appointments = list(session.exec(
         select(Appointment)
         .where(Appointment.status != AppointmentStatus.canceled, Appointment.preferred_date == day)
         .order_by(Appointment.preferred_time, Appointment.id)
     ))
-    duration = service.duration_minutes
     intervals = week[day.weekday()]
     starts = {minute for start, end in intervals for minute in range(start, end, duration)}
     blocks = blocked_intervals(session, service.id, day)
@@ -499,9 +515,7 @@ def appointment_diary(
     untimed = []
     for appointment in appointments:
         starts_at = appointment.preferred_time
-        doctor = appointment.service_id == service.id or (
-            appointment.service_id is None and appointment.service == service.name
-        )
+        doctor = appointment_belongs_to_service(appointment, service)
         if starts_at is None:
             if doctor:
                 untimed.append(appointment)
@@ -512,8 +526,12 @@ def appointment_diary(
 
     earliest = first_future_minute(day, now)
     available = set(available_start_minutes(
-        intervals, blocks + [(s, e) for s, e, _, _ in timed], duration, earliest,
+        intervals,
+        blocks + [(s, e) for s, e, _, visit in timed if moving is None or visit.id != moving.id],
+        duration, earliest,
     ))
+    if moving is not None and moving.preferred_date == day and moving.preferred_time is not None:
+        available.discard(minute_of(moving.preferred_time))
     rows = []
     for start in sorted(starts):
         appointments_here = [appointment for s, _, doctor, appointment in timed if doctor and s == start]
@@ -527,13 +545,15 @@ def appointment_diary(
             "can_reopen": start in block_starts,
             "is_blocked": any(lo <= start < hi for lo, hi in blocks),
             "is_past": start < earliest,
-            "can_book": start in available,
+            "can_book": moving is None and start in available,
+            "can_move": moving is not None and start in available,
         })
-    return {**context, "rows": rows, "untimed": build_appointment_rows(untimed)}
+    return {**context, "rows": rows, "untimed": build_appointment_rows(untimed), "has_available": bool(available)}
 
 
 def admin_context(
     session: Session, request: Request, diary_day: date | None = None,
+    *, move_id: int | None = None, move_version: str | None = None,
 ) -> dict[str, Any]:
     ensure_seed_data(session)
     now = kyiv_now()
@@ -560,6 +580,18 @@ def admin_context(
             "id": item.id, "version": item.updated_at.isoformat(), "reason": item.reason,
         }
     service = diary_service(services)
+    moving = session.get(Appointment, move_id) if move_id is not None else None
+    move_error = None
+    if move_id is not None:
+        if (
+            moving is None or service is None or not appointment_belongs_to_service(moving, service)
+            or moving.status == AppointmentStatus.canceled
+        ):
+            moving = None
+            move_error = "Цей запис більше недоступний для перенесення."
+        elif move_version is not None and move_version != moving.updated_at.isoformat():
+            moving = None
+            move_error = "Запис змінився. Перевірте його й натисніть «Перенести» ще раз."
     day = diary_day or today
     diary_week = []
     diary_closed_days = {item.closed_on for item in closed_dates}
@@ -576,7 +608,9 @@ def admin_context(
         "today": today,
         "diary": appointment_diary(
             session, day, service, diary_week, diary_closed_days, now=now, window_end=window_end,
+            moving=moving,
         ),
+        "move_error": move_error,
         "services": services,
         "weekdays": [(1 << index, label) for index, label in enumerate(WEEKDAY_LABELS)],
         "weekday_names": WEEKDAY_NAMES,
@@ -1138,8 +1172,12 @@ def admin(
     request: Request,
     session: SessionDep,
     day: date | None = None,
+    move: Annotated[int | None, Query(ge=1, le=2_147_483_647)] = None,
+    move_version: Annotated[str | None, Query(max_length=48)] = None,
 ) -> HTMLResponse:
-    return templates.TemplateResponse(request, "admin.html", admin_context(session, request, day))
+    return templates.TemplateResponse(
+        request, "admin.html", admin_context(session, request, day, move_id=move, move_version=move_version),
+    )
 
 
 @admin_router.get("/appointments", response_class=HTMLResponse)
@@ -1210,10 +1248,14 @@ def check_diary_day(
 
 def diary_action_response(
     request: Request, day: date, status_code: int = 200, *, anchor: str = "appointment-diary",
+    version: str | None = None,
 ) -> Response:
     return_to = f"/admin?day={day.isoformat()}#{anchor}"
     if request.headers.get("accept") == "application/json":
-        return JSONResponse({"redirect": return_to}, status_code=status_code)
+        data = {"redirect": return_to}
+        if version is not None:
+            data["version"] = version
+        return JSONResponse(data, status_code=status_code)
     return RedirectResponse(return_to, status_code=303)
 
 
@@ -1293,6 +1335,45 @@ def change_booking_block(
 
     session.commit()
     return diary_action_response(request, day, anchor=f"notebook-slot-{start_time:%H%M}")
+
+
+@admin_router.post("/appointments/{appointment_id}/move", response_model=None)
+def move_diary_appointment(
+    appointment_id: int, request: Request, session: SessionDep, form_data: FormDataDep,
+) -> Response:
+    day, start_time = diary_slot_from_form(form_data)
+    start = minute_of(start_time)
+    lock_booking_writes(session)
+    service = require_diary_service(session)
+    visit = session.get(Appointment, appointment_id)
+    if visit is None or visit.status == AppointmentStatus.canceled or not appointment_belongs_to_service(visit, service):
+        raise HTTPException(409, "Цей запис більше недоступний для перенесення.")
+    if form_data.get("version") != visit.updated_at.isoformat():
+        raise HTTPException(409, "Запис змінився. Оновіть зошит і спробуйте ще раз.")
+    if (day, start_time) == (visit.preferred_date, visit.preferred_time):
+        raise HTTPException(409, "Оберіть іншу годину або дату.")
+
+    check_diary_day(session, service, day, start, now=kyiv_now())
+    duration = visit.duration_minutes
+    if not booking_start_fits(service_working_intervals(session, service.id, day), start, duration, on_grid=True):
+        raise HTTPException(409, "Години змінилися. Оновіть зошит і виберіть час ще раз.")
+    check_booking_overlap(session, day, start, duration, service_id=service.id, exclude_id=visit.id)
+    previous = f"{format_date(visit.preferred_date)} {format_time(visit.preferred_time)}"
+    new = f"{format_date(day)} {format_time(start_time)}"
+    visit.preferred_date = day
+    visit.preferred_time = start_time
+    visit.updated_at = utc_now()
+    add_admin_audit(
+        session, request.state.admin_actor, "appointment_moved",
+        f"Прийом №{visit.id} · {visit.service} · {previous} → {new}",
+    )
+    session.flush()
+    session.refresh(visit)
+    version = visit.updated_at.isoformat()
+    session.commit()
+    return diary_action_response(
+        request, day, anchor=f"notebook-slot-{start_time:%H%M}", version=version,
+    )
 
 
 @admin_router.post("/changes")
