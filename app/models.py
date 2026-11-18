@@ -206,6 +206,7 @@ class BookingBlock(SQLModel, table=True):
         ),
     )
 
+    service_id: int = Field(primary_key=True, foreign_key="bookingservice.id", ondelete="CASCADE")
     day: date = Field(primary_key=True)
     start_minute: int = Field(primary_key=True)
     end_minute: int

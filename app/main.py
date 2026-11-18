@@ -41,7 +41,6 @@ from app.booking import (
     minute_of,
     occupied_interval,
     occupied_intervals,
-    overlaps,
     service_is_closed,
     working_intervals,
 )
@@ -524,7 +523,7 @@ def appointment_diary(
     duration = service.duration_minutes
     intervals = week[day.weekday()]
     starts = {minute for start, end in intervals for minute in range(start, end, duration)}
-    blocks = blocked_intervals(session, day)
+    blocks = blocked_intervals(session, service.id, day)
     block_starts = {start for start, _ in blocks}
     starts.update(block_starts)
     timed = []
@@ -1200,19 +1199,22 @@ def diary_slot_from_form(form_data: dict[str, str]) -> tuple[date, time]:
     return day, start_time
 
 
-def diary_service_for_slot(session: Session, day: date, start: int) -> BookingService:
-    if start < first_future_minute(day, kyiv_now()):
-        raise HTTPException(409, "Цей час уже минув. Оберіть інший час.")
+def require_diary_service(session: Session) -> BookingService:
     service = diary_service(get_active_services(session))
     if service is None:
         raise HTTPException(409, "Огляд лікаря зараз недоступний для запису.")
+    return service
+
+
+def check_diary_day(session: Session, service: BookingService, day: date, start: int) -> None:
+    if start < first_future_minute(day, kyiv_now()):
+        raise HTTPException(409, "Цей час уже минув. Оберіть інший час.")
     if (
         not service.is_available_on(day)
         or service_is_closed(session, service.id, day)
         or session.exec(select(ClosedDate.id).where(ClosedDate.closed_on == day)).first() is not None
     ):
         raise HTTPException(409, "Цей день закритий для запису на огляд лікаря.")
-    return service
 
 
 def diary_action_response(
@@ -1237,14 +1239,15 @@ def create_manual_appointment(
     day, start_time = diary_slot_from_form(form_data)
     start = minute_of(start_time)
     lock_booking_writes(session)
-    service = diary_service_for_slot(session, day, start)
+    service = require_diary_service(session)
+    check_diary_day(session, service, day, start)
     duration = service.duration_minutes
     if not any(
         opens <= start and start + duration <= closes
         for opens, closes in service_working_intervals(session, service.id, day)
     ):
         raise HTTPException(409, "Для прийому не вистачає часу до кінця робочого проміжку.")
-    check_booking_overlap(session, day, start, duration)
+    check_booking_overlap(session, day, start, duration, service_id=service.id)
     session.add(Appointment(
         name=name, phone=phone, phone_normalized=normalize_phone(phone),
         service=service.name, service_id=service.id, preferred_date=day, preferred_time=start_time,
@@ -1265,20 +1268,25 @@ def change_booking_block(
         raise HTTPException(422, "Некоректна дія для години запису.")
 
     lock_booking_writes(session)
-    block = session.get(BookingBlock, (day, start))
+    service = require_diary_service(session)
+    if form_int(form_data, "service_id") != service.id:
+        raise HTTPException(409, "Послуга в зошиті змінилася. Оновіть сторінку.")
+    block = session.get(BookingBlock, (service.id, day, start))
     if action == "open":
         if block is not None:
             session.delete(block)
     elif block is None:
-        service = diary_service_for_slot(session, day, start)
+        check_diary_day(session, service, day, start)
         duration = service.duration_minutes
         if form_int(form_data, "slot_duration") != duration or not any(
             opens <= start and start + duration <= closes and (start - opens) % duration == 0
             for opens, closes in service_working_intervals(session, service.id, day)
         ):
             raise HTTPException(409, "Години змінилися. Оновіть зошит і виберіть час ще раз.")
-        check_booking_overlap(session, day, start, duration)
-        session.add(BookingBlock(day=day, start_minute=start, end_minute=start + duration))
+        check_booking_overlap(session, day, start, duration, service_id=service.id)
+        session.add(BookingBlock(
+            service_id=service.id, day=day, start_minute=start, end_minute=start + duration,
+        ))
 
     session.commit()
     return diary_action_response(request, day, anchor=f"notebook-slot-{start_time:%H%M}")
@@ -1355,8 +1363,8 @@ def available_time_slots(
         return []
     earliest = first_future_minute(preferred_date, now)
     booked = occupied_intervals(session, preferred_date)
-    blocks = blocked_intervals(session, preferred_date)
     if booking_service is not None:
+        blocks = blocked_intervals(session, booking_service.id, preferred_date)
         return available_starts(
             service_working_intervals(session, booking_service.id, preferred_date),
             booked + blocks, booking_service.duration_minutes, earliest,
@@ -1366,7 +1374,6 @@ def available_time_slots(
         slot for slot in get_active_time_slots(session)
         if (start := minute_of(slot.start_time)) >= earliest
         and not any(booked_start <= start < booked_end for booked_start, booked_end in booked)
-        and not overlaps(start, minute_of(slot.end_time), blocks)
     ]
 
 
@@ -1433,7 +1440,7 @@ def create_appointment(
         for opens, closes in service_working_intervals(session, service.id, day)
     ):
         raise HTTPException(400, "Для цієї послуги оберіть час у межах робочого графіка.")
-    check_booking_overlap(session, day, start, duration)
+    check_booking_overlap(session, day, start, duration, service_id=service.id)
 
     appointment = Appointment.model_validate(payload)
     confirmation_service_id = settings.doctor_diary_service_id

@@ -1,4 +1,4 @@
-"""Store individual booking blocks from the appointment notebook."""
+"""Store individual booking blocks per service."""
 
 import sqlalchemy as sa
 
@@ -13,10 +13,12 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "bookingblock",
+        sa.Column("service_id", sa.Integer(), nullable=False),
         sa.Column("day", sa.Date(), nullable=False),
         sa.Column("start_minute", sa.Integer(), nullable=False),
         sa.Column("end_minute", sa.Integer(), nullable=False),
-        sa.PrimaryKeyConstraint("day", "start_minute"),
+        sa.ForeignKeyConstraint(["service_id"], ["bookingservice.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("service_id", "day", "start_minute"),
         sa.CheckConstraint(
             "start_minute >= 0 AND start_minute < end_minute AND end_minute <= 1440",
             name="ck_booking_block_interval",

@@ -10,6 +10,7 @@ from app.models import (
     AppointmentStatus,
     AvailableTimeSlot,
     BookingBlock,
+    BookingService,
     ServiceClosedDate,
 )
 
@@ -78,9 +79,10 @@ def occupied_intervals(session: Session, day: date, exclude_id: int | None = Non
     )
 
 
-def blocked_intervals(session: Session, day: date) -> list[Interval]:
+def blocked_intervals(session: Session, service_id: int, day: date) -> list[Interval]:
     rows = session.exec(
-        select(BookingBlock.start_minute, BookingBlock.end_minute).where(BookingBlock.day == day)
+        select(BookingBlock.start_minute, BookingBlock.end_minute)
+        .where(BookingBlock.service_id == service_id, BookingBlock.day == day)
     )
     return [(start, end) for start, end in rows]
 
@@ -90,20 +92,27 @@ def overlaps(start: int, end: int, intervals: list[Interval]) -> bool:
 
 
 def check_booking_overlap(
-    session: Session, day: date, start: int, duration: int, exclude_id: int | None = None,
+    session: Session, day: date, start: int, duration: int, *,
+    service_id: int | None, exclude_id: int | None = None,
 ) -> None:
     end = start + duration
     if overlaps(start, end, occupied_intervals(session, day, exclude_id)):
         raise HTTPException(409, "Цей час уже зайнятий. Оберіть інший час.")
-    if overlaps(start, end, blocked_intervals(session, day)):
+    if service_id is not None and overlaps(start, end, blocked_intervals(session, service_id, day)):
         raise HTTPException(409, "Цей час закритий для запису. Оберіть інший час.")
 
 
 def check_reactivation(session: Session, appointment: Appointment) -> None:
     if appointment.preferred_date is not None and appointment.preferred_time is not None:
         start, end = occupied_interval(appointment.preferred_time, appointment.duration_minutes)
+        service_id = appointment.service_id
+        if service_id is None:
+            service_id = session.exec(
+                select(BookingService.id).where(BookingService.name == appointment.service)
+            ).first()
         check_booking_overlap(
-            session, appointment.preferred_date, start, end - start, appointment.id,
+            session, appointment.preferred_date, start, end - start,
+            service_id=service_id, exclude_id=appointment.id,
         )
 
 

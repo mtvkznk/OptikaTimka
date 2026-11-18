@@ -33,6 +33,7 @@
     {% include "csrf_field.html" %}
     <input type="hidden" name="preferred_date" value="{{ diary.date.isoformat() }}" />
     <input type="hidden" name="preferred_time" value="{{ row.start }}" />
+    <input type="hidden" name="service_id" value="{{ diary.service.id }}" />
     <input type="hidden" name="slot_duration" value="{{ diary.service.duration_minutes }}" />
     <input type="hidden" name="block_action" value="{{ 'open' if reopening else 'close' }}" />
     <button class="admin-notebook-slot{% if not reopening %} admin-notebook-slot-danger{% endif %}"
@@ -80,13 +81,13 @@
         {% if not row.visits %}
           {% if row.doctor_occupied %}
           <span class="admin-notebook-muted">Прийом триває</span>
-          {% elif row.other_occupied %}
-          <span class="admin-notebook-muted">Зайнято</span>
           {% elif row.is_blocked %}
           <div class="admin-notebook-slot-actions">
             {% if row.can_reopen %}{{ diary_block_control(row, reopening=true) }}{% endif %}
             <span class="admin-notebook-closed">Закрито</span>
           </div>
+          {% elif row.other_occupied %}
+          <span class="admin-notebook-muted">Зайнято</span>
           {% elif row.can_book %}
           <div class="admin-notebook-slot-actions">
             <button class="admin-notebook-slot" type="button" data-notebook-start="{{ row.start }}"

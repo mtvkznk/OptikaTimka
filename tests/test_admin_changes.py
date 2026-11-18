@@ -68,7 +68,8 @@ def test_doctor_notebook_orders_the_day_without_showing_other_clients(
     assert "Updated diary service" in agenda
     assert 'data-notebook-start="11:00"' not in agenda  # The ten-minute gap is too short.
     assert 'data-notebook-start="09:00"' in agenda
-    assert 'name="service_id"' not in agenda and 'name="end_time"' not in agenda
+    manual_fields = agenda.split('id="manual-appointment"', 1)[1].split("</form>", 1)[0]
+    assert 'name="service_id"' not in manual_fields and 'name="end_time"' not in manual_fields
     assert 'day=2026-11-30#appointment-diary' in agenda
     assert 'day=2026-12-02#appointment-diary' in agenda
 
@@ -138,7 +139,7 @@ def test_notebook_closes_and_reopens_free_time_without_overlapping_bookings(
     endpoint = "/admin/appointments/slot-block"
     form = {
         "preferred_date": day.isoformat(), "preferred_time": "09:30",
-        "block_action": "close", "slot_duration": "30",
+        "service_id": str(doctor["id"]), "block_action": "close", "slot_duration": "30",
     }
 
     def starts(service: dict) -> list[str]:
@@ -155,11 +156,12 @@ def test_notebook_closes_and_reopens_free_time_without_overlapping_bookings(
     assert anonymous_client.post(endpoint, data=form).status_code == 401
     assert client.post(endpoint, data={**form, "preferred_time": "10:00"}).status_code == 409
     assert client.post(endpoint, data={**form, "slot_duration": "60"}).status_code == 409
+    assert client.post(endpoint, data={**form, "service_id": str(other["id"])}).status_code == 409
     response = client.post(endpoint, data=form, headers={"Accept": "application/json"})
     assert response.status_code == 200
     assert response.json()["redirect"] == f"{notebook}#notebook-slot-0930"
     assert client.post(endpoint, data=form, follow_redirects=False).status_code == 303
-    assert "09:30:00" not in starts(doctor) and "09:00:00" not in starts(other)
+    assert "09:30:00" not in starts(doctor) and "09:00:00" in starts(other)
     html = client.get(notebook).text
     assert 'aria-label="Відкрити час 09:30"' in html and "Existing visit" in html
     assert 'aria-label="Додати запис на 09:30"' not in html
@@ -174,7 +176,17 @@ def test_notebook_closes_and_reopens_free_time_without_overlapping_bookings(
         "status": "confirmed",
     }).status_code == 409
 
+    alternative = client.post("/api/appointments", json={
+        **booking, "preferred_time": "09:00", "name": "Other client", "service": other["name"],
+    })
+    assert alternative.status_code == 201
+    assert 'aria-label="Відкрити час 09:30"' in client.get(notebook).text
     assert client.post(endpoint, data={**form, "block_action": "open"}, follow_redirects=False).status_code == 303
+    assert "09:30:00" not in starts(doctor)
+    alternative_id = alternative.json()["id"]
+    assert client.post(f"/admin/appointments/{alternative_id}/status", data={
+        "status": "canceled",
+    }, follow_redirects=False).status_code == 303
     assert "09:30:00" in starts(doctor) and "09:00:00" in starts(other)
 
 
