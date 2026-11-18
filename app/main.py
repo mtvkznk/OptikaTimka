@@ -197,7 +197,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261117-booking-availability"
-ADMIN_ASSET_VERSION = "20261118-notebook-blocks"
+ADMIN_ASSET_VERSION = "20261118-notebook-status"
 LANDING_ASSET_VERSION = "20261115-brand-subtitle"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -1206,8 +1206,10 @@ def require_diary_service(session: Session) -> BookingService:
     return service
 
 
-def check_diary_day(session: Session, service: BookingService, day: date, start: int) -> None:
-    if start < first_future_minute(day, kyiv_now()):
+def check_diary_day(
+    session: Session, service: BookingService, day: date, start: int, *, now: datetime,
+) -> None:
+    if start < first_future_minute(day, now):
         raise HTTPException(409, "Цей час уже минув. Оберіть інший час.")
     if (
         not service.is_available_on(day)
@@ -1240,7 +1242,8 @@ def create_manual_appointment(
     start = minute_of(start_time)
     lock_booking_writes(session)
     service = require_diary_service(session)
-    check_diary_day(session, service, day, start)
+    now = kyiv_now()
+    check_diary_day(session, service, day, start, now=now)
     duration = service.duration_minutes
     if not any(
         opens <= start and start + duration <= closes
@@ -1248,10 +1251,11 @@ def create_manual_appointment(
     ):
         raise HTTPException(409, "Для прийому не вистачає часу до кінця робочого проміжку.")
     check_booking_overlap(session, day, start, duration, service_id=service.id)
+    initial_status = AppointmentStatus.confirmed if day == now.date() else AppointmentStatus.new
     session.add(Appointment(
         name=name, phone=phone, phone_normalized=normalize_phone(phone),
         service=service.name, service_id=service.id, preferred_date=day, preferred_time=start_time,
-        status=AppointmentStatus.confirmed, duration_minutes=duration,
+        status=initial_status, duration_minutes=duration,
     ))
     session.commit()
     return diary_action_response(request, day, status_code=201)
@@ -1276,7 +1280,7 @@ def change_booking_block(
         if block is not None:
             session.delete(block)
     elif block is None:
-        check_diary_day(session, service, day, start)
+        check_diary_day(session, service, day, start, now=kyiv_now())
         duration = service.duration_minutes
         if form_int(form_data, "slot_duration") != duration or not any(
             opens <= start and start + duration <= closes and (start - opens) % duration == 0

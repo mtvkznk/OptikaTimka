@@ -1,7 +1,7 @@
 {% macro diary_url(day) %}/admin?day={{ day.isoformat() }}#appointment-diary{% endmacro %}
 {% macro diary_visit(row) %}
   {% set visit = row.appointment %}
-  <div class="admin-notebook-visit">
+  <div class="admin-notebook-visit" data-status="{{ row.status_value }}">
     <div class="admin-notebook-client">
       {% if visit.name %}<strong>{{ visit.name }}</strong>{% endif %}
       {% if visit.phone_normalized %}

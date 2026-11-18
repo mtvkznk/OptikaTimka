@@ -6,7 +6,7 @@ from io import BytesIO
 
 from fastapi.testclient import TestClient
 from PIL import Image
-from pytest import MonkeyPatch
+from pytest import MonkeyPatch, mark
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -74,10 +74,17 @@ def test_doctor_notebook_orders_the_day_without_showing_other_clients(
     assert 'day=2026-12-02#appointment-diary' in agenda
 
 
+@mark.parametrize(("days_ahead", "expected_status"), [
+    (0, AppointmentStatus.confirmed),
+    (2, AppointmentStatus.new),
+])
 def test_phone_only_notebook_appointment_uses_doctor_service_duration(
-    client: TestClient, anonymous_client: TestClient, app_db: Engine,
+    client: TestClient, anonymous_client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
+    days_ahead: int, expected_status: AppointmentStatus,
 ) -> None:
-    day = (current_date() + timedelta(days=2)).isoformat()
+    now = datetime(2026, 11, 18, 8, tzinfo=main.KYIV_TZ)
+    monkeypatch.setattr(main, "kyiv_now", lambda: now)
+    day = (now.date() + timedelta(days=days_ahead)).isoformat()
     services = anonymous_client.get("/api/booking-services").json()
     service, other_service = services[:2]
     with Session(app_db) as session:
@@ -105,12 +112,14 @@ def test_phone_only_notebook_appointment_uses_doctor_service_duration(
     assert slots and all(
         slot["end_time"] <= "10:10:00" or slot["start_time"] >= "10:45:00" for slot in slots
     )
+    notebook = client.get("/admin", params={"day": day}).text
+    assert f'class="admin-notebook-visit" data-status="{expected_status.value}"' in notebook
     with Session(app_db) as session:
         appointment = session.exec(select(Appointment)).one()
         assert not appointment.name
         assert appointment.phone == request["phone"]
         assert appointment.phone_normalized == "+380671234567"
-        assert appointment.status == AppointmentStatus.confirmed and appointment.customer_id is None
+        assert appointment.status == expected_status and appointment.customer_id is None
         assert appointment.duration_minutes == 35 and appointment.service_id == service["id"]
 
 

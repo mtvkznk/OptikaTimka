@@ -1011,6 +1011,11 @@
   background: #eef6ef;
 }
 
+.admin-notebook-line:has(.admin-notebook-visit[data-status="new"]) .admin-notebook-line-content {
+  box-shadow: inset 0.2rem 0 #d78621;
+  background: #fff0d1;
+}
+
 .admin-notebook-line-content:has(.admin-notebook-slot[aria-expanded="true"]) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
