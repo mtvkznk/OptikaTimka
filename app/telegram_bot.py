@@ -41,7 +41,6 @@ from app.telegram_auth import unexpired
 
 router = APIRouter()
 logging.getLogger("httpx").setLevel(logging.WARNING)
-PAGE_SIZE = 12
 STATUS = {"new": "🟠 Новий", "confirmed": "🟢 Підтверджено", "canceled": "⚪ Скасовано"}
 
 
@@ -170,7 +169,7 @@ class Bot:
             self.session.delete(state)
 
     def day(
-        self, day: date | None = None, *, move: int | None = None, version: str = "", page: int = 0
+        self, day: date | None = None, *, move: int | None = None, version: str = ""
     ) -> None:
         from app.main import appointment_diary, booking_window, kyiv_now
 
@@ -211,13 +210,12 @@ class Bot:
             self.show("Немає відкритих днів у графіку огляду лікаря.")
             return
         day = diary["date"]
-        page = max(0, min(page, max(0, (len(diary["rows"]) - 1) // PAGE_SIZE)))
         navdata = {"move": move, "version": version}
         rows = []
         nav = []
         if diary["previous"]:
             nav.append(self.button("← День", "day", day=diary["previous"].isoformat(), **navdata))
-        nav.append(self.button("📅 Дата", "date", day=day.isoformat(), **navdata))
+        nav.append(self.button("Дата", "date", day=day.isoformat(), **navdata))
         if diary["next"]:
             nav.append(self.button("День →", "day", day=diary["next"].isoformat(), **navdata))
         rows.append(nav)
@@ -226,7 +224,7 @@ class Bot:
         )
         if moving:
             text += f"\n\n<b>Перенесення прийому №{moving.id}</b>\nОберіть вільну годину нижче."
-        for row in diary["rows"][page * PAGE_SIZE : (page + 1) * PAGE_SIZE]:
+        for row in diary["rows"]:
             starts = row["start"]
             data = {
                 "day": day.isoformat(),
@@ -276,21 +274,10 @@ class Bot:
                 )
             else:
                 text += f"\n{starts} — {'закрито' if row['is_blocked'] else 'час недоступний'}"
-        pager = []
-        if page:
-            pager.append(
-                self.button("↑ Раніше", "day", day=day.isoformat(), page=page - 1, **navdata)
-            )
-        if (page + 1) * PAGE_SIZE < len(diary["rows"]):
-            pager.append(
-                self.button("Пізніше ↓", "day", day=day.isoformat(), page=page + 1, **navdata)
-            )
-        if pager:
-            rows.append(pager)
         rows.append(
             [
                 self.button("Сьогодні", "day", **navdata),
-                self.button("↻ Оновити", "day", day=day.isoformat(), page=page, **navdata),
+                self.button("↻ Оновити", "day", day=day.isoformat(), **navdata),
                 self.button("Усі записи", "list", page=0),
             ]
         )
@@ -460,7 +447,6 @@ class Bot:
                 day,
                 move=data.get("move"),
                 version=data.get("version", ""),
-                page=data.get("page", 0),
             )
         elif op == "visit":
             self.visit(data["id"], data.get("version"))

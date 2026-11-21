@@ -14,6 +14,7 @@ from app.models import (
     BookingService,
     Customer,
     CustomerSession,
+    ServiceSchedule,
     TelegramAccount,
     TelegramAction,
     TelegramAuth,
@@ -188,9 +189,13 @@ def test_expired_and_browser_mismatch_cannot_finish(tg, engine):
 def test_bot_manual_future_new_duplicate_safe_and_customer_availability(tg, engine, monkeypatch):
     client, sent, service_id = tg
     google_customer(client, engine, monkeypatch)
+    with Session(engine) as session:
+        session.add(ServiceSchedule(service_id=service_id, intervals=[(14 * 60, 21 * 60)]))
+        session.commit()
     send(client, message("/start"))
     send(client, callback(button(sent, "День →")), 2)
-    send(client, callback(button(sent, "10:00 ＋")), 3)
+    # The last hour of a fourteen-slot day is available without paging.
+    send(client, callback(button(sent, "20:30 ＋")), 3)
     send(client, message("0981234567"), 4)
     payload = callback(button(sent, "Без імені"))
     assert send(client, payload, 5).status_code == 200
@@ -199,11 +204,12 @@ def test_bot_manual_future_new_duplicate_safe_and_customer_availability(tg, engi
         visit = session.exec(select(Appointment)).one()
         assert visit.name == "" and visit.phone == "0981234567"
         assert visit.status == AppointmentStatus.new and visit.service_id == service_id
+        assert visit.preferred_time == time(20, 30)
         day, service_name = visit.preferred_date, visit.service
     available = client.get(
         "/api/availability", params={"preferred_date": day.isoformat(), "service": service_name}
     ).json()
-    assert all(row["start_time"] != "10:00:00" for row in available)
+    assert all(row["start_time"] != "20:30:00" for row in available)
 
 
 def test_same_day_name_only_and_admin_access_revocation(tg, engine, monkeypatch):
