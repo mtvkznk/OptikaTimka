@@ -73,6 +73,7 @@ def is_google_admin(customer: Customer | None) -> bool:
         and customer.email_verified
         and (
             customer.google_sub in settings.admin_google_subjects
+            or customer.email in settings.admin_google_emails
             or (settings.admin_google_email and customer.email == settings.admin_google_email)
         )
     )

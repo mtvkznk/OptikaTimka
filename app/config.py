@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: SecretStr | None = None
     admin_google_email: str | None = None
+    admin_google_emails: Annotated[frozenset[str], NoDecode] = frozenset()
     admin_google_subjects: Annotated[frozenset[str], NoDecode] = frozenset()
     doctor_diary_service_id: int | None = Field(default=None, ge=1, le=2_147_483_647)
     public_base_url: str | None = None
@@ -65,6 +66,24 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_GOOGLE_EMAIL must be a single email address")
         return email
 
+    @field_validator("admin_google_emails", mode="before")
+    @classmethod
+    def parse_admin_google_emails(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.split(",") if value.strip() else ()
+        return value
+
+    @field_validator("admin_google_emails")
+    @classmethod
+    def validate_admin_google_emails(cls, value: frozenset[str]) -> frozenset[str]:
+        emails = set()
+        for item in value:
+            email = cls.validate_admin_google_email(item)
+            if email is None or "," in email:
+                raise ValueError("ADMIN_GOOGLE_EMAILS must contain email addresses")
+            emails.add(email)
+        return frozenset(emails)
+
     @field_validator("admin_google_subjects", mode="before")
     @classmethod
     def parse_admin_google_subjects(cls, value: object) -> object:
@@ -84,7 +103,7 @@ class Settings(BaseSettings):
 
     @property
     def google_admin_configured(self) -> bool:
-        return bool(self.admin_google_email or self.admin_google_subjects)
+        return bool(self.admin_google_email or self.admin_google_emails or self.admin_google_subjects)
 
     @model_validator(mode="after")
     def validate_security(self) -> Self:

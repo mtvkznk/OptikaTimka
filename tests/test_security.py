@@ -298,6 +298,7 @@ def test_production_alias_redirects_before_creating_oauth_state(
         {"public_base_url": "https://optika.example/path"},
         {"admin_google_email": "owner@example.com"},
         {"admin_google_email": "owner@example.com,other@example.com"},
+        {"admin_google_emails": "other@example.net"},
         {"admin_google_subjects": "test-google-sub"},
     ],
 )
@@ -346,6 +347,19 @@ def test_google_subjects_only_can_configure_admin_access(monkeypatch: pytest.Mon
     )
     assert configured.admin_google_subjects == {"first-sub", "second-sub"}
     assert configured.google_admin_configured
+
+
+def test_google_email_list_accepts_only_valid_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADMIN_GOOGLE_EMAILS", " First@Example.com , second@example.net,first@example.com ")
+    options = {
+        "_env_file": None, "google_client_id": "test-client", "google_client_secret": "test-secret",
+    }
+    configured = Settings(**options)
+    assert configured.admin_google_emails == {"first@example.com", "second@example.net"}
+    assert configured.google_admin_configured
+    for invalid in ("missing-at", "first@example.com,", "first @example.com", "@example.com"):
+        with pytest.raises(ValidationError):
+            Settings(**options, admin_google_emails=invalid)
 
 
 def test_booking_contacts_cannot_claim_another_customers_records(
@@ -425,6 +439,7 @@ def test_verified_contact_cannot_read_records_owned_by_another_account(
         ("owner@example.com", "owner-sub", True),
         ("additional@example.net", "approved-sub", True),
         ("additional@example.net", "other-sub", False),
+        ("email-admin@example.net", "first-login-sub", True),
     ],
 )
 def test_google_login_opens_customer_cabinet(
@@ -435,6 +450,7 @@ def test_google_login_opens_customer_cabinet(
     monkeypatch.setattr(settings, "google_client_secret", SecretStr("test-secret"))
     monkeypatch.setattr(settings, "admin_google_email", "owner@example.com")
     monkeypatch.setattr(settings, "admin_google_subjects", frozenset({"approved-sub"}))
+    monkeypatch.setattr(settings, "admin_google_emails", frozenset({"email-admin@example.net"}))
     assert anonymous_client.get(
         "/admin", auth=(settings.admin_username, settings.admin_password.get_secret_value())
     ).status_code == 403
@@ -517,6 +533,7 @@ def test_google_requires_verified_email(
 ) -> None:
     monkeypatch.setattr(settings, "google_client_id", "test-client")
     monkeypatch.setattr(settings, "google_client_secret", SecretStr("test-secret"))
+    monkeypatch.setattr(settings, "admin_google_emails", frozenset({"victim@example.com"}))
     login = anonymous_client.get("/auth/google", follow_redirects=False)
     params = parse_qs(urlsplit(login.headers["location"]).query)
     assert params["code_challenge_method"] == ["S256"]

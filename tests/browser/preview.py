@@ -18,6 +18,7 @@ def run_preview() -> None:
             GOOGLE_CLIENT_SECRET="browser-test-secret",
             GOOGLE_REDIRECT_URI=origin + "/auth/google/callback",
             ADMIN_GOOGLE_EMAIL="owner@example.com",
+            ADMIN_GOOGLE_EMAILS="",
             ADMIN_GOOGLE_SUBJECTS="",
             DOCTOR_DIARY_SERVICE_ID="",
         )

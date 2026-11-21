@@ -46,6 +46,8 @@ credentials in `prod.env`. The callback defaults to `PUBLIC_BASE_URL` plus
 ### Restrict administration to specific Google accounts
 
 Set `ADMIN_GOOGLE_EMAIL` in `prod.env` (or local `.env`) to the owner's exact email.
+Set `ADMIN_GOOGLE_EMAILS` to a comma-separated list of additional verified Google
+emails to grant access on their first Google sign-in.
 To grant access to another account that has already signed in through Google, add
 its stored `customer.google_sub` to `ADMIN_GOOGLE_SUBJECTS` as a comma-separated list
 of Google account IDs. Both settings require Google OAuth credentials and disable
