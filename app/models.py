@@ -4,6 +4,7 @@ from enum import Enum
 from pydantic import EmailStr, field_validator, model_validator
 from sqlalchemy import (
     JSON,
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
@@ -352,11 +353,58 @@ class CustomerSession(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     customer_id: int = Field(foreign_key="customer.id", index=True)
+    provider: str = Field(default="google", max_length=16, sa_column_kwargs={"server_default": "google"})
     token_hash: str = Field(max_length=128, index=True)
     expires_at: datetime = Field(index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
     created_at: datetime = Field(
         default_factory=utc_now, index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE,
     )
+
+
+class TelegramAccount(SQLModel, table=True):
+    customer_id: int = Field(primary_key=True, foreign_key="customer.id", ondelete="CASCADE")
+    telegram_id: int = Field(sa_type=BigInteger, unique=True, index=True)
+    username: str = Field(default="", max_length=64)
+    display_name: str = Field(default="", max_length=160)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+
+
+class TelegramAuth(SQLModel, table=True):
+    token_hash: str = Field(primary_key=True, max_length=64)
+    browser_hash: str = Field(max_length=64)
+    requester_id: int | None = Field(default=None, foreign_key="customer.id", ondelete="CASCADE")
+    session_hash: str = Field(default="", max_length=64)
+    telegram_id: int | None = Field(default=None, sa_type=BigInteger)
+    username: str = Field(default="", max_length=64)
+    display_name: str = Field(default="", max_length=160)
+    approved: bool = False
+    expires_at: datetime = Field(index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+
+
+class TelegramState(SQLModel, table=True):
+    telegram_id: int = Field(primary_key=True, sa_type=BigInteger)
+    payload: dict = Field(sa_type=JSON)
+    expires_at: datetime = Field(index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+
+
+class TelegramAction(SQLModel, table=True):
+    token: str = Field(primary_key=True, max_length=40)
+    telegram_id: int = Field(sa_type=BigInteger)
+    payload: dict = Field(sa_type=JSON)
+    expires_at: datetime = Field(index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+
+
+class TelegramUpdate(SQLModel, table=True):
+    update_id: int = Field(primary_key=True, sa_type=BigInteger)
+    created_at: datetime = Field(default_factory=utc_now, index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+
+
+class TelegramOutbox(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    method: str = Field(max_length=40)
+    payload: dict = Field(sa_type=JSON)
+    admin_customer_id: int | None = Field(default=None)
+    created_at: datetime = Field(default_factory=utc_now, index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class AnalyticsEventBase(SQLModel):

@@ -21,6 +21,47 @@ or local authentication bypass exists. An unconfigured administrator receives 50
 Customers sign in with Google. Appointment booking also works without signing in
 and uses the phone number for contact.
 
+### Telegram sign-in and administrator bot
+
+Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` (without `@`), and an independent
+random `TELEGRAM_WEBHOOK_SECRET` (32–256 URL-safe characters) in the protected
+production env file. Apply migration `20261121_0016`, restart the app, then run
+`docker exec optika_timka_prod_app python -m app.telegram_setup`. This verifies the
+bot identity and installs its commands and HTTPS webhook, preserving pending updates.
+An existing unrelated webhook is never overwritten. Telegram uses the same app and
+PostgreSQL database; no additional process or public database port is required.
+
+In the cabinet, choose **Прив’язати Telegram**, open the bot, approve, return to the
+same browser and confirm the link. Administrators first sign in with an authorized
+Google account and link their own Telegram. The bot checks the current Google
+administrator grants before every action. Public Telegram sign-in creates an
+ordinary customer account; Telegram names/usernames never establish email, phone,
+or administrator ownership. Linking can merge bookings from a Telegram-only
+account after both identities are proved. A Telegram already linked to a different
+Google account cannot be reassigned this way.
+
+**Продовжити з Telegram** uses the same browser-bound approval flow, with expiring,
+single-use secrets and session-bound CSRF protection. It needs no Telegram OIDC
+client secret or external login scripts. Disconnecting Telegram in a Google-backed
+cabinet revokes its website sessions and bot access immediately. Keep Google as
+the recovery method for administrator accounts.
+
+The private bot supports the doctor's day schedule, date navigation, manual
+appointments with either name or contact, statuses, moving by selecting a free
+hour, service-only hour closures, reopening, and all appointments with search and
+pagination. Future removals require confirmation; past removals do not. Its
+commands reuse the website's transaction lock and appointment validation. Future
+manual bookings start as new; today's start confirmed. The timetable uses the
+service's duration and weekday schedule and skips closed days. Schedule/catalog
+editing remains in the website dashboard.
+
+Webhook authentication is separate from browser CSRF and uses a constant-time
+secret-header comparison. Update IDs prevent duplicate mutations; a transactional
+outbox retries interrupted replies. Callback buttons expire and are bound to the
+Telegram user; appointment versions reject stale actions. Undelivered admin
+messages are discarded after access is revoked or after ten minutes. Successful
+replies remain in Telegram chat history, so use private chats on trusted devices.
+
 For a SQLite preview without Docker, set `DATABASE_URL=sqlite:///preview.db`, run
 the same Alembic command, then start Uvicorn. SQLite previews do not replace
 PostgreSQL integration tests.

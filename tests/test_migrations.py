@@ -133,18 +133,17 @@ def test_remove_phone_login_preserves_customer_sessions_and_bookings(
         )
         session.add(customer)
         session.flush()
-        login = CustomerSession(
+        legacy_sessions = sa.Table("customersession", sa.MetaData(), autoload_with=engine)
+        login_id = session.execute(legacy_sessions.insert().values(
             customer_id=customer.id, token_hash="existing-session-hash",
-            expires_at=utc_now() + timedelta(days=1),
-        )
+            expires_at=utc_now() + timedelta(days=1), created_at=utc_now(),
+        ).returning(legacy_sessions.c.id)).scalar_one()
         appointment = sa.Table("appointment", sa.MetaData(), autoload_with=engine)
-        session.add(login)
-        session.flush()
         appointment_id = session.execute(appointment.insert().values(
             name="Existing Client", phone="+380671234567", service="Exam", customer_id=customer.id,
             message="", status="new", created_at=utc_now(), updated_at=utc_now(),
         ).returning(appointment.c.id)).scalar_one()
-        customer_id, login_id = customer.id, login.id
+        customer_id = customer.id
         session.commit()
     command.upgrade(config, "head")
     with Session(engine) as session:

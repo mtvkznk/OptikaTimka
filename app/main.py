@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app import diary_commands
 from app.admin_audit import AUDIT_LABELS, add_admin_audit
 from app.admin_changes import (
     AdminChanges,
@@ -38,7 +39,6 @@ from app.booking import (
     blocked_intervals,
     booking_start_fits,
     check_booking_overlap,
-    check_reactivation,
     first_future_minute,
     get_active_time_slots,
     lock_booking_writes,
@@ -61,6 +61,21 @@ from app.catalog import (
 )
 from app.config import settings
 from app.database import get_session
+from app.diary_commands import (
+    appointment_belongs_to_service,
+    bookable_weekdays,
+    diary_service,
+    diary_slot_from_form,
+    find_diary_day,
+    form_date,
+    form_int,
+    form_time,
+    format_date,
+    format_minute,
+    format_time,
+    get_active_services,
+    service_working_intervals,
+)
 from app.models import (
     ALL_WEEKDAYS,
     AdminAuditEvent,
@@ -74,7 +89,6 @@ from app.models import (
     AvailableTimeSlot,
     AvailableTimeSlotCreate,
     AvailableTimeSlotRead,
-    BookingBlock,
     BookingService,
     BookingServiceCreate,
     BookingServiceRead,
@@ -92,7 +106,7 @@ from app.models import (
     ProductRead,
     ServiceClosedDate,
     ServiceSchedule,
-    ServiceWeekdaySchedule,
+    TelegramAccount,
     utc_now,
 )
 from app.product_photos import product_photo_url
@@ -111,7 +125,7 @@ from app.security import (
     read_form_data,
     require_admin,
 )
-from app.validation import normalize_email, normalize_phone
+from app.validation import normalize_email
 
 IS_PRODUCTION = settings.environment == "production"
 if IS_PRODUCTION:
@@ -225,14 +239,6 @@ MONTH_TITLE_LABELS = {
 }
 WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
 WEEKDAY_NAMES = ["Понеділок", "Вівторок", "Середа", "Четвер", "П’ятниця", "Субота", "Неділя"]
-DOCTOR_SERVICE_NAMES = (
-    "Комплексний огляд лікаря офтальмолога",
-    "Комплексний огляд лікаря-офтальмолога",
-    "Огляд лікаря офтальмолога",
-    "Огляд лікаря-офтальмолога",
-    "Огляд лікаря",
-    DEFAULT_SERVICES[0]["name"],
-)
 
 
 class ReorderPayload(BaseModel):
@@ -270,16 +276,6 @@ def ensure_seed_data(session: Session) -> None:
         session.commit()
 
 
-def get_active_services(session: Session) -> list[BookingService]:
-    return list(
-        session.exec(
-            select(BookingService)
-            .where(BookingService.is_active)
-            .order_by(BookingService.sort_order, BookingService.id)
-        ).all()
-    )
-
-
 def get_booking_service(session: Session, name: str) -> BookingService:
     service = session.exec(
         select(BookingService).where(BookingService.name == name, BookingService.is_active)
@@ -289,48 +285,11 @@ def get_booking_service(session: Session, name: str) -> BookingService:
     return service
 
 
-def service_working_intervals(session: Session, service_id: int, day: date) -> list[Interval]:
-    schedule: ServiceWeekdaySchedule | ServiceSchedule | None = session.get(
-        ServiceWeekdaySchedule, (service_id, day.weekday()),
-    )
-    if schedule is None:
-        schedule = session.get(ServiceSchedule, service_id)
-    if schedule is not None:
-        return [tuple(interval) for interval in schedule.intervals]
-    return working_intervals(get_active_time_slots(session))
-
-
-def bookable_weekdays(
-    service: BookingService, week: list[list[Interval]], *, duration: int | None = None,
-) -> int:
-    duration = service.duration_minutes if duration is None else duration
-    return service.weekdays_mask & sum(
-        1 << day for day, intervals in enumerate(week)
-        if any(end - start >= duration for start, end in intervals)
-    )
-
-
 def count_rows(session: Session, model: type[Any], *conditions: Any) -> int:
     statement = select(func.count()).select_from(model)
     for condition in conditions:
         statement = statement.where(condition)
     return int(session.exec(statement).one())
-
-
-def format_date(value: date | None) -> str:
-    if value is None:
-        return "-"
-    return value.strftime("%d.%m.%Y")
-
-
-def format_time(value: time | None) -> str:
-    if value is None:
-        return "-"
-    return value.strftime("%H:%M")
-
-
-def format_minute(minute: int) -> str:
-    return "{:02d}:{:02d}".format(*divmod(minute, 60))
 
 
 def kyiv_now() -> datetime:
@@ -435,36 +394,6 @@ def apply_sort_order(session: Session, model: type[Any], ids: list[int]) -> None
         session.add(item)
 
     session.commit()
-
-
-def diary_service(services: list[BookingService]) -> BookingService | None:
-    configured_id = settings.doctor_diary_service_id
-    if configured_id is not None:
-        return next((service for service in services if service.id == configured_id), None)
-    by_name = {service.name.strip().casefold(): service for service in services}
-    for name in DOCTOR_SERVICE_NAMES:
-        if service := by_name.get(name.casefold()):
-            return service
-    return None
-
-
-def find_diary_day(
-    weekday_mask: int, closed_days: set[date], day: date, *,
-    step: int = 1, include_day: bool = True,
-) -> date | None:
-    first = day.toordinal() + (0 if include_day else step)
-    stop = date.max.toordinal() + 1 if step > 0 else 0
-    for ordinal in range(first, stop, step):
-        candidate = date.fromordinal(ordinal)
-        if candidate not in closed_days and weekday_mask & (1 << candidate.weekday()):
-            return candidate
-    return None
-
-
-def appointment_belongs_to_service(visit: Appointment, service: BookingService) -> bool:
-    if visit.service_id is None:
-        return visit.service == service.name
-    return visit.service_id == service.id
 
 
 def appointment_diary(
@@ -721,13 +650,6 @@ def appointments_context(
     }
 
 
-def form_int(form_data: dict[str, str], key: str, default: int = 0) -> int:
-    try:
-        return int(form_data.get(key, default))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(400, "Вкажіть коректне ціле число.") from exc
-
-
 def validated_form(model: type[Any], values: dict[str, Any]) -> Any:
     try:
         return model.model_validate(values)
@@ -735,38 +657,20 @@ def validated_form(model: type[Any], values: dict[str, Any]) -> Any:
         raise HTTPException(422, "Перевірте значення та довжину полів форми.") from exc
 
 
-def form_date(form_data: dict[str, str], key: str) -> date:
-    value = form_data.get(key, "")
-    try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректна дата."
-        ) from exc
-
-
-def form_time(form_data: dict[str, str], key: str) -> time:
-    value = form_data.get(key, "")
-    try:
-        return time.fromisoformat(value)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректний час."
-        ) from exc
-
-
 def issue_customer_session(
     customer: Customer,
     session: Session,
     response: RedirectResponse,
     request: Request,
+    *, provider: str = "google",
 ) -> None:
     revoke_customer_session(request, session)
     session.execute(delete(CustomerSession).where(CustomerSession.expires_at < utc_now()))
-    token = GOOGLE_SESSION_PREFIX + secrets.token_urlsafe(32)
+    token = ("t." if provider == "telegram" else GOOGLE_SESSION_PREFIX) + secrets.token_urlsafe(32)
     session.add(
         CustomerSession(
             customer_id=customer.id or 0,
+            provider=provider,
             token_hash=hash_session_token(token),
             expires_at=utc_now() + timedelta(days=SESSION_TTL_DAYS),
         )
@@ -886,6 +790,9 @@ def cabinet_context(
         "format_date": format_date,
         "format_time": format_time,
         "google_enabled": google_auth_enabled(),
+        "telegram_enabled": settings.telegram_enabled,
+        "telegram_account": session.get(TelegramAccount, customer.id) if customer else None,
+        "telegram_bot_username": settings.telegram_bot_username,
         "auth_error": auth_error,
         "pagination_path": "/cabinet",
         "page": page,
@@ -1218,34 +1125,6 @@ def admin_audit(
     })
 
 
-def diary_slot_from_form(form_data: dict[str, str]) -> tuple[date, time]:
-    day = form_date(form_data, "preferred_date")
-    start_time = form_time(form_data, "preferred_time")
-    if start_time.tzinfo or start_time.second or start_time.microsecond:
-        raise HTTPException(422, "Вкажіть час у годинах і хвилинах.")
-    return day, start_time
-
-
-def require_diary_service(session: Session) -> BookingService:
-    service = diary_service(get_active_services(session))
-    if service is None:
-        raise HTTPException(409, "Огляд лікаря зараз недоступний для запису.")
-    return service
-
-
-def check_diary_day(
-    session: Session, service: BookingService, day: date, start: int, *, now: datetime,
-) -> None:
-    if start < first_future_minute(day, now):
-        raise HTTPException(409, "Цей час уже минув. Оберіть інший час.")
-    if (
-        not service.is_available_on(day)
-        or service_is_closed(session, service.id, day)
-        or session.exec(select(ClosedDate.id).where(ClosedDate.closed_on == day)).first() is not None
-    ):
-        raise HTTPException(409, "Цей день закритий для запису на огляд лікаря.")
-
-
 def diary_action_response(
     request: Request, day: date, status_code: int = 200, *, anchor: str = "appointment-diary",
     version: str | None = None,
@@ -1263,118 +1142,28 @@ def diary_action_response(
 def create_manual_appointment(
     request: Request, session: SessionDep, form_data: FormDataDep,
 ) -> Response:
-    name = form_data.get("name", "").strip()
-    phone = form_data.get("phone", "").strip()
-    if not name and not phone:
-        raise HTTPException(422, "Введіть ім’я або контакт.")
-    if "\0" in name or "\0" in phone:
-        raise HTTPException(422, "Перевірте символи в імені та контакті.")
-    day, start_time = diary_slot_from_form(form_data)
-    start = minute_of(start_time)
-    lock_booking_writes(session)
-    service = require_diary_service(session)
-    now = kyiv_now()
-    check_diary_day(session, service, day, start, now=now)
-    duration = service.duration_minutes
-    from_notebook = "expected_duration_minutes" in form_data
-    if from_notebook and form_int(form_data, "expected_duration_minutes") != duration:
-        raise HTTPException(409, "Тривалість послуги змінилася. Оновіть зошит і виберіть час ще раз.")
-    working = service_working_intervals(session, service.id, day)
-    if not booking_start_fits(working, start, duration, on_grid=from_notebook):
-        if from_notebook:
-            raise HTTPException(409, "Години змінилися. Оновіть зошит і виберіть час ще раз.")
-        raise HTTPException(409, "Для прийому не вистачає часу до кінця робочого проміжку.")
-    check_booking_overlap(session, day, start, duration, service_id=service.id)
-    initial_status = AppointmentStatus.confirmed if day == now.date() else AppointmentStatus.new
-    session.add(Appointment(
-        name=name, phone=phone, phone_normalized=normalize_phone(phone),
-        service=service.name, service_id=service.id, preferred_date=day, preferred_time=start_time,
-        status=initial_status, duration_minutes=duration,
-    ))
+    diary_commands.create_manual(session, form_data, now=kyiv_now(), actor=request.state.admin_actor)
     session.commit()
-    return diary_action_response(request, day, status_code=201)
-
+    return diary_action_response(request, form_date(form_data, "preferred_date"), status_code=201)
 
 @admin_router.post("/appointments/slot-block", response_model=None)
 def change_booking_block(
     request: Request, session: SessionDep, form_data: FormDataDep,
 ) -> Response:
-    day, start_time = diary_slot_from_form(form_data)
-    start = minute_of(start_time)
-    action = form_data.get("block_action")
-    if action not in {"close", "open"}:
-        raise HTTPException(422, "Некоректна дія для години запису.")
-
-    lock_booking_writes(session)
-    service = require_diary_service(session)
-    if form_int(form_data, "service_id") != service.id:
-        raise HTTPException(409, "Послуга в зошиті змінилася. Оновіть сторінку.")
-    block = session.get(BookingBlock, (service.id, day, start))
-    if action == "open":
-        if block is not None:
-            add_admin_audit(
-                session, request.state.admin_actor, "slot_reopened",
-                f"{service.name} · {format_date(day)} · {format_minute(start)}–{format_minute(block.end_minute)}",
-            )
-            session.delete(block)
-    elif block is None:
-        check_diary_day(session, service, day, start, now=kyiv_now())
-        duration = service.duration_minutes
-        if form_int(form_data, "slot_duration") != duration or not booking_start_fits(
-            service_working_intervals(session, service.id, day), start, duration, on_grid=True,
-        ):
-            raise HTTPException(409, "Години змінилися. Оновіть зошит і виберіть час ще раз.")
-        check_booking_overlap(session, day, start, duration, service_id=service.id)
-        session.add(BookingBlock(
-            service_id=service.id, day=day, start_minute=start, end_minute=start + duration,
-        ))
-        add_admin_audit(
-            session, request.state.admin_actor, "slot_closed",
-            f"{service.name} · {format_date(day)} · {format_minute(start)}–{format_minute(start + duration)}",
-        )
-
+    diary_commands.change_block(session, form_data, now=kyiv_now(), actor=request.state.admin_actor)
     session.commit()
-    return diary_action_response(request, day, anchor=f"notebook-slot-{start_time:%H%M}")
-
+    day, starts_at = diary_slot_from_form(form_data)
+    return diary_action_response(request, day, anchor=f"notebook-slot-{starts_at:%H%M}")
 
 @admin_router.post("/appointments/{appointment_id}/move", response_model=None)
 def move_diary_appointment(
     appointment_id: int, request: Request, session: SessionDep, form_data: FormDataDep,
 ) -> Response:
-    day, start_time = diary_slot_from_form(form_data)
-    start = minute_of(start_time)
-    lock_booking_writes(session)
-    service = require_diary_service(session)
-    visit = session.get(Appointment, appointment_id)
-    if visit is None or visit.status == AppointmentStatus.canceled or not appointment_belongs_to_service(visit, service):
-        raise HTTPException(409, "Цей запис більше недоступний для перенесення.")
-    if form_data.get("version") != visit.updated_at.isoformat():
-        raise HTTPException(409, "Запис змінився. Оновіть зошит і спробуйте ще раз.")
-    if (day, start_time) == (visit.preferred_date, visit.preferred_time):
-        raise HTTPException(409, "Оберіть іншу годину або дату.")
-
-    check_diary_day(session, service, day, start, now=kyiv_now())
-    duration = visit.duration_minutes
-    if not booking_start_fits(service_working_intervals(session, service.id, day), start, duration, on_grid=True):
-        raise HTTPException(409, "Години змінилися. Оновіть зошит і виберіть час ще раз.")
-    check_booking_overlap(session, day, start, duration, service_id=service.id, exclude_id=visit.id)
-    previous = f"{format_date(visit.preferred_date)} {format_time(visit.preferred_time)}"
-    new = f"{format_date(day)} {format_time(start_time)}"
-    visit.preferred_date = day
-    visit.preferred_time = start_time
-    visit.updated_at = utc_now()
-    add_admin_audit(
-        session, request.state.admin_actor, "appointment_moved",
-        f"Прийом №{visit.id} · {visit.service} · {previous} → {new}",
-    )
-    session.flush()
-    session.refresh(visit)
+    visit = diary_commands.move_appointment(session, appointment_id, form_data, now=kyiv_now(), actor=request.state.admin_actor)
     version = visit.updated_at.isoformat()
     session.commit()
-    return diary_action_response(
-        request, day, anchor=f"notebook-slot-{start_time:%H%M}", version=version,
-    )
-
+    day, starts_at = diary_slot_from_form(form_data)
+    return diary_action_response(request, day, anchor=f"notebook-slot-{starts_at:%H%M}", version=version)
 
 @admin_router.post("/changes")
 def save_admin_changes(changes: AdminChanges, request: Request, session: SessionDep) -> dict[str, str]:
@@ -1575,64 +1364,23 @@ def record_analytics_event(
 
 @admin_router.post("/appointments/{appointment_id}/status")
 def update_appointment_status(
-    appointment_id: int,
+    appointment_id: int, request: Request,
     session: SessionDep,
     form_data: FormDataDep,
 ) -> RedirectResponse:
-    lock_booking_writes(session)
-    appointment = session.get(Appointment, appointment_id)
-    if appointment is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Запис не знайдено.")
-
-    try:
-        new_status = AppointmentStatus(form_data.get("status", ""))
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Некоректний статус.",
-        ) from exc
-
-    if appointment.status == AppointmentStatus.canceled and new_status != AppointmentStatus.canceled:
-        check_reactivation(session, appointment)
-    appointment.status = new_status
-    appointment.updated_at = utc_now()
-    session.add(appointment)
+    diary_commands.set_status(session, appointment_id, form_data, now=kyiv_now(), actor=request.state.admin_actor)
     session.commit()
-    return RedirectResponse(url=admin_return_url(form_data), status_code=status.HTTP_303_SEE_OTHER)
-
+    return RedirectResponse(url=admin_return_url(form_data), status_code=303)
 
 @admin_router.post("/appointments/{appointment_id}/delete", response_model=None)
 def delete_appointment(
     appointment_id: int, request: Request, session: SessionDep, form_data: FormDataDep,
 ) -> Response:
-    lock_booking_writes(session)
-    appointment = session.get(Appointment, appointment_id)
-    if appointment is None:
-        raise HTTPException(404, "Запис не знайдено. Оновіть сторінку.")
-    if form_data.get("version") != appointment.updated_at.isoformat():
-        raise HTTPException(409, "Запис змінився. Оновіть сторінку й повторіть дію.")
-
-    now = kyiv_now()
-    day = appointment.preferred_date
-    starts_at = appointment.preferred_time
-    upcoming = day is not None and (
-        day > now.date() or (day == now.date() and (starts_at is None or starts_at > now.time()))
-    )
-    if upcoming and form_data.get("confirmed") != "true":
-        raise HTTPException(409, {"confirmation_required": "upcoming_appointment_removal"})
-
-    add_admin_audit(
-        session, request.state.admin_actor, "appointment_deleted",
-        f"Прийом №{appointment.id} · {appointment.service} · {format_date(day)} {format_time(starts_at)}",
-    )
-    session.delete(appointment)
+    diary_commands.remove_appointment(session, appointment_id, form_data, now=kyiv_now(), actor=request.state.admin_actor)
     session.commit()
     if request.headers.get("accept") == "application/json":
         return Response(status_code=204)
-    return RedirectResponse(
-        url=admin_return_url(form_data, fallback="/admin/appointments"), status_code=303,
-    )
-
+    return RedirectResponse(url=admin_return_url(form_data, fallback="/admin/appointments"), status_code=303)
 
 @admin_router.post("/services")
 def create_service(session: SessionDep, form_data: FormDataDep) -> RedirectResponse:
@@ -1828,3 +1576,9 @@ def delete_closed_date(closed_date_id: int, request: Request, session: SessionDe
 
 
 app.include_router(admin_router)
+
+from app.telegram_auth import router as telegram_auth_router
+from app.telegram_bot import router as telegram_bot_router
+
+app.include_router(telegram_auth_router)
+app.include_router(telegram_bot_router)

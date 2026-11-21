@@ -3,6 +3,10 @@ from sqlmodel import Session
 from app.models import AdminAuditEvent
 
 AUDIT_LABELS = {
+    "appointment_created": "Додано прийом",
+    "appointment_status": "Змінено статус прийому",
+    "telegram_linked": "Прив’язано Telegram",
+    "telegram_unlinked": "Від’єднано Telegram",
     "schedule_changed": "Змінено графік",
     "slot_closed": "Закрито години запису",
     "slot_reopened": "Відкрито години запису",

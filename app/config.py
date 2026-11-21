@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
     google_redirect_uri: str | None = None
+    telegram_bot_token: SecretStr | None = None
+    telegram_bot_username: str | None = None
+    telegram_webhook_secret: SecretStr | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -47,6 +50,9 @@ class Settings(BaseSettings):
         "google_client_secret",
         "google_redirect_uri",
         "public_base_url",
+        "telegram_bot_token",
+        "telegram_bot_username",
+        "telegram_webhook_secret",
         mode="before",
     )
     @classmethod
@@ -105,8 +111,21 @@ class Settings(BaseSettings):
     def google_admin_configured(self) -> bool:
         return bool(self.admin_google_email or self.admin_google_emails or self.admin_google_subjects)
 
+    @property
+    def telegram_enabled(self) -> bool:
+        return bool(self.telegram_bot_token and self.telegram_bot_username and self.telegram_webhook_secret)
+
     @model_validator(mode="after")
     def validate_security(self) -> Self:
+        if self.telegram_bot_username:
+            value = self.telegram_bot_username.removeprefix("@")
+            if not value.isascii() or not value.replace("_", "").isalnum() or not value.lower().endswith("bot"):
+                raise ValueError("TELEGRAM_BOT_USERNAME must be a bot username")
+            self.telegram_bot_username = value
+        if self.telegram_webhook_secret:
+            secret = self.telegram_webhook_secret.get_secret_value()
+            if len(secret) < 32 or len(secret) > 256 or not all(c.isascii() and (c.isalnum() or c in "_-") for c in secret):
+                raise ValueError("TELEGRAM_WEBHOOK_SECRET must contain 32–256 URL-safe characters")
         if self.public_base_url:
             origin = urlsplit(self.public_base_url)
             if (

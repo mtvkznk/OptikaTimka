@@ -85,6 +85,9 @@ def app_db(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> Generator[Engine]
     monkeypatch.setattr(settings, "google_client_id", None)
     monkeypatch.setattr(settings, "google_client_secret", None)
     monkeypatch.setattr(settings, "google_redirect_uri", None)
+    monkeypatch.setattr(settings, "telegram_bot_token", None)
+    monkeypatch.setattr(settings, "telegram_bot_username", None)
+    monkeypatch.setattr(settings, "telegram_webhook_secret", None)
     try:
         yield engine
     finally:

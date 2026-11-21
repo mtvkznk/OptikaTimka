@@ -21,6 +21,9 @@ def run_preview() -> None:
             ADMIN_GOOGLE_EMAILS="",
             ADMIN_GOOGLE_SUBJECTS="",
             DOCTOR_DIARY_SERVICE_ID="",
+            TELEGRAM_BOT_TOKEN="browser-test-token",
+            TELEGRAM_BOT_USERNAME="OptykaTestBot",
+            TELEGRAM_WEBHOOK_SECRET="browser-test-webhook-" + "a" * 32,
         )
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True)
 

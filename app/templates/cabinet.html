@@ -43,6 +43,29 @@
             </div>
           </div>
 
+          {% if telegram_enabled %}
+          <div class="cabinet-telegram">
+            {% if telegram_account %}
+            <p>Telegram: {{ telegram_account.display_name }}{% if telegram_account.username %} (@{{ telegram_account.username }}){% endif %}</p>
+            <div class="cabinet-actions">
+              <a class="secondary-button" href="https://t.me/{{ telegram_bot_username }}" target="_blank" rel="noopener noreferrer">Відкрити бота</a>
+              {% if customer.google_sub and customer.email_verified %}
+              <form action="/auth/telegram/unlink" method="post">
+                {% include "csrf_field.html" %}
+                <button class="secondary-button" type="submit">Від’єднати Telegram</button>
+              </form>
+              {% endif %}
+            </div>
+            {% else %}
+            <p class="booking-hint">Прив’яжіть Telegram для входу{% if is_admin %} та керування записами в боті{% endif %}.</p>
+            <form action="/auth/telegram/start" method="post">
+              {% include "csrf_field.html" %}
+              <button class="secondary-button" type="submit">Прив’язати Telegram</button>
+            </form>
+            {% endif %}
+          </div>
+          {% endif %}
+
           {% if appointment_rows %}
           <ul class="cabinet-appointments">
             {% for row in appointment_rows %}
@@ -76,7 +99,14 @@
 
           {% if google_enabled %}
           <a class="secondary-button" href="/auth/google">Продовжити з Google</a>
-          {% else %}
+          {% endif %}
+          {% if telegram_enabled %}
+          <form action="/auth/telegram/start" method="post">
+            {% include "csrf_field.html" %}
+            <button class="secondary-button" type="submit">Продовжити з Telegram</button>
+          </form>
+          {% endif %}
+          {% if not google_enabled and not telegram_enabled %}
           <div class="cabinet-empty">
             <h2>Вхід тимчасово недоступний</h2>
             <p class="booking-hint">Ви можете записатися на прийом без входу.</p>

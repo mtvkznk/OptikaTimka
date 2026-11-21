@@ -18,15 +18,17 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import settings
 from app.database import get_session
-from app.models import Customer, CustomerSession, SecurityRateLimit, utc_now
+from app.models import Customer, CustomerSession, SecurityRateLimit, TelegramAccount, utc_now
 
 SESSION_COOKIE_NAME = "optika_customer_session"
 GOOGLE_SESSION_PREFIX = "g."
+TELEGRAM_SESSION_PREFIX = "t."
+TELEGRAM_WEBHOOK_PATH = "/integrations/telegram/webhook"
 CSRF_COOKIE_NAME = "optika_csrf"
 MAX_BODY_BYTES = 65_536
 MAX_ADMIN_CHANGES_BYTES = 2 * 1024 * 1024
 CSRF_TTL_SECONDS = 24 * 60 * 60
-CSRF_FORM_PAGES = frozenset({"/booking", "/cabinet", "/admin", "/admin/appointments", "/admin/audit"})
+CSRF_FORM_PAGES = frozenset({"/booking", "/cabinet", "/admin", "/admin/appointments", "/admin/audit", "/auth/telegram"})
 basic_auth = HTTPBasic(auto_error=False, realm="Optika Timka admin")
 
 
@@ -52,16 +54,18 @@ def hash_session_token(token: str) -> str:
 
 def get_customer_by_session(request: Request, session: Session) -> Customer | None:
     token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "")
-    if not token.startswith(GOOGLE_SESSION_PREFIX) or len(token) > 128:
+    if not token.startswith((GOOGLE_SESSION_PREFIX, TELEGRAM_SESSION_PREFIX)) or len(token) > 128:
         return None
+    telegram = token.startswith(TELEGRAM_SESSION_PREFIX)
     return session.exec(
         select(Customer)
         .join(CustomerSession)
         .where(
             CustomerSession.token_hash == hash_session_token(token),
             CustomerSession.expires_at >= utc_now(),
-            Customer.google_sub.is_not(None),
-            Customer.email_verified,
+            CustomerSession.provider == ("telegram" if telegram else "google"),
+            select(TelegramAccount.customer_id).where(TelegramAccount.customer_id == Customer.id).exists()
+            if telegram else Customer.google_sub.is_not(None) & Customer.email_verified,
         )
     ).first()
 
@@ -105,7 +109,7 @@ def csrf_matches(submitted: str, cookie_token: str, session_token: str) -> bool:
     if secrets.compare_digest(submitted.encode(), cookie_token.encode()):
         return True
     # Separate tabs can receive different tokens when they open at the same time.
-    return session_token.startswith(GOOGLE_SESSION_PREFIX) and valid_csrf_token(
+    return session_token.startswith((GOOGLE_SESSION_PREFIX, TELEGRAM_SESSION_PREFIX)) and valid_csrf_token(
         submitted, session_token,
     )
 
@@ -175,7 +179,7 @@ class SecurityMiddleware:
                 headers["X-Frame-Options"] = "DENY"
                 # Native form POSTs need their Origin header. Keep OAuth redirect URLs private.
                 headers["Referrer-Policy"] = (
-                    "no-referrer" if path.startswith("/auth/google") else "same-origin"
+                    "no-referrer" if path.startswith("/auth/") else "same-origin"
                 )
                 headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
                 headers["Cross-Origin-Opener-Policy"] = "same-origin"
@@ -206,6 +210,10 @@ class SecurityMiddleware:
             await JSONResponse({"detail": detail}, status_code)(scope, receive, send_with_headers)
 
         if mutating:
+            telegram_webhook = path == TELEGRAM_WEBHOOK_PATH
+            if telegram_webhook and not valid_telegram_webhook(request):
+                await reject(403, "Доступ заборонено.")
+                return
             try:
                 content_length = int(request.headers.get("content-length", "0"))
             except ValueError:
@@ -237,9 +245,9 @@ class SecurityMiddleware:
             needs_form_field = not submitted and (
                 content_type.split(";", 1)[0].strip().lower() == "application/x-www-form-urlencoded"
             )
-            if not token_valid or (
+            if not telegram_webhook and (not token_valid or (
                 not needs_form_field and not csrf_matches(submitted, cookie_token, session_token)
-            ):
+            )):
                 await reject(403, "Оновіть сторінку та повторіть дію.")
                 return
 
@@ -279,6 +287,14 @@ class SecurityMiddleware:
             await self.app(scope, receive_body, send_with_headers)
         else:
             await self.app(scope, receive, send_with_headers)
+
+
+def valid_telegram_webhook(request: Request) -> bool:
+    secret = settings.telegram_webhook_secret
+    return bool(settings.telegram_enabled and secret and secrets.compare_digest(
+        request.headers.get("x-telegram-bot-api-secret-token", "").encode(),
+        secret.get_secret_value().encode(),
+    ))
 
 
 class CanonicalHostMiddleware:

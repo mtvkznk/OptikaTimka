@@ -60,6 +60,25 @@ test("public pages and the Google entry point at mobile and desktop widths", asy
   }
 });
 
+test("Telegram login and linking pages fit mobile and show approval safely", async t => {
+  for (const admin of [false, true]) {
+    const context = await browserContext(t, { admin, width: 320 });
+    const page = await context.newPage();
+    await page.goto(root + "/cabinet");
+    await page.getByRole("button", { name: admin ? "Прив’язати Telegram" : "Продовжити з Telegram", exact: true }).click();
+    await page.waitForURL(root + "/auth/telegram");
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 320);
+    const url = new URL(await page.getByRole("link", { name: "Відкрити Telegram" }).getAttribute("href"));
+    assert.equal(url.hostname, "t.me");
+    assert.match(url.searchParams.get("start"), /^[\w-]{43}$/);
+    assert.equal(await page.locator("#telegram-finish").isHidden(), true);
+    await page.route("**/auth/telegram/status", route => route.fulfill({ json: {approved: true, name: "<script>test</script>"} }));
+    await page.locator("#telegram-finish").waitFor({ state: "visible" });
+    assert.match(await page.locator("#telegram-status").textContent(), /<script>test<\/script>/);
+    assert.equal(await page.locator("#telegram-status script").count(), 0);
+  }
+});
+
 test("concurrent admin tabs and a changed schedule refresh the booking form", async t => {
   const admin = await browserContext(t, { admin: true });
   const guest = await browserContext(t);
