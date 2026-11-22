@@ -55,11 +55,29 @@ manual bookings start as new; today's start confirmed. The timetable uses the
 service's duration and weekday schedule and skips closed days. Schedule/catalog
 editing remains in the website dashboard.
 
+The current day timetable refreshes automatically, including changes from the
+website and other administrators. The app checks the database every five seconds
+and edits the existing Telegram message only when its visible content changes.
+Unchanged keyboards keep their callback secrets alive without repeated Telegram
+edits. The refresh worker runs inside the app's lifespan and resumes saved views
+after an app restart. No separate service or extra secret is required. Send
+`/start` once after this feature is installed to register the current message.
+
+Only the latest timetable is followed. Opening a patient, a form, search, or a
+confirmation pauses tracking; returning to the timetable resumes it. Rescheduling
+keeps the selected appointment and target date while available hours update. A
+deleted Telegram message or revoked administrator grant stops tracking. A
+per-chat lock prevents a background edit from overwriting a newer interactive
+screen and does not hold the website's booking lock during network requests.
+Telegram rate-limit delays are respected and background edits never create a new
+message when the original message has been deleted.
+
 Webhook authentication is separate from browser CSRF and uses a constant-time
 secret-header comparison. Update IDs prevent duplicate mutations; a transactional
 outbox retries interrupted replies. Callback buttons expire and are bound to the
 Telegram user; appointment versions reject stale actions. Undelivered admin
-messages are discarded after access is revoked or after ten minutes. Successful
+messages are discarded after access is revoked or after ten minutes (Telegram
+rate-limit delays are honored before retry/expiry). Successful
 replies remain in Telegram chat history, so use private chats on trusted devices.
 
 For a SQLite preview without Docker, set `DATABASE_URL=sqlite:///preview.db`, run

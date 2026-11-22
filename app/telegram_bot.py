@@ -1,12 +1,13 @@
 """Private administrator bot backed by the website's appointment commands."""
 
+import hashlib
 import html
+import json
 import logging
 import secrets
 from datetime import UTC, date, timedelta
 from typing import Annotated, Any
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import delete, or_
 from sqlmodel import Session, select
@@ -34,51 +35,30 @@ from app.models import (
     TelegramOutbox,
     TelegramState,
     TelegramUpdate,
+    TelegramView,
     utc_now,
 )
 from app.security import TELEGRAM_WEBHOOK_PATH, hash_secret, is_google_admin, valid_telegram_webhook
 from app.telegram_auth import unexpired
+from app.telegram_transport import telegram_api
 
 router = APIRouter()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 STATUS = {"new": "🟠 Новий", "confirmed": "🟢 Підтверджено", "canceled": "⚪ Скасовано"}
 
 
-def telegram_api(method: str, payload: dict) -> bool:
-    """Never expose a Bot API URL: it contains the credential."""
-    if not settings.telegram_bot_token:
-        return False
-    try:
-        with httpx.Client(timeout=12) as client:
-            response = client.post(
-                f"https://api.telegram.org/bot{settings.telegram_bot_token.get_secret_value()}/{method}",
-                json=payload,
-            )
-            result = response.json()
-            if result.get("ok"):
-                return True
-            if result.get("error_code") == 400 and method == "editMessageText":
-                if "message is not modified" in result.get("description", ""):
-                    return True
-                # The admin may have deleted the old message.
-                alternative = {k: v for k, v in payload.items() if k != "message_id"}
-                return bool(
-                    client.post(
-                        f"https://api.telegram.org/bot{settings.telegram_bot_token.get_secret_value()}/sendMessage",
-                        json=alternative,
-                    )
-                    .json()
-                    .get("ok")
-                )
-            return result.get("error_code") == 403 or (
-                method == "answerCallbackQuery" and result.get("error_code") == 400
-            )
-    except (httpx.HTTPError, ValueError):
-        return False
-
-
-def deliver_outbox(session: Session) -> bool:
-    for row in session.exec(select(TelegramOutbox).order_by(TelegramOutbox.id).limit(30)).all():
+def deliver_outbox(session: Session, *, telegram_id: int | None = None) -> bool:
+    statement = select(TelegramOutbox).order_by(TelegramOutbox.id)
+    if telegram_id is not None:
+        statement = statement.where(
+            or_(TelegramOutbox.telegram_id == telegram_id, TelegramOutbox.telegram_id.is_(None))
+        )
+    for row in session.exec(statement.limit(30)).all():
+        view = session.get(TelegramView, row.telegram_id) if row.view_generation else None
+        if row.view_generation and (view is None or view.generation != row.view_generation):
+            session.delete(row)
+            session.commit()
+            continue
         allowed = True
         if row.admin_customer_id is not None:
             customer = session.get(Customer, row.admin_customer_id)
@@ -88,23 +68,63 @@ def deliver_outbox(session: Session) -> bool:
                 and account is not None
                 and account.telegram_id == row.payload.get("chat_id")
             )
-        if not allowed or row.created_at.replace(
-            tzinfo=row.created_at.tzinfo or UTC
-        ) < utc_now() - timedelta(minutes=10):
+        if not allowed:
+            if view:
+                session.delete(view)
             session.delete(row)
             session.commit()
             continue
-        if not telegram_api(row.method, row.payload):
+        if row.not_before and unexpired(row.not_before):
             return False
+        if row.created_at.replace(tzinfo=row.created_at.tzinfo or UTC) < utc_now() - timedelta(
+            minutes=10
+        ):
+            if view:
+                if view.message_id is None:
+                    session.delete(view)
+                else:
+                    view.fingerprint = ""
+            session.delete(row)
+            session.commit()
+            continue
+        result = telegram_api(row.method, row.payload)
+        if result.missing_message and not row.is_refresh:
+            result = telegram_api(
+                "sendMessage", {k: v for k, v in row.payload.items() if k != "message_id"}
+            )
+        if not result:
+            if result.terminal:
+                if view:
+                    session.delete(view)
+                session.delete(row)
+                session.commit()
+                continue
+            row.not_before = utc_now() + timedelta(seconds=result.retry_after)
+            session.commit()
+            return False
+        if view and result.message_id is not None:
+            view.message_id = result.message_id
         session.delete(row)
         session.commit()
     return True
 
 
 class Bot:
-    def __init__(self, session: Session, telegram_id: int, *, message_id: int | None = None):
+    def __init__(
+        self,
+        session: Session,
+        telegram_id: int,
+        *,
+        message_id: int | None = None,
+        preview: bool = False,
+    ):
         self.session, self.id, self.message_id = session, telegram_id, message_id
         self.customer: Customer | None = None
+        self.preview = preview
+        self.actions: dict[str, dict] = {}
+        self.payload: dict = {}
+        self.context: dict | None = None
+        self.fingerprint = ""
 
     @property
     def actor(self) -> str:
@@ -112,6 +132,7 @@ class Bot:
 
     def button(self, text: str, op: str, **data: Any) -> dict:
         token = secrets.token_urlsafe(18)
+        self.actions[token] = {"op": op, **data}
         self.session.add(
             TelegramAction(
                 token=token,
@@ -122,7 +143,14 @@ class Bot:
         )
         return {"text": text, "callback_data": token}
 
-    def show(self, text: str, rows: list[list[dict]] | None = None, *, edit: bool = True) -> None:
+    def show(
+        self,
+        text: str,
+        rows: list[list[dict]] | None = None,
+        *,
+        edit: bool = True,
+        view: dict | None = None,
+    ) -> None:
         payload = {
             "chat_id": self.id,
             "text": text,
@@ -132,11 +160,64 @@ class Bot:
         }
         if edit and self.message_id:
             payload["message_id"] = self.message_id
+        semantic = {
+            "text": text,
+            "rows": [
+                [
+                    {
+                        **button,
+                        "callback_data": self.actions.get(
+                            button.get("callback_data"), button.get("callback_data")
+                        ),
+                    }
+                    for button in row
+                ]
+                for row in rows or []
+            ],
+        }
+        self.fingerprint = hashlib.sha256(
+            json.dumps(semantic, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+        self.payload, self.context = payload, view
+        if not self.preview:
+            self.publish()
+
+    def publish(self, *, is_refresh: bool = False) -> None:
+        generation = None
+        # Only the latest screen is current; queued older prompts must not overwrite it.
+        self.session.execute(
+            delete(TelegramOutbox).where(
+                TelegramOutbox.telegram_id == self.id,
+                TelegramOutbox.method.in_(["sendMessage", "editMessageText"]),
+            )
+        )
+        current = self.session.get(TelegramView, self.id)
+        if self.context is not None and is_google_admin(self.customer):
+            generation = secrets.token_urlsafe(18)
+            values = {
+                "customer_id": self.customer.id,
+                "message_id": self.message_id,
+                "context": self.context,
+                "payload": self.payload,
+                "fingerprint": self.fingerprint,
+                "generation": generation,
+            }
+            if current is None:
+                current = TelegramView(telegram_id=self.id, **values)
+                self.session.add(current)
+            else:
+                for key, value in values.items():
+                    setattr(current, key, value)
+        elif current:
+            self.session.delete(current)
         self.session.add(
             TelegramOutbox(
-                method="editMessageText" if "message_id" in payload else "sendMessage",
-                payload=payload,
+                method="editMessageText" if "message_id" in self.payload else "sendMessage",
+                payload=self.payload,
                 admin_customer_id=self.customer.id if is_google_admin(self.customer) else None,
+                telegram_id=self.id,
+                view_generation=generation,
+                is_refresh=is_refresh,
             )
         )
 
@@ -169,7 +250,12 @@ class Bot:
             self.session.delete(state)
 
     def day(
-        self, day: date | None = None, *, move: int | None = None, version: str = ""
+        self,
+        day: date | None = None,
+        *,
+        move: int | None = None,
+        version: str = "",
+        notice: str = "",
     ) -> None:
         from app.main import appointment_diary, booking_window, kyiv_now
 
@@ -207,7 +293,10 @@ class Bot:
             moving=moving,
         )
         if diary.get("date") is None:
-            self.show("Немає відкритих днів у графіку огляду лікаря.")
+            self.show(
+                "Немає відкритих днів у графіку огляду лікаря.",
+                view={"day": (day or now.date()).isoformat()},
+            )
             return
         day = diary["date"]
         navdata = {"move": move, "version": version}
@@ -224,6 +313,8 @@ class Bot:
         )
         if moving:
             text += f"\n\n<b>Перенесення прийому №{moving.id}</b>\nОберіть вільну годину нижче."
+        if notice:
+            text += "\n\n" + html.escape(notice)
         for row in diary["rows"]:
             starts = row["start"]
             data = {
@@ -277,13 +368,16 @@ class Bot:
         rows.append(
             [
                 self.button("Сьогодні", "day", **navdata),
-                self.button("↻ Оновити", "day", day=day.isoformat(), **navdata),
                 self.button("Усі записи", "list", page=0),
             ]
         )
         if move:
             rows.append([self.button("Скасувати перенесення", "day", day=day.isoformat())])
-        self.show(text, rows)
+        self.show(
+            text,
+            rows,
+            view={"day": day.isoformat(), "move": move, "version": version, "notice": notice},
+        )
 
     def visit(self, visit_id: int, version: str | None = None) -> None:
         visit = self.session.get(Appointment, visit_id)
@@ -596,7 +690,9 @@ def process_update(session: Session, update: dict) -> None:
     if callback:
         session.add(
             TelegramOutbox(
-                method="answerCallbackQuery", payload={"callback_query_id": callback["id"]}
+                method="answerCallbackQuery",
+                payload={"callback_query_id": callback["id"]},
+                telegram_id=user_id,
             )
         )
         action = session.get(TelegramAction, callback.get("data", "")[:40])
@@ -657,6 +753,18 @@ def webhook(
         raise HTTPException(403, "Доступ заборонено.")
     if not isinstance(update, dict) or type(update.get("update_id")) is not int:
         raise HTTPException(400, "Некоректний запит.")
+    from app.telegram_refresh import chat_lock
+
+    callback = update.get("callback_query", {})
+    message = callback.get("message", {}) or update.get("message", {})
+    telegram_id = (callback or message).get("from", {}).get("id", 0)
+    if type(telegram_id) is not int or telegram_id < 0:
+        telegram_id = 0
+    with chat_lock(session.get_bind(), telegram_id):
+        return apply_update(update, session, telegram_id)
+
+
+def apply_update(update: dict, session: Session, telegram_id: int) -> dict:
     lock_booking_writes(session)
     if session.get(TelegramUpdate, update["update_id"]) is None:
         # Savepoint ensures a rejected command leaves no partial booking/state changes.
@@ -672,6 +780,14 @@ def webhook(
                 and message.get("chat", {}).get("type") == "private"
                 and message["chat"]["id"] == user_id
             ):
+                if callback.get("id"):
+                    session.add(
+                        TelegramOutbox(
+                            method="answerCallbackQuery",
+                            payload={"callback_query_id": callback["id"]},
+                            telegram_id=user_id,
+                        )
+                    )
                 Bot(session, user_id).show(
                     html.escape(str(exc.detail)) + "\n\nОновити розклад: /start", edit=False
                 )
@@ -682,6 +798,6 @@ def webhook(
             delete(TelegramUpdate).where(TelegramUpdate.created_at < utc_now() - timedelta(days=7))
         )
     session.commit()
-    if not deliver_outbox(session):
+    if not deliver_outbox(session, telegram_id=telegram_id):
         raise HTTPException(503, "Доставку відповіді буде повторено.")
     return {"ok": True}

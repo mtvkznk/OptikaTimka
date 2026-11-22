@@ -404,7 +404,21 @@ class TelegramOutbox(SQLModel, table=True):
     method: str = Field(max_length=40)
     payload: dict = Field(sa_type=JSON)
     admin_customer_id: int | None = Field(default=None)
+    telegram_id: int | None = Field(default=None, sa_type=BigInteger, index=True)
+    view_generation: str | None = Field(default=None, max_length=40)
+    is_refresh: bool = Field(default=False, sa_column_kwargs={"server_default": text("false")})
+    not_before: datetime | None = Field(default=None, sa_type=TIMESTAMP_WITH_TIME_ZONE)
     created_at: datetime = Field(default_factory=utc_now, index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+
+
+class TelegramView(SQLModel, table=True):
+    telegram_id: int = Field(primary_key=True, sa_type=BigInteger)
+    customer_id: int = Field(foreign_key="customer.id", ondelete="CASCADE")
+    message_id: int | None = Field(default=None, sa_type=BigInteger)
+    context: dict = Field(sa_type=JSON)
+    payload: dict = Field(sa_type=JSON)
+    fingerprint: str = Field(max_length=64)
+    generation: str = Field(max_length=40)
 
 
 class AnalyticsEventBase(SQLModel):

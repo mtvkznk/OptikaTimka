@@ -1,4 +1,6 @@
-from datetime import datetime, time, timedelta
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -20,9 +22,12 @@ from app.models import (
     TelegramAuth,
     TelegramOutbox,
     TelegramState,
+    TelegramView,
     utc_now,
 )
 from app.security import SESSION_COOKIE_NAME, TELEGRAM_WEBHOOK_PATH, hash_session_token
+from app.telegram_refresh import chat_lock, refresh_cycle
+from app.telegram_transport import TelegramReply
 
 TG_ID = 9000000011
 SECRET = "test-webhook-secret-" + "a" * 32
@@ -39,7 +44,12 @@ def tg(client, engine, monkeypatch):
     client.get("/booking")
     sent = []
     monkeypatch.setattr(
-        telegram_bot, "telegram_api", lambda method, payload: sent.append((method, payload)) or True
+        telegram_bot,
+        "telegram_api",
+        lambda method, payload: (
+            sent.append((method, payload))
+            or TelegramReply(True, message_id=payload.get("message_id", 42))
+        ),
     )
     with Session(engine) as session:
         service = session.exec(select(BookingService).order_by(BookingService.id)).first()
@@ -330,13 +340,20 @@ def test_rejected_callback_from_other_user_and_outbox_retry(tg, engine, monkeypa
     send(client, callback(action, who=TG_ID + 1), 2)
     with Session(engine) as session:
         assert session.exec(select(TelegramState)).first() is None
-    monkeypatch.setattr(telegram_bot, "telegram_api", lambda *args: False)
+    monkeypatch.setattr(telegram_bot, "telegram_api", lambda *args: TelegramReply(False))
     update = message("/start")
     assert send(client, update, 3).status_code == 503
     with Session(engine) as session:
         assert session.exec(select(TelegramOutbox)).first() is not None
+        for row in session.exec(select(TelegramOutbox)):
+            row.not_before = utc_now() - timedelta(seconds=1)
+        session.commit()
     monkeypatch.setattr(
-        telegram_bot, "telegram_api", lambda method, payload: sent.append((method, payload)) or True
+        telegram_bot,
+        "telegram_api",
+        lambda method, payload: (
+            sent.append((method, payload)) or TelegramReply(True, message_id=42)
+        ),
     )
     assert send(client, update, 3).status_code == 200
     with Session(engine) as session:
@@ -402,14 +419,18 @@ def test_expired_callbacks_and_revoked_pending_replies(tg, engine, monkeypatch):
         session.commit()
     send(client, callback(token), 2)
     assert "застаріла" in sent[-1][1]["text"]
-    monkeypatch.setattr(telegram_bot, "telegram_api", lambda *args: False)
+    monkeypatch.setattr(telegram_bot, "telegram_api", lambda *args: TelegramReply(False))
     assert send(client, message("/records"), 3).status_code == 503
     with Session(engine) as session:
         session.delete(session.get(TelegramAccount, owner))
         session.commit()
     sent.clear()
     monkeypatch.setattr(
-        telegram_bot, "telegram_api", lambda method, payload: sent.append((method, payload)) or True
+        telegram_bot,
+        "telegram_api",
+        lambda method, payload: (
+            sent.append((method, payload)) or TelegramReply(True, message_id=42)
+        ),
     )
     assert send(client, message("/records"), 3).status_code == 200
     assert sent == []
@@ -431,3 +452,301 @@ def test_blank_manual_entry_cannot_book_and_changed_duration_is_rejected(tg, eng
     assert "Тривалість" in sent[-1][1]["text"]
     with Session(engine) as session:
         assert session.exec(select(Appointment)).first() is None
+
+
+def web_manual(client, starts="10:00", *, day=None, contact="Refresh patient"):
+    response = client.post(
+        "/admin/appointments/manual",
+        data={
+            "preferred_date": (day or NOW.date()).isoformat(),
+            "preferred_time": starts,
+            "expected_duration_minutes": "30",
+            "phone": contact,
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_website_booking_refreshes_same_message_only_on_change(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    send(client, message("/start"))
+    with Session(engine) as session:
+        view = session.get(TelegramView, TG_ID)
+        assert view.message_id == 42
+        assert all(
+            "Оновити" not in b["text"]
+            for row in view.payload["reply_markup"]["inline_keyboard"]
+            for b in row
+        )
+    web_manual(client)
+    sent.clear()
+    refresh_cycle(engine)
+    assert len(sent) == 1 and sent[0][0] == "editMessageText"
+    assert sent[0][1]["message_id"] == 42
+    assert "Refresh patient" in str(sent[0][1])
+    with Session(engine) as session:
+        count = len(session.exec(select(TelegramAction)).all())
+    sent.clear()
+    refresh_cycle(engine)
+    assert sent == []
+    with Session(engine) as session:
+        assert len(session.exec(select(TelegramAction)).all()) == count
+
+
+def test_refresh_pauses_during_manual_input_and_resumes_after_save(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    send(client, message("/start"))
+    send(client, callback(button(sent, "11:00 ＋")), 2)
+    sent.clear()
+    web_manual(client)
+    refresh_cycle(engine)
+    assert sent == []
+    with Session(engine) as session:
+        assert session.get(TelegramView, TG_ID) is None
+        assert session.get(TelegramState, TG_ID).payload["mode"] == "phone"
+    send(client, message("123"), 3)
+    send(client, callback(button(sent, "Без імені")), 4)
+    with Session(engine) as session:
+        assert session.get(TelegramView, TG_ID) is not None
+
+
+def test_refresh_preserves_move_mode_and_handles_external_cancellation(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    web_manual(client)
+    send(client, message("/start"))
+    send(client, callback(button(sent, "10:00 🟢")), 2)
+    send(client, callback(button(sent, "Перенести")), 3)
+    send(client, callback(button(sent, "День →")), 4)
+    web_manual(client, "11:00", day=NOW.date() + timedelta(days=1))
+    sent.clear()
+    refresh_cycle(engine)
+    assert len(sent) == 1
+    assert "Перенесення" in sent[0][1]["text"]
+    assert "11:00 ✓" not in str(sent[0][1])
+    with Session(engine) as session:
+        view = session.get(TelegramView, TG_ID)
+        assert view.context["move"] is not None
+        visit = session.get(Appointment, view.context["move"])
+        visit.status = AppointmentStatus.canceled
+        visit.updated_at = utc_now()
+        session.commit()
+    sent.clear()
+    refresh_cycle(engine)
+    with Session(engine) as session:
+        assert session.get(TelegramView, TG_ID).context["move"] is None
+    assert "Перенесення прийому" not in sent[0][1]["text"]
+
+
+def test_refresh_retries_after_rate_limit_without_replacing_message(tg, engine, monkeypatch):
+    client, _sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    send(client, message("/start"))
+    web_manual(client)
+    attempts = []
+    monkeypatch.setattr(
+        telegram_bot,
+        "telegram_api",
+        lambda method, payload: attempts.append(method) or TelegramReply(False, retry_after=30),
+    )
+    refresh_cycle(engine)
+    refresh_cycle(engine)
+    assert attempts == ["editMessageText"]
+    with Session(engine) as session:
+        row = session.exec(select(TelegramOutbox)).one()
+        assert row.is_refresh
+        row.not_before = utc_now() - timedelta(seconds=1)
+        session.commit()
+    monkeypatch.setattr(
+        telegram_bot,
+        "telegram_api",
+        lambda method, payload: attempts.append(method) or TelegramReply(True, message_id=42),
+    )
+    refresh_cycle(engine)
+    assert attempts == ["editMessageText", "editMessageText"]
+    with Session(engine) as session:
+        assert session.exec(select(TelegramOutbox)).first() is None
+
+
+def test_deleted_telegram_message_stops_refresh_without_sending_a_new_one(tg, engine, monkeypatch):
+    client, _sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    send(client, message("/start"))
+    web_manual(client)
+    attempts = []
+    monkeypatch.setattr(
+        telegram_bot,
+        "telegram_api",
+        lambda method, payload: (
+            attempts.append(method) or TelegramReply(False, terminal=True, missing_message=True)
+        ),
+    )
+    refresh_cycle(engine)
+    refresh_cycle(engine)
+    assert attempts == ["editMessageText"]
+    with Session(engine) as session:
+        assert session.get(TelegramView, TG_ID) is None
+
+
+def test_navigation_discards_a_failed_refresh_for_the_previous_day(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    send(client, message("/start"))
+    arrow = button(sent, "День →")
+    web_manual(client)
+    monkeypatch.setattr(telegram_bot, "telegram_api", lambda *args: TelegramReply(False))
+    refresh_cycle(engine)
+    with Session(engine) as session:
+        assert session.exec(select(TelegramOutbox)).one().is_refresh
+    sent.clear()
+    monkeypatch.setattr(
+        telegram_bot,
+        "telegram_api",
+        lambda method, payload: (
+            sent.append((method, payload)) or TelegramReply(True, message_id=42)
+        ),
+    )
+    send(client, callback(arrow), 2)
+    with Session(engine) as session:
+        assert session.exec(select(TelegramOutbox)).first() is None
+        assert (
+            session.get(TelegramView, TG_ID).context["day"]
+            == (NOW.date() + timedelta(days=1)).isoformat()
+        )
+    sent.clear()
+    refresh_cycle(engine)
+    assert sent == []
+
+
+def test_background_refresh_skips_busy_chat_without_blocking_website(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    send(client, message("/start"))
+    sent.clear()
+    with ThreadPoolExecutor(max_workers=1) as pool, chat_lock(engine, TG_ID):
+        web_manual(client)
+        pool.submit(refresh_cycle, engine).result(timeout=5)
+        assert sent == []
+    refresh_cycle(engine)
+    assert len(sent) == 1
+
+
+def test_buttons_are_renewed_without_edits_and_rebuilt_when_missing(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    send(client, message("/start"))
+    with Session(engine) as session:
+        token = session.get(TelegramView, TG_ID).payload["reply_markup"]["inline_keyboard"][0][0][
+            "callback_data"
+        ]
+        session.get(TelegramAction, token).expires_at = utc_now() - timedelta(seconds=1)
+        session.commit()
+    sent.clear()
+    refresh_cycle(engine)
+    assert sent == []
+    with Session(engine) as session:
+        action = session.get(TelegramAction, token)
+        assert (
+            action.expires_at.replace(tzinfo=action.expires_at.tzinfo or UTC) - utc_now()
+        ).total_seconds() > 600
+        session.delete(action)
+        session.commit()
+    refresh_cycle(engine)
+    assert len(sent) == 1
+
+
+def test_refresh_stops_when_admin_access_is_revoked(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    google_customer(client, engine, monkeypatch)
+    send(client, message("/start"))
+    monkeypatch.setattr(settings, "admin_google_email", "someone@example.com")
+    sent.clear()
+    refresh_cycle(engine)
+    assert sent == []
+    with Session(engine) as session:
+        assert session.get(TelegramView, TG_ID) is None
+
+
+def test_empty_schedule_auto_reopens_when_working_hours_change(tg, engine, monkeypatch):
+    client, sent, service_id = tg
+    google_customer(client, engine, monkeypatch)
+    with Session(engine) as session:
+        session.add(ServiceSchedule(service_id=service_id, intervals=[]))
+        session.commit()
+    send(client, message("/start"))
+    with Session(engine) as session:
+        assert session.get(TelegramView, TG_ID) is not None
+        session.get(ServiceSchedule, service_id).intervals = [(14 * 60, 21 * 60)]
+        session.commit()
+    sent.clear()
+    refresh_cycle(engine)
+    assert len(sent) == 1 and "20:30" in str(sent[0][1])
+
+
+def test_refresh_lifespan_starts_and_stops_worker(tg, engine, monkeypatch):
+    from app import database, telegram_refresh
+
+    calls = []
+    monkeypatch.setattr(settings, "environment", "local")
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(telegram_refresh, "REFRESH_SECONDS", 0.01)
+    monkeypatch.setattr(telegram_refresh, "refresh_cycle", lambda e: calls.append(e))
+
+    async def run():
+        async with telegram_refresh.lifespan(main.app):
+            await asyncio.sleep(0.06)
+            assert calls and all(e is engine for e in calls)
+        count = len(calls)
+        await asyncio.sleep(0.03)
+        assert len(calls) == count
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "response, expected",
+    [
+        ({"ok": True, "result": {"message_id": 123}}, (True, 123, False, False, 10)),
+        (
+            {"ok": False, "error_code": 400, "description": "Bad Request: message is not modified"},
+            (True, 42, False, False, 10),
+        ),
+        (
+            {
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: message to edit not found",
+            },
+            (False, None, True, True, 10),
+        ),
+        ({"ok": False, "error_code": 403}, (False, None, True, False, 10)),
+        (
+            {"ok": False, "error_code": 429, "parameters": {"retry_after": 30}},
+            (False, None, False, False, 30),
+        ),
+    ],
+)
+def test_telegram_transport_classifies_delivery_and_retry(tg, monkeypatch, response, expected):
+    import httpx
+
+    from app import telegram_transport
+
+    original_client = httpx.Client
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=response))
+    monkeypatch.setattr(
+        telegram_transport.httpx,
+        "Client",
+        lambda **kwargs: original_client(transport=transport, **kwargs),
+    )
+    reply = telegram_transport.telegram_api(
+        "editMessageText", {"message_id": 42, "chat_id": TG_ID, "text": "Test"}
+    )
+    assert (
+        reply.ok,
+        reply.message_id,
+        reply.terminal,
+        reply.missing_message,
+        reply.retry_after,
+    ) == expected

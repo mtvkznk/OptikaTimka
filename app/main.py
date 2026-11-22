@@ -125,6 +125,7 @@ from app.security import (
     read_form_data,
     require_admin,
 )
+from app.telegram_refresh import lifespan as telegram_lifespan
 from app.validation import normalize_email
 
 IS_PRODUCTION = settings.environment == "production"
@@ -132,6 +133,7 @@ if IS_PRODUCTION:
     logging.getLogger("uvicorn.access").addFilter(PathOnlyAccessLog())
 app = FastAPI(
     title=settings.app_name,
+    lifespan=telegram_lifespan,
     docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None if IS_PRODUCTION else "/redoc",
     openapi_url=None if IS_PRODUCTION else "/openapi.json",
