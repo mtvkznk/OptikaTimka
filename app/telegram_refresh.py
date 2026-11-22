@@ -22,8 +22,7 @@ from app.models import (
     TelegramView,
     utc_now,
 )
-from app.security import hash_secret, is_google_admin
-from app.telegram_auth import unexpired
+from app.security import hash_secret, is_google_admin, unexpired
 from app.telegram_chat import cleanup_chat, cleanup_chat_ids
 
 REFRESH_SECONDS = 5

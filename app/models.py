@@ -353,7 +353,6 @@ class CustomerSession(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     customer_id: int = Field(foreign_key="customer.id", index=True)
-    provider: str = Field(default="google", max_length=16, sa_column_kwargs={"server_default": "google"})
     token_hash: str = Field(max_length=128, index=True)
     expires_at: datetime = Field(index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
     created_at: datetime = Field(
@@ -369,15 +368,10 @@ class TelegramAccount(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
-class TelegramAuth(SQLModel, table=True):
+class TelegramLink(SQLModel, table=True):
     token_hash: str = Field(primary_key=True, max_length=64)
-    browser_hash: str = Field(max_length=64)
-    requester_id: int | None = Field(default=None, foreign_key="customer.id", ondelete="CASCADE")
-    session_hash: str = Field(default="", max_length=64)
-    telegram_id: int | None = Field(default=None, sa_type=BigInteger)
-    username: str = Field(default="", max_length=64)
-    display_name: str = Field(default="", max_length=160)
-    approved: bool = False
+    customer_id: int = Field(foreign_key="customer.id", ondelete="CASCADE", index=True)
+    session_hash: str = Field(max_length=64)
     expires_at: datetime = Field(index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 

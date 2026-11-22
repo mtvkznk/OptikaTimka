@@ -8,6 +8,7 @@
     <title>Особистий кабінет | {{ site_name }}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
     <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
+    {% if telegram_enabled %}<script defer src="/static/js/telegram-link.js?v=1"></script>{% endif %}
   </head>
   <body class="public-site">
     {% include "public_header.html" %}
@@ -43,25 +44,24 @@
             </div>
           </div>
 
-          {% if telegram_enabled %}
+          {% if is_admin and telegram_enabled %}
           <div class="cabinet-telegram">
             {% if telegram_account %}
             <p>Telegram: {{ telegram_account.display_name }}{% if telegram_account.username %} (@{{ telegram_account.username }}){% endif %}</p>
             <div class="cabinet-actions">
               <a class="secondary-button" href="https://t.me/{{ telegram_bot_username }}" target="_blank" rel="noopener noreferrer">Відкрити бота</a>
-              {% if customer.google_sub and customer.email_verified %}
-              <form action="/auth/telegram/unlink" method="post">
+              <form action="/admin/telegram/unlink" method="post">
                 {% include "csrf_field.html" %}
                 <button class="secondary-button" type="submit">Від’єднати Telegram</button>
               </form>
-              {% endif %}
             </div>
             {% else %}
-            <p class="booking-hint">Прив’яжіть Telegram для входу{% if is_admin %} та керування записами в боті{% endif %}.</p>
-            <form action="/auth/telegram/start" method="post">
+            <p class="booking-hint">Прив’яжіть Telegram, щоб керувати записами в боті.</p>
+            <form action="/admin/telegram/link" method="post" data-telegram-link>
               {% include "csrf_field.html" %}
               <button class="secondary-button" type="submit">Прив’язати Telegram</button>
             </form>
+            <p class="booking-hint" data-telegram-link-status role="status" hidden></p>
             {% endif %}
           </div>
           {% endif %}
@@ -100,13 +100,7 @@
           {% if google_enabled %}
           <a class="secondary-button" href="/auth/google">Продовжити з Google</a>
           {% endif %}
-          {% if telegram_enabled %}
-          <form action="/auth/telegram/start" method="post">
-            {% include "csrf_field.html" %}
-            <button class="secondary-button" type="submit">Продовжити з Telegram</button>
-          </form>
-          {% endif %}
-          {% if not google_enabled and not telegram_enabled %}
+          {% if not google_enabled %}
           <div class="cabinet-empty">
             <h2>Вхід тимчасово недоступний</h2>
             <p class="booking-hint">Ви можете записатися на прийом без входу.</p>

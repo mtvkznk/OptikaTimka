@@ -31,17 +31,23 @@ from app.models import (
     ServiceSchedule,
     TelegramAccount,
     TelegramAction,
-    TelegramAuth,
     TelegramChat,
+    TelegramLink,
     TelegramOutbox,
     TelegramState,
     TelegramUpdate,
     TelegramView,
     utc_now,
 )
-from app.security import TELEGRAM_WEBHOOK_PATH, hash_secret, is_google_admin, valid_telegram_webhook
-from app.telegram_auth import unexpired
+from app.security import (
+    TELEGRAM_WEBHOOK_PATH,
+    hash_secret,
+    is_google_admin,
+    unexpired,
+    valid_telegram_webhook,
+)
 from app.telegram_chat import delivered_screen, plan_screen, record_update, settle_inputs
+from app.telegram_link import complete_link, pending_link
 from app.telegram_transport import telegram_api
 
 router = APIRouter()
@@ -496,31 +502,21 @@ class Bot:
             rows,
         )
 
-    def authenticate(self, token: str, user: dict) -> None:
-        pending = self.session.get(TelegramAuth, hash_secret(f"telegram-auth:{token}"))
-        if pending is None or not unexpired(pending.expires_at) or pending.approved:
-            self.show("Посилання більше не діє. Почніть вхід або прив’язку ще раз на сайті.")
-            return
-        if pending.telegram_id and pending.telegram_id != self.id:
-            self.show("Посилання вже використане. Створіть нове на сайті.")
-            return
-        pending.telegram_id = self.id
-        pending.username = str(user.get("username") or "")[:64]
-        pending.display_name = " ".join(
-            str(user.get(k) or "") for k in ("first_name", "last_name")
-        ).strip()[:160]
+    def link_account(self, token: str, user: dict) -> None:
+        pending, customer = pending_link(self.session, hash_secret(f"telegram-link:{token}"))
+        name = " ".join(str(user.get(k) or "") for k in ("first_name", "last_name")).strip()[:160]
         self.show(
-            "Підтвердити "
-            + (
-                "прив’язку Telegram до відкритого кабінету"
-                if pending.requester_id
-                else "вхід на сайт"
-            )
-            + "?\n\nПідтверджуйте лише якщо ви щойно почали цю дію на optykatimka.com.ua.",
+            f"Прив’язати цей Telegram до адміністратора <b>{html.escape(customer.email or customer.name)}</b>?\n\nПідтверджуйте лише якщо ви щойно натиснули «Прив’язати Telegram» у своєму кабінеті. Після підтвердження відкриється розклад.",
             [
                 [
-                    self.button("Підтвердити", "auth", auth_hash=pending.token_hash),
-                    self.button("Відхилити", "auth_cancel", auth_hash=pending.token_hash),
+                    self.button(
+                        "Підтвердити",
+                        "link_accept",
+                        link_hash=pending.token_hash,
+                        username=str(user.get("username") or "")[:64],
+                        name=name,
+                    ),
+                    self.button("Скасувати", "link_cancel", link_hash=pending.token_hash),
                 ]
             ],
         )
@@ -529,23 +525,29 @@ class Bot:
         from app.main import kyiv_now
 
         op = data["op"]
-        if op in {"auth", "auth_cancel"}:
-            pending = self.session.get(TelegramAuth, data["auth_hash"])
-            if (
-                pending is None
-                or not unexpired(pending.expires_at)
-                or pending.telegram_id != self.id
-                or pending.approved
-            ):
-                raise HTTPException(410, "Ця дія більше недоступна. Почніть ще раз на сайті.")
-            if op == "auth_cancel":
+        if op in {"link_accept", "link_cancel"}:
+            if op == "link_cancel":
+                pending, _ = pending_link(self.session, data["link_hash"])
                 self.session.delete(pending)
-                self.show("Дію відхилено.")
-            else:
-                pending.approved = True
                 self.show(
-                    "Підтверджено. Поверніться до тієї вкладки браузера, де починали дію, та завершіть вхід або прив’язку.",
+                    "Прив’язку скасовано. Нове посилання можна створити в кабінеті адміністратора."
                 )
+            else:
+                self.customer = complete_link(
+                    self.session,
+                    data["link_hash"],
+                    self.id,
+                    username=data["username"],
+                    name=data["name"],
+                )
+                self.clear_state()
+                try:
+                    self.day(notice="Telegram прив’язано. Можна керувати записами.")
+                except HTTPException:
+                    self.show(
+                        "Telegram прив’язано. Розклад з’явиться після відкриття графіка.",
+                        [[self.button("Розклад", "day")]],
+                    )
             return
         if not self.admin():
             return
@@ -740,7 +742,7 @@ def process_update(session: Session, update: dict) -> None:
         return
     command, _, arg = text.partition(" ")
     if command == "/start" and arg:
-        bot.authenticate(arg, user)
+        bot.link_account(arg, user)
         return
     if not bot.admin():
         return
@@ -811,7 +813,7 @@ def apply_update(update: dict, session: Session, telegram_id: int) -> dict:
                 )
         settle_inputs(session, telegram_id)
         session.add(TelegramUpdate(update_id=update["update_id"]))
-        for model in (TelegramAction, TelegramState, TelegramAuth):
+        for model in (TelegramAction, TelegramState, TelegramLink):
             session.execute(delete(model).where(model.expires_at < utc_now()))
         session.execute(
             delete(TelegramUpdate).where(TelegramUpdate.created_at < utc_now() - timedelta(days=7))

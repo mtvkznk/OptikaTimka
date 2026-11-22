@@ -16,6 +16,7 @@ from app.models import (
     Appointment,
     Customer,
     CustomerSession,
+    TelegramAccount,
     TelegramChat,
     TelegramMessage,
     TelegramView,
@@ -181,3 +182,44 @@ def test_cleanup_migration_protects_the_existing_timetable(migration_database):
         assert chat.message_id == 321
         assert chat.generation == chat.delivered_generation == "already-delivered"
         assert session.exec(sa.select(TelegramMessage)).first() is None
+
+
+def test_remove_telegram_login_preserves_google_sessions_bot_links_and_bookings(migration_database):
+    config, engine = migration_database
+    command.upgrade(config, "20261122_0018")
+    legacy_sessions = sa.Table("customersession", sa.MetaData(), autoload_with=engine)
+    with Session(engine) as session:
+        owner = Customer(google_sub="linked-google", email="owner@example.com", email_verified=True)
+        former = Customer(name="Former Telegram customer")
+        session.add_all([owner, former])
+        session.flush()
+        owner_id, former_id = owner.id, former.id
+        for customer_id, telegram_id in [(owner_id, 9000000011), (former_id, 9000000012)]:
+            session.add(TelegramAccount(customer_id=customer_id, telegram_id=telegram_id))
+            session.add(Appointment(name="Keep me", phone="1", service="Exam", customer_id=customer_id))
+        for customer_id, provider, token in [
+            (owner_id, "google", "google-kept"),
+            (owner_id, "telegram", "telegram-admin-revoked"),
+            (former_id, "telegram", "telegram-customer-revoked"),
+        ]:
+            session.execute(legacy_sessions.insert().values(
+                customer_id=customer_id, provider=provider, token_hash=token,
+                expires_at=utc_now() + timedelta(days=1), created_at=utc_now(),
+            ))
+        session.commit()
+    command.upgrade(config, "head")
+    inspector = sa.inspect(engine)
+    assert not inspector.has_table("telegramauth")
+    assert inspector.has_table("telegramlink")
+    assert "provider" not in {column["name"] for column in inspector.get_columns("customersession")}
+    with Session(engine) as session:
+        logins = session.exec(sa.select(CustomerSession)).scalars().all()
+        assert [login.token_hash for login in logins] == ["google-kept"]
+        assert session.get(TelegramAccount, owner_id).telegram_id == 9000000011
+        assert session.get(TelegramAccount, former_id) is None
+        assert session.get(Customer, former_id).name == "Former Telegram customer"
+        bookings = session.exec(sa.select(Appointment)).scalars().all()
+        assert {booking.customer_id for booking in bookings} == {owner_id, former_id}
+    command.downgrade(config, "20261122_0018")
+    assert sa.inspect(engine).has_table("telegramauth")
+    command.upgrade(config, "head")

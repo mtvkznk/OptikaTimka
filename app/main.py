@@ -665,15 +665,13 @@ def issue_customer_session(
     session: Session,
     response: RedirectResponse,
     request: Request,
-    *, provider: str = "google",
 ) -> None:
     revoke_customer_session(request, session)
     session.execute(delete(CustomerSession).where(CustomerSession.expires_at < utc_now()))
-    token = ("t." if provider == "telegram" else GOOGLE_SESSION_PREFIX) + secrets.token_urlsafe(32)
+    token = GOOGLE_SESSION_PREFIX + secrets.token_urlsafe(32)
     session.add(
         CustomerSession(
             customer_id=customer.id or 0,
-            provider=provider,
             token_hash=hash_session_token(token),
             expires_at=utc_now() + timedelta(days=SESSION_TTL_DAYS),
         )
@@ -793,8 +791,8 @@ def cabinet_context(
         "format_date": format_date,
         "format_time": format_time,
         "google_enabled": google_auth_enabled(),
-        "telegram_enabled": settings.telegram_enabled,
-        "telegram_account": session.get(TelegramAccount, customer.id) if customer else None,
+        "telegram_enabled": settings.telegram_enabled and is_google_admin(customer),
+        "telegram_account": session.get(TelegramAccount, customer.id) if is_google_admin(customer) else None,
         "telegram_bot_username": settings.telegram_bot_username,
         "auth_error": auth_error,
         "pagination_path": "/cabinet",
@@ -1580,8 +1578,8 @@ def delete_closed_date(closed_date_id: int, request: Request, session: SessionDe
 
 app.include_router(admin_router)
 
-from app.telegram_auth import router as telegram_auth_router
 from app.telegram_bot import router as telegram_bot_router
+from app.telegram_link import router as telegram_link_router
 
-app.include_router(telegram_auth_router)
+app.include_router(telegram_link_router)
 app.include_router(telegram_bot_router)

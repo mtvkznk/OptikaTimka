@@ -7,7 +7,7 @@ from sqlalchemy import delete, or_, update
 from sqlmodel import Session, select
 
 from app.models import TelegramChat, TelegramMessage, TelegramOutbox, TelegramState, utc_now
-from app.telegram_auth import unexpired
+from app.security import unexpired
 
 INPUT_MODES = frozenset({"phone", "name", "date", "search"})
 COMMANDS = frozenset({"/start", "/today", "/records", "/cancel", "/help"})

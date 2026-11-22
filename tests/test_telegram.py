@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, time, timedelta
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,8 +20,8 @@ from app.models import (
     ServiceSchedule,
     TelegramAccount,
     TelegramAction,
-    TelegramAuth,
     TelegramChat,
+    TelegramLink,
     TelegramMessage,
     TelegramOutbox,
     TelegramState,
@@ -141,67 +142,75 @@ def test_webhook_rejects_spoofing_and_groups(tg, engine):
     assert sent == []
 
 
-def test_link_login_and_unlink_revoke_telegram_sessions(tg, engine, monkeypatch):
+def begin_link(client):
+    response = client.post("/admin/telegram/link", headers={"Accept": "application/json"})
+    assert response.status_code == 200
+    url = urlparse(response.json()["url"])
+    assert url.netloc == "t.me" and url.path == "/OptykaTestBot"
+    return parse_qs(url.query)["start"][0]
+
+
+def test_admin_link_completes_in_bot_without_website_login(tg, engine, monkeypatch):
     client, sent, _ = tg
     owner_id = google_customer(client, engine, monkeypatch, link=False)
-    assert client.post("/auth/telegram/start").status_code == 200
-    value = client.cookies.get("optika_telegram_auth")
-    assert client.post("/auth/telegram/finish").status_code == 409
-    assert send(client, message("/start " + value.partition(".")[0]), 11).status_code == 200
-    assert client.get("/auth/telegram/status").json()["approved"] is False
+    token = begin_link(client)
+    assert send(client, message("/start " + token), 11).status_code == 200
     assert send(client, callback(button(sent, "Підтвердити")), 12).status_code == 200
-    assert client.get("/auth/telegram/status").json()["approved"] is True
-    assert client.post("/auth/telegram/finish").status_code == 200
-    assert client.cookies.get(SESSION_COOKIE_NAME).startswith("t.")
+    assert client.cookies.get(SESSION_COOKIE_NAME) == "g.owner-session"
     assert client.get("/admin").status_code == 200
-    assert client.post("/auth/telegram/finish").status_code == 410
+    assert "Можна керувати записами" in sent[-1][1]["text"]
     with Session(engine) as session:
         assert session.get(TelegramAccount, owner_id).telegram_id == TG_ID
-    assert client.post("/auth/telegram/unlink").status_code == 200
-    assert client.get("/admin").status_code == 403
+        assert len(session.exec(select(CustomerSession)).all()) == 1
+        assert session.exec(select(TelegramLink)).first() is None
+    assert client.post("/admin/telegram/link", headers={"Accept": "application/json"}).json() == {
+        "url": "https://t.me/OptykaTestBot"
+    }
+    assert client.post("/admin/telegram/unlink").status_code == 200
+    assert client.get("/admin").status_code == 200
     sent.clear()
     assert send(client, message("/start"), 13).status_code == 200
     assert "прив’яжіть" in sent[-1][1]["text"]
 
 
-def test_standalone_login_has_no_admin_or_verified_contact(tg, engine):
-    client, sent, _ = tg
-    client.post("/auth/telegram/start")
-    token = client.cookies.get("optika_telegram_auth").partition(".")[0]
-    send(client, message("/start " + token), 21)
-    send(client, callback(button(sent, "Підтвердити")), 22)
-    assert client.post("/auth/telegram/finish").status_code == 200
-    with Session(engine) as session:
-        account = session.exec(select(TelegramAccount)).one()
-        customer = session.get(Customer, account.customer_id)
-        assert (
-            customer.google_sub is None and customer.email is None and not customer.email_verified
-        )
-        assert customer.phone is None and not customer.phone_verified
-    # Basic auth is configured in this fixture; a Telegram customer doesn't replace it.
-    client.auth = None
-    assert client.get("/admin").status_code == 401
-
-
-def test_expired_and_browser_mismatch_cannot_finish(tg, engine):
+def test_public_and_regular_google_customers_cannot_link(tg, engine, monkeypatch):
     client, _sent, _ = tg
-    client.post("/auth/telegram/start")
-    cookie = client.cookies.get("optika_telegram_auth")
+    assert "Telegram" not in client.get("/cabinet").text
+    assert client.post("/admin/telegram/link").status_code == 403
+    assert client.post("/admin/telegram/unlink").status_code == 403
+    for path in ["/auth/telegram", "/auth/telegram/status"]:
+        assert client.get(path).status_code == 404
+    for path in ["/auth/telegram/start", "/auth/telegram/finish", "/auth/telegram/unlink"]:
+        assert client.post(path).status_code == 404
+    google_customer(client, engine, monkeypatch, link=False)
+    monkeypatch.setattr(settings, "admin_google_email", "another-owner@example.com")
+    assert "Telegram" not in client.get("/cabinet").text
+    assert client.post("/admin/telegram/link").status_code == 403
+    assert client.post("/admin/telegram/unlink").status_code == 403
     with Session(engine) as session:
-        auth = session.exec(select(TelegramAuth)).one()
-        auth.approved, auth.telegram_id = True, TG_ID
-        session.commit()
-    client.cookies.clear()
-    assert client.get("/auth/telegram/status").status_code == 410
-    client.cookies.set("optika_telegram_auth", cookie.partition(".")[0] + "." + "x" * 43)
-    assert client.post("/auth/telegram/finish").status_code == 410
-    client.cookies.clear()
-    client.cookies.set("optika_telegram_auth", cookie)
+        assert session.exec(select(TelegramAccount)).first() is None
+        assert session.exec(select(TelegramLink)).first() is None
+
+
+def test_expired_link_and_logged_out_google_session_cannot_link(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    google_customer(client, engine, monkeypatch, link=False)
+    token = begin_link(client)
     with Session(engine) as session:
-        auth = session.exec(select(TelegramAuth)).one()
-        auth.expires_at = utc_now() - timedelta(seconds=1)
+        pending = session.exec(select(TelegramLink)).one()
+        pending.expires_at = utc_now() - timedelta(seconds=1)
         session.commit()
-    assert client.post("/auth/telegram/finish").status_code == 410
+    send(client, message("/start " + token), 1)
+    assert "Посилання більше не діє" in sent[-1][1]["text"]
+    token = begin_link(client)
+    send(client, message("/start " + token), 2)
+    accept = button(sent, "Підтвердити")
+    assert client.post("/auth/logout").status_code == 200
+    send(client, callback(accept), 3)
+    assert "Сеанс Google завершився" in sent[-1][1]["text"]
+    with Session(engine) as session:
+        assert session.exec(select(TelegramAccount)).first() is None
+        assert session.exec(select(CustomerSession)).first() is None
 
 
 def test_bot_manual_future_new_duplicate_safe_and_customer_availability(tg, engine, monkeypatch):
@@ -378,42 +387,73 @@ def test_other_google_identity_cannot_take_an_existing_link(tg, engine, monkeypa
         session.add(TelegramAccount(customer_id=other.id, telegram_id=TG_ID))
         session.commit()
         other_id = other.id
-    client.post("/auth/telegram/start")
-    token = client.cookies.get("optika_telegram_auth").partition(".")[0]
+    token = begin_link(client)
     send(client, message("/start " + token), 1)
     send(client, callback(button(sent, "Підтвердити")), 2)
-    assert client.post("/auth/telegram/finish").status_code == 409
+    assert "уже прив’язаний до іншого" in sent[-1][1]["text"]
     with Session(engine) as session:
         assert session.get(TelegramAccount, owner) is None
         assert session.get(TelegramAccount, other_id).telegram_id == TG_ID
 
 
-def test_new_telegram_account_can_merge_its_bookings_into_google(tg, engine, monkeypatch):
-    client, sent, service_id = tg
+def test_link_rechecks_role_and_is_single_use(tg, engine, monkeypatch):
+    client, sent, _ = tg
     owner = google_customer(client, engine, monkeypatch, link=False)
+    old_token = begin_link(client)
+    send(client, message("/start " + old_token), 1)
+    accept = button(sent, "Підтвердити")
+    monkeypatch.setattr(settings, "admin_google_email", "another-owner@example.com")
+    send(client, callback(accept), 2)
+    assert "більше не має прав" in sent[-1][1]["text"]
+    monkeypatch.setattr(settings, "admin_google_email", "owner@example.com")
+    token = begin_link(client)
+    send(client, message("/start " + old_token), 3)
+    assert "Посилання більше не діє" in sent[-1][1]["text"]
+    send(client, message("/start " + token), 4)
+    accept = button(sent, "Підтвердити")
+    send(client, callback(accept, who=TG_ID + 1), 5)
     with Session(engine) as session:
-        standalone = Customer(name="Telegram customer")
-        session.add(standalone)
-        session.flush()
-        session.add(TelegramAccount(customer_id=standalone.id, telegram_id=TG_ID))
+        assert session.get(TelegramAccount, owner) is None
+    send(client, callback(accept), 6)
+    send(client, message("/start " + token, who=TG_ID + 1), 7)
+    assert "Посилання більше не діє" in sent[-1][1]["text"]
+    with Session(engine) as session:
+        assert session.get(TelegramAccount, owner).telegram_id == TG_ID
+        assert len(session.exec(select(Customer)).all()) == 1
+        assert len(session.exec(select(CustomerSession)).all()) == 1
+
+
+def test_old_telegram_cookie_cannot_authenticate_even_with_valid_session(tg, engine, monkeypatch):
+    client, _sent, _ = tg
+    owner = google_customer(client, engine, monkeypatch)
+    token = "t.former-web-session"
+    with Session(engine) as session:
         session.add(
-            Appointment(
-                name="Test",
-                phone="1",
-                service="Exam",
-                service_id=service_id,
-                customer_id=standalone.id,
+            CustomerSession(
+                customer_id=owner, token_hash=hash_session_token(token),
+                expires_at=utc_now() + timedelta(days=1),
             )
         )
         session.commit()
-    client.post("/auth/telegram/start")
-    token = client.cookies.get("optika_telegram_auth").partition(".")[0]
+    client.cookies.set(SESSION_COOKIE_NAME, token, domain="testserver.local")
+    assert client.get("/admin").status_code == 403
+    assert client.post("/admin/telegram/link").status_code == 403
+    assert "Вхід у кабінет" in client.get("/cabinet").text
+
+
+def test_no_javascript_fallback_and_unavailable_diary_still_link(tg, engine, monkeypatch):
+    client, sent, _ = tg
+    owner = google_customer(client, engine, monkeypatch, link=False)
+    response = client.post("/admin/telegram/link")
+    assert response.status_code == 200
+    assert "Відкрити Telegram" in response.text and "telegram-finish" not in response.text
+    token = begin_link(client)
     send(client, message("/start " + token), 1)
+    monkeypatch.setattr(settings, "doctor_diary_service_id", 999999)
     send(client, callback(button(sent, "Підтвердити")), 2)
-    assert client.post("/auth/telegram/finish").status_code == 200
+    assert "Telegram прив’язано" in sent[-1][1]["text"]
     with Session(engine) as session:
         assert session.get(TelegramAccount, owner).telegram_id == TG_ID
-        assert session.exec(select(Appointment)).one().customer_id == owner
 
 
 def test_expired_callbacks_and_revoked_pending_replies(tg, engine, monkeypatch):

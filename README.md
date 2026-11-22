@@ -21,30 +21,33 @@ or local authentication bypass exists. An unconfigured administrator receives 50
 Customers sign in with Google. Appointment booking also works without signing in
 and uses the phone number for contact.
 
-### Telegram sign-in and administrator bot
+### Administrator Telegram bot (Google-only website login)
 
 Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` (without `@`), and an independent
 random `TELEGRAM_WEBHOOK_SECRET` (32–256 URL-safe characters) in the protected
-production env file. Apply migration `20261121_0016`, restart the app, then run
+production env file. Apply migrations through `20261122_0019`, restart the app, then run
 `docker exec optika_timka_prod_app python -m app.telegram_setup`. This verifies the
 bot identity and installs its commands and HTTPS webhook, preserving pending updates.
 An existing unrelated webhook is never overwritten. Telegram uses the same app and
 PostgreSQL database; no additional process or public database port is required.
 
-In the cabinet, choose **Прив’язати Telegram**, open the bot, approve, return to the
-same browser and confirm the link. Administrators first sign in with an authorized
-Google account and link their own Telegram. The bot checks the current Google
-administrator grants before every action. Public Telegram sign-in creates an
-ordinary customer account; Telegram names/usernames never establish email, phone,
-or administrator ownership. Linking can merge bookings from a Telegram-only
-account after both identities are proved. A Telegram already linked to a different
-Google account cannot be reassigned this way.
+Administrators sign in to the website with an authorized Google account. In the
+cabinet, choose **Прив’язати Telegram** and confirm once in the bot; the timetable
+opens automatically. No return-to-browser confirmation is needed. Without
+JavaScript, an intermediate page provides the bot link. Linking is hidden from
+ordinary customers and both link/unlink endpoints independently require a live
+Google administrator session. The bot rechecks administrator grants on every action.
 
-**Продовжити з Telegram** uses the same browser-bound approval flow, with expiring,
-single-use secrets and session-bound CSRF protection. It needs no Telegram OIDC
-client secret or external login scripts. Disconnecting Telegram in a Google-backed
-cabinet revokes its website sessions and bot access immediately. Keep Google as
-the recovery method for administrator accounts.
+Link requests are single-use, expire after ten minutes, and are invalidated by
+logging out of the originating Google session or starting a replacement link.
+Confirmation is bound to the Telegram user and cannot transfer an existing
+binding to another Google account. Disconnecting in the cabinet removes bot
+access immediately; Google website login remains active.
+
+Telegram website sign-in is removed. Migration `20261122_0019` revokes former
+Telegram website sessions and discards incomplete login approvals, while retaining
+Google sessions, Google-backed bot links, customers and appointments. Former
+Telegram website users must sign in with Google; no customer accounts are merged.
 
 The private bot supports the doctor's day schedule, date navigation, manual
 appointments with either name or contact, statuses, moving by selecting a free

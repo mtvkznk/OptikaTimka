@@ -18,17 +18,16 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import settings
 from app.database import get_session
-from app.models import Customer, CustomerSession, SecurityRateLimit, TelegramAccount, utc_now
+from app.models import Customer, CustomerSession, SecurityRateLimit, utc_now
 
 SESSION_COOKIE_NAME = "optika_customer_session"
 GOOGLE_SESSION_PREFIX = "g."
-TELEGRAM_SESSION_PREFIX = "t."
 TELEGRAM_WEBHOOK_PATH = "/integrations/telegram/webhook"
 CSRF_COOKIE_NAME = "optika_csrf"
 MAX_BODY_BYTES = 65_536
 MAX_ADMIN_CHANGES_BYTES = 2 * 1024 * 1024
 CSRF_TTL_SECONDS = 24 * 60 * 60
-CSRF_FORM_PAGES = frozenset({"/booking", "/cabinet", "/admin", "/admin/appointments", "/admin/audit", "/auth/telegram"})
+CSRF_FORM_PAGES = frozenset({"/booking", "/cabinet", "/admin", "/admin/appointments", "/admin/audit"})
 basic_auth = HTTPBasic(auto_error=False, realm="Optika Timka admin")
 
 
@@ -52,20 +51,22 @@ def hash_session_token(token: str) -> str:
     return hash_secret(f"customer-session:{token}")
 
 
+def unexpired(value: datetime) -> bool:
+    return value.replace(tzinfo=value.tzinfo or UTC) > utc_now()
+
+
 def get_customer_by_session(request: Request, session: Session) -> Customer | None:
     token = request.cookies.get(cookie_name(SESSION_COOKIE_NAME), "")
-    if not token.startswith((GOOGLE_SESSION_PREFIX, TELEGRAM_SESSION_PREFIX)) or len(token) > 128:
+    if not token.startswith(GOOGLE_SESSION_PREFIX) or len(token) > 128:
         return None
-    telegram = token.startswith(TELEGRAM_SESSION_PREFIX)
     return session.exec(
         select(Customer)
         .join(CustomerSession)
         .where(
             CustomerSession.token_hash == hash_session_token(token),
             CustomerSession.expires_at >= utc_now(),
-            CustomerSession.provider == ("telegram" if telegram else "google"),
-            select(TelegramAccount.customer_id).where(TelegramAccount.customer_id == Customer.id).exists()
-            if telegram else Customer.google_sub.is_not(None) & Customer.email_verified,
+            Customer.google_sub.is_not(None),
+            Customer.email_verified,
         )
     ).first()
 
@@ -109,7 +110,7 @@ def csrf_matches(submitted: str, cookie_token: str, session_token: str) -> bool:
     if secrets.compare_digest(submitted.encode(), cookie_token.encode()):
         return True
     # Separate tabs can receive different tokens when they open at the same time.
-    return session_token.startswith((GOOGLE_SESSION_PREFIX, TELEGRAM_SESSION_PREFIX)) and valid_csrf_token(
+    return session_token.startswith(GOOGLE_SESSION_PREFIX) and valid_csrf_token(
         submitted, session_token,
     )
 
@@ -179,7 +180,7 @@ class SecurityMiddleware:
                 headers["X-Frame-Options"] = "DENY"
                 # Native form POSTs need their Origin header. Keep OAuth redirect URLs private.
                 headers["Referrer-Policy"] = (
-                    "no-referrer" if path.startswith("/auth/") else "same-origin"
+                    "no-referrer" if path.startswith(("/auth/", "/admin/telegram")) else "same-origin"
                 )
                 headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
                 headers["Cross-Origin-Opener-Policy"] = "same-origin"

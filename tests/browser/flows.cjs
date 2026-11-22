@@ -60,22 +60,31 @@ test("public pages and the Google entry point at mobile and desktop widths", asy
   }
 });
 
-test("Telegram login and linking pages fit mobile and show approval safely", async t => {
+test("only administrators can open Telegram linking directly from the mobile cabinet", async t => {
   for (const admin of [false, true]) {
     const context = await browserContext(t, { admin, width: 320 });
     const page = await context.newPage();
     await page.goto(root + "/cabinet");
-    await page.getByRole("button", { name: admin ? "Прив’язати Telegram" : "Продовжити з Telegram", exact: true }).click();
-    await page.waitForURL(root + "/auth/telegram");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 320);
-    const url = new URL(await page.getByRole("link", { name: "Відкрити Telegram" }).getAttribute("href"));
+    assert.equal(await page.getByRole("button", { name: "Продовжити з Telegram" }).count(), 0);
+    if (!admin) {
+      assert.equal(await page.locator("[data-telegram-link]").count(), 0);
+      assert.equal((await context.request.post(root + "/admin/telegram/link")).status(), 403);
+      assert.equal((await context.request.get(root + "/auth/telegram")).status(), 404);
+      continue;
+    }
+    await context.route("https://t.me/**", route => route.fulfill({ body: "Telegram test destination" }));
+    const opened = context.waitForEvent("page");
+    await page.getByRole("button", { name: "Прив’язати Telegram", exact: true }).click();
+    const popup = await opened;
+    await popup.waitForURL("https://t.me/**");
+    const url = new URL(popup.url());
     assert.equal(url.hostname, "t.me");
     assert.match(url.searchParams.get("start"), /^[\w-]{43}$/);
-    assert.equal(await page.locator("#telegram-finish").isHidden(), true);
-    await page.route("**/auth/telegram/status", route => route.fulfill({ json: {approved: true, name: "<script>test</script>"} }));
-    await page.locator("#telegram-finish").waitFor({ state: "visible" });
-    assert.match(await page.locator("#telegram-status").textContent(), /<script>test<\/script>/);
-    assert.equal(await page.locator("#telegram-status script").count(), 0);
+    assert.equal(page.url(), root + "/cabinet");
+    assert.match(await page.locator("[data-telegram-link-status]").textContent(), /Підтвердьте прив’язку в боті/);
+    assert.equal(await page.locator("#telegram-finish").count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 320);
   }
 });
 
