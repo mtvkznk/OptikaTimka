@@ -149,6 +149,7 @@ app.add_middleware(SecurityMiddleware)
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["site_name"] = "Оптика Тімка"
 SessionDep = Annotated[Session, Depends(get_session)]
 FormDataDep = Annotated[dict[str, str], Depends(read_form_data)]
 
@@ -221,7 +222,7 @@ BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261118-booking-refresh"
 ADMIN_ASSET_VERSION = "20261118-notebook-move"
-LANDING_ASSET_VERSION = "20261115-brand-subtitle"
+LANDING_ASSET_VERSION = "20261122-ukrainian-brand"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
 SESSION_TTL_DAYS = 30

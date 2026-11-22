@@ -75,9 +75,9 @@ body.landing-page {
   display: block;
   margin-top: 0.15rem;
   color: var(--landing-muted);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 400;
-  line-height: 1.25;
+  line-height: 1.35;
   letter-spacing: normal;
   text-wrap: balance;
 }
