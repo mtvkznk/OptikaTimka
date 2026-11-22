@@ -1,6 +1,7 @@
 """Bot API results without credential-bearing URLs in exceptions or logs."""
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 
@@ -14,6 +15,8 @@ class TelegramReply:
     terminal: bool = False
     missing_message: bool = False
     retry_after: int = 10
+    error_code: int | None = None
+    message_date: datetime | None = None
 
     def __bool__(self) -> bool:
         return self.ok
@@ -35,7 +38,14 @@ def telegram_api(method: str, payload: dict) -> TelegramReply:
                 if isinstance(message, dict)
                 else payload.get("message_id")
             )
-            return TelegramReply(True, message_id=message_id)
+            timestamp = message.get("date") if isinstance(message, dict) else None
+            return TelegramReply(
+                True,
+                message_id=message_id,
+                message_date=datetime.fromtimestamp(timestamp, UTC)
+                if type(timestamp) is int
+                else None,
+            )
         code = result.get("error_code")
         description = str(result.get("description", "")).lower()
         if code == 400 and method == "editMessageText" and "message is not modified" in description:
@@ -59,6 +69,7 @@ def telegram_api(method: str, payload: dict) -> TelegramReply:
             terminal=code in {400, 403},
             missing_message=missing,
             retry_after=max(1, min(3600, int(result.get("parameters", {}).get("retry_after", 10)))),
+            error_code=code,
         )
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError, OverflowError, OSError):
         return TelegramReply(False)

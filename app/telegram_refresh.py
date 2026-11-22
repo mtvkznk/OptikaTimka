@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.security import hash_secret, is_google_admin
 from app.telegram_auth import unexpired
+from app.telegram_chat import cleanup_chat, cleanup_chat_ids
 
 REFRESH_SECONDS = 5
 _locks: dict[int, threading.RLock] = {}
@@ -140,6 +141,7 @@ def refresh_chat(session: Session, telegram_id: int) -> None:
 def refresh_cycle(engine: Engine) -> None:
     with Session(engine) as session:
         ids = set(session.exec(select(TelegramView.telegram_id)))
+        ids.update(cleanup_chat_ids(session))
         ids.update(
             session.exec(
                 select(TelegramOutbox.telegram_id).where(TelegramOutbox.telegram_id.is_not(None))
@@ -158,6 +160,7 @@ def refresh_cycle(engine: Engine) -> None:
                 if acquired:
                     with Session(engine, autoflush=False) as session:
                         refresh_chat(session, telegram_id)
+                        cleanup_chat(session, telegram_id)
         except Exception as exc:  # noqa: BLE001 -- isolate each chat and keep private data out of logs
             logger.warning("Telegram timetable refresh will retry after %s", type(exc).__name__)
     with Session(engine) as session:

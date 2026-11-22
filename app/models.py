@@ -406,6 +406,7 @@ class TelegramOutbox(SQLModel, table=True):
     admin_customer_id: int | None = Field(default=None)
     telegram_id: int | None = Field(default=None, sa_type=BigInteger, index=True)
     view_generation: str | None = Field(default=None, max_length=40)
+    screen_generation: str | None = Field(default=None, max_length=40)
     is_refresh: bool = Field(default=False, sa_column_kwargs={"server_default": text("false")})
     not_before: datetime | None = Field(default=None, sa_type=TIMESTAMP_WITH_TIME_ZONE)
     created_at: datetime = Field(default_factory=utc_now, index=True, sa_type=TIMESTAMP_WITH_TIME_ZONE)
@@ -419,6 +420,22 @@ class TelegramView(SQLModel, table=True):
     payload: dict = Field(sa_type=JSON)
     fingerprint: str = Field(max_length=64)
     generation: str = Field(max_length=40)
+
+
+class TelegramChat(SQLModel, table=True):
+    telegram_id: int = Field(primary_key=True, sa_type=BigInteger)
+    message_id: int | None = Field(default=None, sa_type=BigInteger)
+    generation: str = Field(default="", max_length=40)
+    delivered_generation: str = Field(default="", max_length=40)
+    cleanup_after: datetime | None = Field(default=None, sa_type=TIMESTAMP_WITH_TIME_ZONE)
+
+
+class TelegramMessage(SQLModel, table=True):
+    telegram_id: int = Field(primary_key=True, sa_type=BigInteger)
+    message_id: int = Field(primary_key=True, sa_type=BigInteger)
+    is_ui: bool = False
+    pending: bool = False
+    created_at: datetime = Field(default_factory=utc_now, sa_type=TIMESTAMP_WITH_TIME_ZONE)
 
 
 class AnalyticsEventBase(SQLModel):

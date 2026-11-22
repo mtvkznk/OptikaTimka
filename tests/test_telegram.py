@@ -20,12 +20,15 @@ from app.models import (
     TelegramAccount,
     TelegramAction,
     TelegramAuth,
+    TelegramChat,
+    TelegramMessage,
     TelegramOutbox,
     TelegramState,
     TelegramView,
     utc_now,
 )
 from app.security import SESSION_COOKIE_NAME, TELEGRAM_WEBHOOK_PATH, hash_session_token
+from app.telegram_chat import cleanup_chat, remember
 from app.telegram_refresh import chat_lock, refresh_cycle
 from app.telegram_transport import TelegramReply
 
@@ -43,13 +46,16 @@ def tg(client, engine, monkeypatch):
     monkeypatch.setattr(main, "kyiv_now", lambda: NOW)
     client.get("/booking")
     sent = []
+
+    def api_reply(method, payload):
+        if method not in {"deleteMessages", "deleteMessage"}:
+            sent.append((method, payload))
+        return TelegramReply(True, message_id=payload.get("message_id", 42))
+
     monkeypatch.setattr(
         telegram_bot,
         "telegram_api",
-        lambda method, payload: (
-            sent.append((method, payload))
-            or TelegramReply(True, message_id=payload.get("message_id", 42))
-        ),
+        api_reply,
     )
     with Session(engine) as session:
         service = session.exec(select(BookingService).order_by(BookingService.id)).first()
@@ -93,18 +99,20 @@ def message(text, *, who=TG_ID):
     }
 
 
-def callback(token, *, who=TG_ID):
+def callback(token, *, who=TG_ID, message_id=42):
     return {
         "callback_query": {
             "id": "callback-id",
             "from": {"id": who},
             "data": token,
-            "message": {"message_id": 42, "chat": {"id": who, "type": "private"}},
+            "message": {"message_id": message_id, "chat": {"id": who, "type": "private"}},
         }
     }
 
 
 def send(client, payload, update_id=1):
+    if "message" in payload and payload["message"].get("message_id") == 42:
+        payload = {**payload, "message": {**payload["message"], "message_id": 10000 + update_id}}
     return client.post(
         TELEGRAM_WEBHOOK_PATH,
         json={"update_id": update_id, **payload},
@@ -565,7 +573,10 @@ def test_refresh_retries_after_rate_limit_without_replacing_message(tg, engine, 
         lambda method, payload: attempts.append(method) or TelegramReply(True, message_id=42),
     )
     refresh_cycle(engine)
-    assert attempts == ["editMessageText", "editMessageText"]
+    assert [method for method in attempts if not method.startswith("delete")] == [
+        "editMessageText",
+        "editMessageText",
+    ]
     with Session(engine) as session:
         assert session.exec(select(TelegramOutbox)).first() is None
 
@@ -585,7 +596,7 @@ def test_deleted_telegram_message_stops_refresh_without_sending_a_new_one(tg, en
     )
     refresh_cycle(engine)
     refresh_cycle(engine)
-    assert attempts == ["editMessageText"]
+    assert [method for method in attempts if not method.startswith("delete")] == ["editMessageText"]
     with Session(engine) as session:
         assert session.get(TelegramView, TG_ID) is None
 
@@ -617,7 +628,7 @@ def test_navigation_discards_a_failed_refresh_for_the_previous_day(tg, engine, m
         )
     sent.clear()
     refresh_cycle(engine)
-    assert sent == []
+    assert all(method.startswith("delete") for method, _ in sent)
 
 
 def test_background_refresh_skips_busy_chat_without_blocking_website(tg, engine, monkeypatch):
@@ -750,3 +761,215 @@ def test_telegram_transport_classifies_delivery_and_retry(tg, monkeypatch, respo
         reply.missing_message,
         reply.retry_after,
     ) == expected
+
+
+@pytest.fixture
+def tidy_bot(tg, engine, monkeypatch):
+    client, _sent, service_id = tg
+    google_customer(client, engine, monkeypatch)
+    calls = []
+    last_id = 1000
+
+    def api(method, payload):
+        nonlocal last_id
+        calls.append((method, payload))
+        if method == "sendMessage":
+            last_id += 1
+            message_id = last_id
+        elif method == "editMessageText":
+            message_id = payload["message_id"]
+        else:
+            message_id = None
+        return TelegramReply(
+            True, message_id=message_id, message_date=utc_now() if message_id else None
+        )
+
+    monkeypatch.setattr(telegram_bot, "telegram_api", api)
+    return client, calls, service_id
+
+
+def screen_id(engine):
+    with Session(engine) as session:
+        return session.get(TelegramChat, TG_ID).message_id
+
+
+def deleted_ids(calls):
+    return {
+        message_id
+        for method, payload in calls
+        if method == "deleteMessages"
+        for message_id in payload["message_ids"]
+    }
+
+
+def test_chat_cleanup_keeps_unsaved_input_and_current_screen(tidy_bot, engine):
+    client, calls, _ = tidy_bot
+    send(client, message("/start"), 1)
+    send(client, callback(button(calls, "10:00 ＋"), message_id=screen_id(engine)), 2)
+    send(client, message("0981234567"), 3)
+    refresh_cycle(engine)
+    assert 10003 not in deleted_ids(calls)
+    send(client, message("Пацієнт"), 4)
+    active = screen_id(engine)
+    refresh_cycle(engine)
+    assert {10001, 10003, 10004}.issubset(deleted_ids(calls))
+    assert active not in deleted_ids(calls)
+    with Session(engine) as session:
+        assert session.exec(select(Appointment)).one().phone == "0981234567"
+        assert {row.message_id for row in session.exec(select(TelegramMessage))} == {active}
+        assert session.get(TelegramView, TG_ID).message_id == active
+    before = len(deleted_ids(calls))
+    refresh_cycle(engine)
+    assert len(deleted_ids(calls)) == before
+
+
+def test_failed_save_preserves_input_until_explicit_cancel(tidy_bot, engine):
+    client, calls, _ = tidy_bot
+    send(client, message("/start"), 1)
+    send(client, callback(button(calls, "10:00 ＋"), message_id=screen_id(engine)), 2)
+    send(client, message("0981234567"), 3)
+    web_manual(client)
+    send(client, message("Name"), 4)
+    refresh_cycle(engine)
+    assert {10003, 10004}.isdisjoint(deleted_ids(calls))
+    with Session(engine) as session:
+        assert session.get(TelegramState, TG_ID).payload["mode"] == "name"
+        assert session.get(TelegramMessage, (TG_ID, 10003)).pending
+    send(client, message("/cancel"), 5)
+    refresh_cycle(engine)
+    assert {10003, 10004}.issubset(deleted_ids(calls))
+    with Session(engine) as session:
+        assert len(session.exec(select(Appointment)).all()) == 1
+
+
+def test_failed_new_screen_is_not_cleaned_before_delivery(tidy_bot, engine, monkeypatch):
+    client, calls, _ = tidy_bot
+    send(client, message("/start"), 1)
+    old = screen_id(engine)
+    original = telegram_bot.telegram_api
+    monkeypatch.setattr(telegram_bot, "telegram_api", lambda *args: TelegramReply(False))
+    assert send(client, message("/records"), 2).status_code == 503
+    refresh_cycle(engine)
+    assert old not in deleted_ids(calls)
+    assert 10002 not in deleted_ids(calls)
+    with Session(engine) as session:
+        for row in session.exec(select(TelegramOutbox)):
+            row.not_before = utc_now() - timedelta(seconds=1)
+        session.commit()
+    monkeypatch.setattr(telegram_bot, "telegram_api", original)
+    refresh_cycle(engine)
+    assert old in deleted_ids(calls)
+    assert screen_id(engine) not in deleted_ids(calls)
+
+
+def test_cleanup_backoff_preserves_calendar_updates(tidy_bot, engine, monkeypatch):
+    client, calls, _ = tidy_bot
+    send(client, message("/start"), 1)
+    original = telegram_bot.telegram_api
+    deletes = []
+
+    def limit_delete(method, payload):
+        if method == "deleteMessages":
+            deletes.append(payload)
+            return TelegramReply(False, error_code=429, retry_after=30)
+        return original(method, payload)
+
+    monkeypatch.setattr(telegram_bot, "telegram_api", limit_delete)
+    refresh_cycle(engine)
+    web_manual(client)
+    refresh_cycle(engine)
+    assert len(deletes) == 1
+    assert any(
+        "Refresh patient" in str(payload)
+        for method, payload in calls
+        if method == "editMessageText"
+    )
+    with Session(engine) as session:
+        session.get(TelegramChat, TG_ID).cleanup_after = utc_now() - timedelta(seconds=1)
+        session.commit()
+    monkeypatch.setattr(telegram_bot, "telegram_api", original)
+    refresh_cycle(engine)
+    assert 10001 in deleted_ids(calls)
+    assert screen_id(engine) not in deleted_ids(calls)
+
+
+def test_rejected_replacement_does_not_delete_the_previous_screen(tidy_bot, engine, monkeypatch):
+    client, calls, _ = tidy_bot
+    send(client, message("/start"), 1)
+    old = screen_id(engine)
+    original = telegram_bot.telegram_api
+    monkeypatch.setattr(
+        telegram_bot,
+        "telegram_api",
+        lambda *args: TelegramReply(False, terminal=True, error_code=400),
+    )
+    send(client, message("/records"), 2)
+    monkeypatch.setattr(telegram_bot, "telegram_api", original)
+    refresh_cycle(engine)
+    assert old not in deleted_ids(calls)
+    assert 10002 not in deleted_ids(calls)
+    send(client, message("/start"), 3)
+    refresh_cycle(engine)
+    assert {old, 10002}.issubset(deleted_ids(calls))
+    assert screen_id(engine) not in deleted_ids(calls)
+
+
+def test_cleanup_respects_chat_scope_and_telegram_age_limit(tg, engine, monkeypatch):
+    _client, _sent, _ = tg
+    calls = []
+    monkeypatch.setattr(
+        telegram_bot,
+        "telegram_api",
+        lambda method, payload: calls.append((method, payload)) or TelegramReply(True),
+    )
+    with Session(engine) as session:
+        session.add(TelegramChat(telegram_id=TG_ID, message_id=999))
+        session.add(TelegramChat(telegram_id=TG_ID + 1, message_id=888))
+        remember(session, TG_ID, 1, is_ui=True, created_at=utc_now() - timedelta(hours=49))
+        remember(session, TG_ID, 2, is_ui=False, pending=True)
+        remember(session, TG_ID, 3, is_ui=False)
+        remember(session, TG_ID, 999, is_ui=True)
+        remember(session, TG_ID + 1, 4, is_ui=False)
+        session.commit()
+        cleanup_chat(session, TG_ID)
+        assert calls == [("deleteMessages", {"chat_id": TG_ID, "message_ids": [3]})]
+        assert session.get(TelegramMessage, (TG_ID, 1)) is None
+        assert session.get(TelegramMessage, (TG_ID, 2)) is not None
+        assert session.get(TelegramMessage, (TG_ID, 999)) is not None
+        assert session.get(TelegramMessage, (TG_ID + 1, 4)) is not None
+
+
+def test_unknown_text_and_media_are_not_auto_deleted(tidy_bot, engine):
+    client, calls, _ = tidy_bot
+    send(client, message("/start"), 1)
+    send(client, message("Особиста нотатка"), 2)
+    photo = message("")
+    photo["message"].pop("text")
+    photo["message"]["photo"] = [{"file_id": "not-a-real-file"}]
+    send(client, photo, 3)
+    refresh_cycle(engine)
+    assert {10002, 10003}.isdisjoint(deleted_ids(calls))
+    with Session(engine) as session:
+        assert session.get(TelegramMessage, (TG_ID, 10002)) is None
+        assert session.get(TelegramMessage, (TG_ID, 10003)) is None
+
+
+def test_individual_undeletable_message_does_not_strand_cleanup(tg, engine, monkeypatch):
+    _client, _sent, _ = tg
+    calls = []
+
+    def api(method, payload):
+        calls.append((method, payload))
+        if method == "deleteMessages" or payload.get("message_id") == 1:
+            return TelegramReply(False, error_code=400, terminal=True)
+        return TelegramReply(True)
+
+    monkeypatch.setattr(telegram_bot, "telegram_api", api)
+    with Session(engine) as session:
+        session.add(TelegramChat(telegram_id=TG_ID, message_id=999))
+        remember(session, TG_ID, 1, is_ui=True)
+        remember(session, TG_ID, 2, is_ui=False)
+        session.commit()
+        cleanup_chat(session, TG_ID)
+        assert session.exec(select(TelegramMessage)).first() is None
+    assert [method for method, _ in calls] == ["deleteMessages", "deleteMessage", "deleteMessage"]

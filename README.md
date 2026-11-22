@@ -72,13 +72,26 @@ screen and does not hold the website's booking lock during network requests.
 Telegram rate-limit delays are respected and background edits never create a new
 message when the original message has been deleted.
 
+The bot also tidies known workflow messages in each private chat. It keeps the
+latest successfully delivered screen and removes superseded bot screens and
+handled commands. Input and prompts in an unfinished form stay until the booking
+is saved or the operator cancels; failed saves never discard those messages.
+Cleanup runs in the same worker and per-chat lock as refresh, honors Telegram
+retry delays, and cannot remove the current timetable or another chat's messages.
+Only observed message IDs and timestamps are stored for cleanup, without message
+text. Unknown notes, photos and files are left alone. Telegram limits bot deletion
+to recent messages (normally less than 48 hours); older messages and history from
+before this feature may need a one-time manual cleanup in Telegram. Clearing chat
+history does not remove appointments from PostgreSQL; send `/start` afterward.
+
 Webhook authentication is separate from browser CSRF and uses a constant-time
 secret-header comparison. Update IDs prevent duplicate mutations; a transactional
 outbox retries interrupted replies. Callback buttons expire and are bound to the
 Telegram user; appointment versions reject stale actions. Undelivered admin
 messages are discarded after access is revoked or after ten minutes (Telegram
-rate-limit delays are honored before retry/expiry). Successful
-replies remain in Telegram chat history, so use private chats on trusted devices.
+rate-limit delays are honored before retry/expiry). Use private chats on trusted
+devices: cleanup is a convenience and cannot guarantee deletion from old history
+or previously saved copies.
 
 For a SQLite preview without Docker, set `DATABASE_URL=sqlite:///preview.db`, run
 the same Alembic command, then start Uvicorn. SQLite previews do not replace

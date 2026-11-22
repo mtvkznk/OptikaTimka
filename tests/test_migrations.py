@@ -12,7 +12,15 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 from sqlmodel import Session, create_engine
 
 from alembic import command
-from app.models import Appointment, Customer, CustomerSession, utc_now
+from app.models import (
+    Appointment,
+    Customer,
+    CustomerSession,
+    TelegramChat,
+    TelegramMessage,
+    TelegramView,
+    utc_now,
+)
 
 
 @pytest.fixture
@@ -150,3 +158,26 @@ def test_remove_phone_login_preserves_customer_sessions_and_bookings(
         assert session.get(CustomerSession, login_id).customer_id == customer_id
         assert session.get(Appointment, appointment_id).phone == "+380671234567"
     assert not sa.inspect(engine).has_table("phoneauthcode")
+
+
+def test_cleanup_migration_protects_the_existing_timetable(migration_database):
+    config, engine = migration_database
+    command.upgrade(config, "20261122_0017")
+    with Session(engine) as session:
+        customer = Customer(
+            google_sub="cleanup-existing", email="cleanup@example.com", email_verified=True,
+        )
+        session.add(customer)
+        session.flush()
+        session.add(TelegramView(
+            telegram_id=9000000009, customer_id=customer.id, message_id=321,
+            context={"day": "2026-11-23"}, payload={"text": "Existing timetable"},
+            fingerprint="existing", generation="already-delivered",
+        ))
+        session.commit()
+    command.upgrade(config, "head")
+    with Session(engine) as session:
+        chat = session.get(TelegramChat, 9000000009)
+        assert chat.message_id == 321
+        assert chat.generation == chat.delivered_generation == "already-delivered"
+        assert session.exec(sa.select(TelegramMessage)).first() is None

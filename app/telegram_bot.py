@@ -32,6 +32,7 @@ from app.models import (
     TelegramAccount,
     TelegramAction,
     TelegramAuth,
+    TelegramChat,
     TelegramOutbox,
     TelegramState,
     TelegramUpdate,
@@ -40,6 +41,7 @@ from app.models import (
 )
 from app.security import TELEGRAM_WEBHOOK_PATH, hash_secret, is_google_admin, valid_telegram_webhook
 from app.telegram_auth import unexpired
+from app.telegram_chat import delivered_screen, plan_screen, record_update, settle_inputs
 from app.telegram_transport import telegram_api
 
 router = APIRouter()
@@ -54,6 +56,11 @@ def deliver_outbox(session: Session, *, telegram_id: int | None = None) -> bool:
             or_(TelegramOutbox.telegram_id == telegram_id, TelegramOutbox.telegram_id.is_(None))
         )
     for row in session.exec(statement.limit(30)).all():
+        chat = session.get(TelegramChat, row.telegram_id) if row.screen_generation else None
+        if row.screen_generation and (chat is None or chat.generation != row.screen_generation):
+            session.delete(row)
+            session.commit()
+            continue
         view = session.get(TelegramView, row.telegram_id) if row.view_generation else None
         if row.view_generation and (view is None or view.generation != row.view_generation):
             session.delete(row)
@@ -104,6 +111,14 @@ def deliver_outbox(session: Session, *, telegram_id: int | None = None) -> bool:
             return False
         if view and result.message_id is not None:
             view.message_id = result.message_id
+        if (
+            row.method in {"sendMessage", "editMessageText"}
+            and result.message_id is not None
+            and row.telegram_id is not None
+        ):
+            delivered_screen(
+                session, row.telegram_id, result.message_id, created_at=result.message_date
+            )
         session.delete(row)
         session.commit()
     return True
@@ -184,6 +199,7 @@ class Bot:
 
     def publish(self, *, is_refresh: bool = False) -> None:
         generation = None
+        screen_generation = plan_screen(self.session, self.id)
         # Only the latest screen is current; queued older prompts must not overwrite it.
         self.session.execute(
             delete(TelegramOutbox).where(
@@ -193,7 +209,7 @@ class Bot:
         )
         current = self.session.get(TelegramView, self.id)
         if self.context is not None and is_google_admin(self.customer):
-            generation = secrets.token_urlsafe(18)
+            generation = screen_generation
             values = {
                 "customer_id": self.customer.id,
                 "message_id": self.message_id,
@@ -217,6 +233,7 @@ class Bot:
                 admin_customer_id=self.customer.id if is_google_admin(self.customer) else None,
                 telegram_id=self.id,
                 view_generation=generation,
+                screen_generation=screen_generation,
                 is_refresh=is_refresh,
             )
         )
@@ -767,6 +784,7 @@ def webhook(
 def apply_update(update: dict, session: Session, telegram_id: int) -> dict:
     lock_booking_writes(session)
     if session.get(TelegramUpdate, update["update_id"]) is None:
+        record_update(session, update)
         # Savepoint ensures a rejected command leaves no partial booking/state changes.
         try:
             with session.begin_nested():
@@ -791,6 +809,7 @@ def apply_update(update: dict, session: Session, telegram_id: int) -> dict:
                 Bot(session, user_id).show(
                     html.escape(str(exc.detail)) + "\n\nОновити розклад: /start", edit=False
                 )
+        settle_inputs(session, telegram_id)
         session.add(TelegramUpdate(update_id=update["update_id"]))
         for model in (TelegramAction, TelegramState, TelegramAuth):
             session.execute(delete(model).where(model.expires_at < utc_now()))
