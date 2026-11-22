@@ -3,6 +3,8 @@
 *.env
 !.env.example
 !prod.env.example
+# Private operator connection notes are transferred separately from the repository.
+optikatimka-operator.local.md
 .venv/
 __pycache__/
 *.py[cod]

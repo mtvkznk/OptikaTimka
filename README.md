@@ -3,6 +3,21 @@
 FastAPI website for appointment booking, a customer cabinet, and an administrator dashboard.
 Python 3.12+, SQLModel, Alembic, PostgreSQL, Jinja2, and plain CSS/JavaScript.
 
+## Project context and handoff
+
+Start with [AGENTS.md](AGENTS.md) when continuing work in a new chat, model or checkout.
+Important context is versioned with the code:
+
+- [Current state and dated production verification](docs/PROJECT_STATE.md)
+- [Business rules and current limitations](docs/BUSINESS_RULES.md)
+- [Architecture and module ownership](docs/ARCHITECTURE.md)
+- [Development on a new computer and isolated checks](docs/DEVELOPMENT.md)
+- [Production operations, backups, rollback and recovery](docs/OPERATIONS.md)
+- [Accepted decisions and their reasons](docs/DECISIONS.md)
+
+Production settings, credentials and live patient/catalog data are outside Git.
+The documents explain where they belong without publishing their values.
+
 ## Local setup
 
 ```powershell
@@ -15,9 +30,10 @@ docker compose up -d db
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-Set `ADMIN_PASSWORD` in your local `.env` before opening `/admin`. Administrator
-pages and product creation require HTTP Basic authentication; no default password
-or local authentication bypass exists. An unconfigured administrator receives 503.
+Set `ADMIN_PASSWORD` in your local `.env` before opening `/admin` without Google
+administrator grants. Administration uses an authorized Google account when grants
+are configured, otherwise HTTP Basic; no default password or local bypass exists.
+An unconfigured administrator receives 503.
 Customers sign in with Google. Appointment booking also works without signing in
 and uses the phone number for contact.
 
@@ -167,7 +183,7 @@ SQLite preview databases, or debug settings to production.
    `C:/Deploy/OptikaTimka/prod.env`, or set `OPTIKA_ENV_FILE` to its actual path.
 2. Set `PUBLIC_BASE_URL` to your public HTTPS origin. Set independent random
    `AUTH_SECRET` (at least 32 characters) and `POSTGRES_PASSWORD`. Configure
-   `ADMIN_GOOGLE_EMAIL` or `ADMIN_GOOGLE_SUBJECTS` with Google OAuth, or set a random `ADMIN_PASSWORD`
+   `ADMIN_GOOGLE_EMAIL`, `ADMIN_GOOGLE_EMAILS` or `ADMIN_GOOGLE_SUBJECTS` with Google OAuth, or set a random `ADMIN_PASSWORD`
    (at least 16 characters). Generate each secret independently, for example:
    `python -c "import secrets; print(secrets.token_hex(32))"`.
 3. Set `DATABASE_URL` to the PostgreSQL connection string using the matching
