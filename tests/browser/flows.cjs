@@ -218,6 +218,38 @@ test("catalog draft publishes a new category and its product together", async t 
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 320);
 });
 
+test("an administrator can clear a service price or add a service without one", async t => {
+  const context = await browserContext(t, { admin: true });
+  const page = await context.newPage();
+  await page.goto(root + "/admin#services");
+  const service = page.locator('[data-admin-edit="services"]').first();
+  const serviceName = await service.locator('[name="name"]').inputValue();
+  const price = service.locator('[name="price_uah"]');
+  assert.notEqual(await price.inputValue(), "");
+  await price.fill("");
+
+  const newName = "Тестова послуга без ціни";
+  await page.getByText("Додати послугу", { exact: true }).click();
+  const addition = page.locator('[data-admin-add="services"]');
+  await addition.locator('[name="name"]').fill(newName);
+  assert.equal(await addition.locator('[name="price_uah"]').inputValue(), "");
+  await addition.getByRole("button", { name: "Додати до списку" }).click();
+
+  const saved = page.waitForResponse(response => response.url().endsWith("/admin/changes"));
+  const reloaded = page.waitForEvent("load");
+  await page.getByRole("button", { name: "Зберегти зміни" }).click();
+  assert.equal((await saved).status(), 200);
+  await reloaded;
+  assert.equal(await price.inputValue(), "");
+
+  await page.goto(root + "/booking");
+  for (const name of [serviceName, newName]) {
+    const card = page.locator("[data-service-option]").filter({ has: page.getByText(name, { exact: true }) });
+    assert.match(await card.textContent(), /хв/);
+    assert.doesNotMatch(await card.textContent(), /грн/);
+  }
+});
+
 test("rescheduling stays in the notebook and confirms with a free hour", async t => {
   const context = await browserContext(t, { admin: true, width: 320 });
   const page = await context.newPage();

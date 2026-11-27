@@ -35,7 +35,7 @@
         <input type="number" name="duration_minutes" min="5" max="480" value="{{ service.duration_minutes }}" required />
       </label>
       <label class="admin-field">Ціна, ₴
-        <input type="number" name="price_uah" min="0" max="1000000" value="{{ service.price_uah }}" required />
+        <input type="number" name="price_uah" min="0" max="1000000" value="{{ '' if service.price_uah is none else service.price_uah }}" />
       </label>
       {{ remove_button(service.name) }}
       {{ service_weekdays(service.weekdays_mask) }}
@@ -58,7 +58,7 @@
         <input type="number" name="duration_minutes" min="5" max="480" value="30" required />
       </label>
       <label class="admin-field">Ціна, ₴
-        <input type="number" name="price_uah" min="0" max="1000000" value="0" required />
+        <input type="number" name="price_uah" min="0" max="1000000" />
       </label>
       <button class="admin-button" type="submit">Додати до списку</button>
       {{ service_weekdays(all_weekdays) }}

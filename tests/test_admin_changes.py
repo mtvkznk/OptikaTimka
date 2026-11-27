@@ -502,6 +502,28 @@ def test_admin_can_delete_appointments_and_reopen_their_time(
     assert first in starts() and second not in starts()
 
 
+def test_service_price_can_be_unset_without_changing_explicit_zero(client: TestClient) -> None:
+    service, other_service, *_ = client.get("/api/booking-services").json()
+    changes = [
+        {"id": service["id"], "version": service["updated_at"], "name": service["name"], "price_uah": ""},
+        {"id": other_service["id"], "version": other_service["updated_at"], "name": other_service["name"]},
+        {"name": "Service without a price"},
+        {"name": "Free service", "price_uah": 0},
+    ]
+    assert client.post("/admin/changes", json={"services": changes}).status_code == 200
+    prices = {row["name"]: row["price_uah"] for row in client.get("/api/booking-services").json()}
+    assert prices[service["name"]] is None
+    assert prices[other_service["name"]] == other_service["price_uah"]
+    assert prices["Service without a price"] is None
+    assert prices["Free service"] == 0
+
+    booking = client.get("/booking").text
+    blank_card = booking.split('value="Service without a price"', 1)[1].split("</label>", 1)[0]
+    free_card = booking.split('value="Free service"', 1)[1].split("</label>", 1)[0]
+    assert "грн" not in blank_card and "30 хв" in blank_card
+    assert "0 грн" in free_card
+
+
 def test_service_weekdays_restrict_availability_and_booking(client: TestClient) -> None:
     service, other_service, *_ = client.get("/api/booking-services").json()
     open_day = current_date() + timedelta(days=2)

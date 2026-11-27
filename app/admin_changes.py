@@ -357,8 +357,11 @@ def apply_catalog_changes(
     next_order = max((row.sort_order for row in rows.values() if row.is_active), default=0)
     for change in changes:
         values = change.model_dump(exclude={"id", "version", "sort_order"})
-        if isinstance(change, ServiceChange) and "weekdays_mask" not in change.model_fields_set:
-            values.pop("weekdays_mask")
+        if isinstance(change, ServiceChange):
+            if "weekdays_mask" not in change.model_fields_set:
+                values.pop("weekdays_mask")
+            if change.id is not None and "price_uah" not in change.model_fields_set:
+                values.pop("price_uah")
         if change.id is None:
             next_order += 1
             row = retired.pop(values[key], None)

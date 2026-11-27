@@ -36,7 +36,7 @@
                 <span class="service-option-text">
                   <span class="service-option-name">{{ service.name }}</span>
                   <span class="service-option-meta">
-                    <strong>{{ service.price_uah }} грн</strong>
+                    {% if service.price_uah is not none %}<strong>{{ service.price_uah }} грн</strong>{% endif %}
                     <span>{{ service.duration_minutes }} хв</span>
                   </span>
                 </span>

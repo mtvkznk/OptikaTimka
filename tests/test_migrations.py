@@ -14,6 +14,7 @@ from sqlmodel import Session, create_engine
 from alembic import command
 from app.models import (
     Appointment,
+    BookingService,
     Customer,
     CustomerSession,
     TelegramAccount,
@@ -97,6 +98,7 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
         assert row["duration_minutes"] == 75
         assert row["service_id"] == connection.execute(sa.text("SELECT id FROM bookingservice")).scalar_one()
         assert connection.execute(sa.text("SELECT weekdays_mask FROM bookingservice")).scalar_one() == 127
+        assert connection.execute(sa.text("SELECT price_uah FROM bookingservice")).scalar_one() == 500
         customers = connection.execute(sa.text("SELECT * FROM customer ORDER BY id")).mappings().all()
         assert customers[0]["phone"] is None
         assert customers[1]["email"] is None
@@ -110,6 +112,29 @@ def test_upgrade_preserves_appointments_and_removes_unverified_identity_claims(
         command.downgrade(config, "20261115_0011")
     with engine.connect() as connection:
         assert connection.execute(sa.text("SELECT phone FROM appointment")).scalar_one() == "x" * 80
+
+
+def test_optional_service_price_migration_preserves_zero_and_guards_downgrade(
+    migration_database: tuple[Config, Engine],
+) -> None:
+    config, engine = migration_database
+    command.upgrade(config, "20261122_0019")
+    with Session(engine) as session:
+        session.add(BookingService(name="Free service", price_uah=0))
+        session.commit()
+    command.upgrade(config, "head")
+    with Session(engine) as session:
+        session.add(BookingService(name="Service without a price"))
+        session.commit()
+    with pytest.raises(RuntimeError, match="Downgrade would lose services without a price"):
+        command.downgrade(config, "20261122_0019")
+    with engine.begin() as connection:
+        prices = dict(connection.execute(sa.text("SELECT name, price_uah FROM bookingservice")).all())
+        assert prices == {"Free service": 0, "Service without a price": None}
+        connection.execute(sa.text("UPDATE bookingservice SET price_uah = 500 WHERE price_uah IS NULL"))
+    command.downgrade(config, "20261122_0019")
+    price_column = next(c for c in sa.inspect(engine).get_columns("bookingservice") if c["name"] == "price_uah")
+    assert not price_column["nullable"]
 
 
 def test_migration_refuses_to_silently_cancel_duplicate_bookings(

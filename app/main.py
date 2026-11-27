@@ -1404,7 +1404,7 @@ def create_service(session: SessionDep, form_data: FormDataDep) -> RedirectRespo
         {
             "name": form_data.get("name", ""),
             "duration_minutes": form_int(form_data, "duration_minutes", 30),
-            "price_uah": form_int(form_data, "price_uah", 0),
+            "price_uah": form_data.get("price_uah"),
             "weekdays_mask": form_int(form_data, "weekdays_mask", ALL_WEEKDAYS),
             "sort_order": form_int(form_data, "sort_order", sort_order + 1),
             "is_active": form_data.get("is_active") == "on",
@@ -1440,7 +1440,7 @@ def update_service(
         {
             "name": form_data.get("name", service.name),
             "duration_minutes": form_int(form_data, "duration_minutes", service.duration_minutes),
-            "price_uah": form_int(form_data, "price_uah", service.price_uah),
+            "price_uah": form_data.get("price_uah", service.price_uah),
             "weekdays_mask": form_int(form_data, "weekdays_mask", service.weekdays_mask),
             "sort_order": form_int(form_data, "sort_order", service.sort_order),
             "is_active": form_data.get("is_active") == "on",

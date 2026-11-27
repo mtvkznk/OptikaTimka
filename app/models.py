@@ -103,7 +103,7 @@ ALL_WEEKDAYS = 127
 class BookingServiceBase(SQLModel):
     name: str = Field(max_length=160)
     duration_minutes: int = Field(default=30, ge=5, le=480)
-    price_uah: int = Field(default=0, ge=0, le=1_000_000)
+    price_uah: int | None = Field(default=None, ge=0, le=1_000_000)
     weekdays_mask: int = Field(
         default=ALL_WEEKDAYS, ge=0, le=ALL_WEEKDAYS,
         sa_column_kwargs={"server_default": str(ALL_WEEKDAYS)},
@@ -130,6 +130,11 @@ class BookingServiceCreate(BookingServiceBase):
         if not value.strip():
             raise ValueError("Service name is required")
         return value.strip()
+
+    @field_validator("price_uah", mode="before")
+    @classmethod
+    def blank_price_to_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
 
 
 class BookingServiceRead(BookingServiceBase):
