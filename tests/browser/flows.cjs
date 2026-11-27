@@ -50,6 +50,26 @@ test("public pages and the Google entry point at mobile and desktop widths", asy
     for (const path of ["/", "/catalog", "/booking", "/cabinet"]) {
       assert.equal((await page.goto(root + path)).status(), 200, path);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width, path);
+      if (path === "/") {
+        const lines = await page.locator(".landing-brand-home .brand-label > span").evaluateAll(nodes =>
+          nodes.map(node => {
+            const { fontSize, fontWeight, lineHeight } = getComputedStyle(node);
+            const { height, top } = node.getBoundingClientRect();
+            return { text: node.textContent, fontSize, fontWeight, lineHeight, height, top };
+          }));
+        assert.deepEqual(lines.map(line => line.text), ["Оптика Тімка", "Офтальмологія", "Дитяча офтальмологія"]);
+        for (const [i, line] of lines.entries()) {
+          assert.equal(line.fontSize, lines[0].fontSize);
+          assert.equal(line.fontWeight, "700");
+          assert.ok(Math.abs(line.height - parseFloat(line.lineHeight)) < 1);
+          if (i) assert.ok(line.top > lines[i - 1].top);
+        }
+        assert.ok(await page.evaluate(() => {
+          const header = document.querySelector(".landing-header");
+          return parseFloat(getComputedStyle(document.querySelector("#services")).scrollMarginTop)
+            >= header.getBoundingClientRect().height;
+        }));
+      }
     }
     const oauth = await context.request.get(root + "/auth/google", { maxRedirects: 0 });
     assert.equal(oauth.status(), 307);

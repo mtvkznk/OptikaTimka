@@ -15,8 +15,8 @@
     <header class="landing-header" data-landing-header>
       <div class="landing-container landing-header-inner">
         {% set is_home = request.url.path == '/' %}
-        <a class="brand-link landing-brand" href="/">
-          {{ wordmark('Офтальмологія. Дитяча офтальмологія' if is_home else none) }}
+        <a class="brand-link{% if is_home %} landing-brand-home{% endif %}" href="/">
+          {{ wordmark(lines=('Офтальмологія', 'Дитяча офтальмологія')) if is_home else wordmark() }}
         </a>
         {% set location = none if is_home else 'catalog' %}
         <nav class="landing-location" aria-label="Розділи сайту">

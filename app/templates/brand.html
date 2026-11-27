@@ -1,4 +1,8 @@
-{% macro wordmark(subtitle=none) -%}
+{% macro wordmark(subtitle=none, lines=()) -%}
 <span class="brand-glasses" aria-hidden="true"><span></span></span>
-<span class="brand-label">{{ site_name }}{% if subtitle %}<small>{{ subtitle }}</small>{% endif %}</span>
+<span class="brand-label">
+  <span>{{ site_name }}</span>
+  {% for line in lines %}<span>{{ line }}</span>{% endfor %}
+  {% if subtitle %}<small>{{ subtitle }}</small>{% endif %}
+</span>
 {%- endmacro %}
