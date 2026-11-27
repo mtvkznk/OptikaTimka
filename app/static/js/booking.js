@@ -24,6 +24,7 @@ const dateFormat = new Intl.DateTimeFormat("uk-UA", {
 
 let calendarIndex = 0;
 let availabilityRequest;
+let displayedSlots = "[]";
 
 function checked(name) {
   return form.querySelector('input[name="' + name + '"]:checked');
@@ -71,97 +72,121 @@ function showMonth(index) {
   calendarNext.disabled = calendarIndex === calendarMonths.length - 1;
 }
 
-async function refreshAvailability() {
-  availabilityRequest?.abort();
-  const service = checked("service");
-  const closedDates = new Set(JSON.parse(service?.dataset.closedDates ?? "[]"));
+function setAvailableDates(dates) {
+  const available = new Set(dates);
   for (const day of dateRadios) {
-    day.disabled = Boolean(service && (
-      closedDates.has(day.value) || !(Number(service.dataset.weekdays) & Number(day.dataset.weekday))
-    ));
+    day.disabled = !available.has(day.value);
     if (day.disabled) day.checked = false;
   }
-  const date = checked("preferred_date");
-  timeGrid.replaceChildren();
-  timeGrid.hidden = true;
-  availabilityRetry.hidden = true;
-  updateSelection();
+}
 
-  if (!date || !service) {
-    if (service && !dateRadios.some((day) => !day.disabled)) {
-      availabilityStatus.textContent = "У доступному періоді немає дат для цієї послуги.";
-    } else {
-      availabilityStatus.textContent = dateRadios.length
-        ? "Оберіть послугу й дату, щоб побачити вільний час."
-        : "Зараз немає доступних дат для запису.";
-    }
+function showTimeSlots(slots) {
+  const signature = JSON.stringify(slots);
+  if (displayedSlots === signature) return;
+  displayedSlots = signature;
+  const selected = checked("preferred_time");
+  const options = slots.map((slot) => {
+    const label = timeOption.content.firstElementChild.cloneNode(true);
+    const input = label.querySelector("input");
+    input.value = slot.start_time;
+    input.dataset.duration = timeInMinutes(slot.end_time) - timeInMinutes(slot.start_time);
+    input.checked = input.value === selected?.value && input.dataset.duration === selected?.dataset.duration;
+    label.querySelector("span").textContent =
+      slot.start_time.slice(0, 5) + " – " + slot.end_time.slice(0, 5);
+    return label;
+  });
+  const middle = Math.ceil(options.length / 2);
+  const columns = [options.slice(0, middle), options.slice(middle)]
+    .filter((cells) => cells.length)
+    .map((cells) => {
+      const column = document.createElement("div");
+      column.className = "time-column";
+      column.append(...cells);
+      return column;
+    });
+  timeGrid.replaceChildren(...columns);
+  timeGrid.hidden = !options.length;
+}
+
+async function refreshAvailability(background = false) {
+  if (background && availabilityRequest) return;
+  availabilityRequest?.abort();
+  const service = checked("service");
+  const date = checked("preferred_date");
+  if (!service) {
+    availabilityRequest = undefined;
+    setAvailableDates([]);
+    showTimeSlots([]);
+    availabilityRetry.hidden = true;
+    availabilityStatus.textContent = serviceRadios.length && dateRadios.length
+      ? "Оберіть послугу й дату, щоб побачити вільний час."
+      : "Зараз немає доступних дат для запису.";
+    updateSelection();
     return;
+  }
+  if (!background) {
+    showTimeSlots([]);
+    availabilityRetry.hidden = true;
+    availabilityStatus.textContent = date ? "Завантажуємо вільні години…" : "Перевіряємо доступні дати…";
+    updateSelection();
   }
 
   const request = new AbortController();
   availabilityRequest = request;
-  availabilityStatus.textContent = "Завантажуємо вільні години…";
   try {
-    const query = new URLSearchParams({ preferred_date: date.value, service: service.value });
+    const query = new URLSearchParams({ service: service.value });
+    if (date) query.set("preferred_date", date.value);
     const response = await fetch(
-      "/api/availability?" + query,
+      "/api/availability/calendar?" + query,
       { signal: request.signal },
     );
-    if (response.status === 400) {
-      const payload = await response.json().catch(() => null);
-      if (!request.signal.aborted) {
-        availabilityStatus.textContent = typeof payload?.detail === "string"
-          ? payload.detail : "Оберіть іншу дату або послугу.";
-      }
-      return;
-    }
     if (!response.ok) throw new Error("Availability request failed");
-    const slots = await response.json();
+    const { dates, slots } = await response.json();
     if (request.signal.aborted) return;
-    const isToday = date.closest(".calendar-day").classList.contains("is-today");
-    if (!slots.length) {
-      availabilityStatus.textContent = isToday
-        ? "На сьогодні вже немає вільних годин. Оберіть іншу дату."
-        : "На цю дату немає вільного часу для цієї послуги.";
-      return;
+    setAvailableDates(dates);
+    showTimeSlots(slots);
+    availabilityRetry.hidden = true;
+    let message = "Оберіть доступну дату, щоб побачити вільний час.";
+    if (date && !date.disabled) {
+      message = date.closest(".calendar-day").classList.contains("is-today")
+        ? formatDate(date.value) + " · Вільні години, що залишилися на сьогодні"
+        : formatDate(date.value);
+    } else if (!dateRadios.some((day) => !day.disabled)) {
+      message = "У доступному періоді немає дат для цієї послуги.";
+    } else if (date) {
+      message = "На цю дату вже немає вільного часу. Оберіть іншу дату.";
     }
-
-    const options = slots.map((slot) => {
-      const label = timeOption.content.firstElementChild.cloneNode(true);
-      const input = label.querySelector("input");
-      input.value = slot.start_time;
-      input.dataset.duration = timeInMinutes(slot.end_time) - timeInMinutes(slot.start_time);
-      label.querySelector("span").textContent =
-        slot.start_time.slice(0, 5) + " – " + slot.end_time.slice(0, 5);
-      return label;
-    });
-    const middle = Math.ceil(options.length / 2);
-    const columns = [options.slice(0, middle), options.slice(middle)]
-      .filter((cells) => cells.length)
-      .map((cells) => {
-        const column = document.createElement("div");
-        column.className = "time-column";
-        column.append(...cells);
-        return column;
-      });
-    timeGrid.replaceChildren(...columns);
-    timeGrid.hidden = false;
-    availabilityStatus.textContent = isToday
-      ? formatDate(date.value) + " · Вільні години, що залишилися на сьогодні"
-      : formatDate(date.value);
+    if (availabilityStatus.textContent !== message) availabilityStatus.textContent = message;
+    updateSelection();
   } catch {
-    if (request.signal.aborted) return;
-    availabilityStatus.textContent = "Не вдалося завантажити вільні години.";
+    if (request.signal.aborted || background) return;
+    setAvailableDates([]);
+    availabilityStatus.textContent = "Не вдалося перевірити вільні дати й години.";
     availabilityRetry.hidden = false;
+    updateSelection();
+  } finally {
+    if (availabilityRequest === request) availabilityRequest = undefined;
+  }
+}
+
+function refreshVisibleCalendar() {
+  if (!document.hidden && !form.hidden && !submitButton.disabled && checked("service")) {
+    refreshAvailability(true);
   }
 }
 
 calendarPrev.addEventListener("click", () => showMonth(calendarIndex - 1));
 calendarNext.addEventListener("click", () => showMonth(calendarIndex + 1));
-availabilityRetry.addEventListener("click", refreshAvailability);
+availabilityRetry.addEventListener("click", () => refreshAvailability());
+document.addEventListener("visibilitychange", refreshVisibleCalendar);
+window.addEventListener("focus", refreshVisibleCalendar);
+setInterval(refreshVisibleCalendar, 15000);
 
 form.addEventListener("change", (event) => {
   setStatus("");
+  if (event.target.name === "service") {
+    dateRadios.forEach((day) => { day.disabled = true; });
+  }
   if (event.target.name === "preferred_date" || event.target.name === "service") {
     refreshAvailability();
   } else {
@@ -185,7 +210,7 @@ form.addEventListener("submit", async (event) => {
     showError("Оберіть послугу.", serviceRadios[0]);
     return;
   }
-  if (!date) {
+  if (!date || date.disabled) {
     showError(
       "Оберіть доступну дату прийому.",
       calendarMonths[calendarIndex].querySelector("input:not(:disabled)") || statusNode,

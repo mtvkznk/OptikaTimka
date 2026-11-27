@@ -863,6 +863,55 @@ def test_per_service_hours_and_closures_respect_shared_bookings(
     assert times(first, common_closed) == []
 
 
+def test_booking_calendar_reopens_a_full_date_when_an_appointment_is_canceled(
+    client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
+) -> None:
+    now = datetime(2026, 11, 27, 9, 30, tzinfo=main.KYIV_TZ)
+    monkeypatch.setattr(main, "kyiv_now", lambda: now)
+    today = now.date()
+    full_day, blocked_day, closed_day, service_closed_day = (
+        today + timedelta(days=offset) for offset in range(1, 5)
+    )
+    doctor, other = client.get("/api/booking-services").json()[:2]
+    with Session(app_db) as session:
+        visit = Appointment(
+            name="Test appointment", phone="", service=other["name"], service_id=other["id"],
+            preferred_date=full_day, preferred_time=time(9), duration_minutes=60,
+        )
+        session.add_all([
+            visit,
+            BookingBlock(service_id=doctor["id"], day=blocked_day, start_minute=540, end_minute=600),
+            ClosedDate(closed_on=closed_day),
+            ServiceClosedDate(service_id=doctor["id"], closed_on=service_closed_day),
+            ServiceSchedule(service_id=doctor["id"], intervals=[(540, 600)]),
+        ])
+        session.commit()
+        visit_id, version = visit.id, visit.updated_at.isoformat()
+
+    params = {"service": doctor["name"], "preferred_date": full_day.isoformat()}
+    endpoint = "/api/availability/calendar"
+    response = client.get(endpoint, params=params)
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    result = response.json()
+    assert result["slots"] == []
+    assert {day.isoformat() for day in (today, full_day, blocked_day, closed_day, service_closed_day)}.isdisjoint(
+        result["dates"],
+    )
+    assert (today + timedelta(days=5)).isoformat() in result["dates"]
+    other_dates = client.get(endpoint, params={"service": other["name"]}).json()["dates"]
+    assert {full_day.isoformat(), blocked_day.isoformat(), service_closed_day.isoformat()} <= set(other_dates)
+    assert closed_day.isoformat() not in other_dates
+
+    assert client.post(f"/admin/appointments/{visit_id}/status", data={
+        "status": "canceled", "version": version,
+    }, follow_redirects=False).status_code == 303
+    reopened = client.get(endpoint, params=params).json()
+    assert full_day.isoformat() in reopened["dates"]
+    assert reopened["slots"] == client.get("/api/availability", params=params).json()
+    assert [slot["start_time"] for slot in reopened["slots"]] == ["09:00:00", "09:30:00"]
+
+
 def test_weekday_hours_apply_per_service_in_booking_and_notebook(
     client: TestClient, app_db: Engine, monkeypatch: MonkeyPatch,
 ) -> None:
@@ -908,7 +957,11 @@ def test_weekday_hours_apply_per_service_in_booking_and_notebook(
     assert starts(doctor, "2026-11-23")[0] == "10:00:00"
     assert starts(other, wednesday)[0] == "09:00:00"
 
-    assert f'value="{doctor["name"]}"\n                  data-weekdays="111"' in client.get("/booking").text
+    calendar = client.get("/api/availability/calendar", params={
+        "service": doctor["name"], "preferred_date": wednesday,
+    }).json()
+    assert wednesday in calendar["dates"] and thursday in calendar["dates"] and friday not in calendar["dates"]
+    assert [slot["start_time"] for slot in calendar["slots"]] == starts(doctor, wednesday)
     diary = client.get("/admin", params={"day": wednesday}).text
     assert re.findall(r'data-notebook-start="([^"]+)"', diary) == ["14:00", "14:30", "16:00"]
     assert 'day=2026-11-21#appointment-diary" aria-label="Наступний день"' in client.get(

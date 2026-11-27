@@ -332,3 +332,57 @@ test("the notebook status menu opens contact editing in the row and keeps the st
   await page.setViewportSize({ width: 320, height: 860 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 320);
 });
+
+test("a full date becomes selectable again when its only slot reopens", async t => {
+  const admin = await browserContext(t, { admin: true });
+  const guest = await browserContext(t);
+  const diary = await admin.newPage();
+  const booking = await guest.newPage();
+  const day = "2026-11-20";
+  await diary.goto(root + "/admin#time-slots");
+  const scope = diary.locator("[data-availability-scope]");
+  await scope.selectOption({ index: 1 });
+  await diary.locator("[data-work-weekday='4']").click();
+  await diary.locator("[data-custom-schedule]").check();
+  const hours = diary.locator("[data-work-schedule]");
+  while (await hours.locator("[data-remove-break]").count()) {
+    await hours.locator("[data-remove-break]").first().click();
+  }
+  await hours.locator('[name="start_time"]').fill("09:00");
+  await hours.locator('[name="end_time"]').fill("09:30");
+  const saved = diary.waitForResponse(response => response.url().endsWith("/admin/changes"));
+  await diary.locator("[data-admin-save]").click();
+  assert.equal((await saved).status(), 200);
+  await diary.goto(root + "/admin?day=" + day);
+  const close = diary.getByRole("button", { name: "Закрити час 09:00", exact: true });
+  const reopen = diary.getByRole("button", { name: "Відкрити час 09:00", exact: true });
+  await close.click();
+  await reopen.waitFor();
+
+  await booking.clock.install();
+  await booking.goto(root + "/booking");
+  const selectedDate = booking.locator('[name="preferred_date"][value="' + day + '"]');
+  await booking.locator('[name="service"]').first().check();
+  await booking.getByText("Оберіть доступну дату, щоб побачити вільний час.").waitFor();
+  assert.equal(await selectedDate.isDisabled(), true);
+  await booking.locator('[name="name"]').fill("Browser guest");
+
+  await reopen.click();
+  await close.waitFor();
+  await booking.bringToFront();
+  await booking.clock.fastForward(15000);
+  await selectedDate.check();
+  await timeField(booking, "09:00").check();
+
+  await manualBooking(diary, day, "09:00", "0670000018");
+  await booking.bringToFront();
+  await booking.clock.fastForward(15000);
+  await booking.waitForFunction(value => {
+    const option = document.querySelector('[name="preferred_date"][value="' + value + '"]');
+    return option.disabled && !option.checked;
+  }, day);
+  assert.equal(await selectedDate.isDisabled(), true);
+  assert.equal(await selectedDate.isChecked(), false);
+  assert.equal(await timeField(booking, "09:00").count(), 0);
+  assert.equal(await booking.locator('[name="name"]').inputValue(), "Browser guest");
+});

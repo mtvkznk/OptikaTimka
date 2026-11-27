@@ -206,7 +206,11 @@ def test_closed_date_is_not_available_on_booking_form(client: TestClient) -> Non
 
     booking_page = client.get("/booking")
     assert booking_page.status_code == 200
-    assert f'value="{closed_on.isoformat()}"' not in booking_page.text
+    date_input = booking_page.text.split(f'value="{closed_on.isoformat()}"', 1)[1].split("/>", 1)[0]
+    assert "disabled" in date_input
+    service = client.get("/api/booking-services").json()[0]["name"]
+    calendar = client.get("/api/availability/calendar", params={"service": service}).json()
+    assert closed_on.isoformat() not in calendar["dates"]
 
 
 def test_closed_date_blocks_appointment_booking(client: TestClient) -> None:

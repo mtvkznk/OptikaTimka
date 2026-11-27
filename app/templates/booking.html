@@ -30,9 +30,7 @@
               {% for service in services %}
               <label class="service-option" data-service-option>
                 <input type="radio" name="service" value="{{ service.name }}"
-                  data-weekdays="{{ service_weekdays[service.id] }}"
-                  data-requires-confirmation="{{ 'true' if service.id == confirmation_service_id else 'false' }}"
-                  data-closed-dates='{{ closed_by_service.get(service.id, []) | tojson }}' required />
+                  data-requires-confirmation="{{ 'true' if service.id == confirmation_service_id else 'false' }}" required />
                 <span class="service-option-text">
                   <span class="service-option-name">{{ service.name }}</span>
                   <span class="service-option-meta">
@@ -68,10 +66,10 @@
                   <span aria-hidden="true"></span>
                   {% endfor %}
                   {% for day in month.days %}
-                    {% if day.is_available %}
+                    {% if day.is_in_window %}
                     <label class="calendar-day{% if day.is_today %} is-today{% endif %}">
-                      <input type="radio" name="preferred_date" value="{{ day.value }}" data-weekday="{{ day.weekday_bit }}"
-                        aria-label="{{ day.label }}{% if day.is_today %}, сьогодні{% endif %}" required />
+                      <input type="radio" name="preferred_date" value="{{ day.value }}"
+                        aria-label="{{ day.label }}{% if day.is_today %}, сьогодні{% endif %}" required disabled />
                       <span>{{ day.day }}</span>
                     </label>
                     {% else %}

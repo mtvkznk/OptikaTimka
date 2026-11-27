@@ -1,5 +1,6 @@
+from collections import defaultdict
 from collections.abc import Iterator
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -12,6 +13,7 @@ from app.models import (
     AvailableTimeSlot,
     BookingBlock,
     BookingService,
+    ClosedDate,
     ServiceClosedDate,
     ServiceSchedule,
     ServiceWeekdaySchedule,
@@ -23,6 +25,11 @@ Interval = tuple[int, int]
 class BookingTime(BaseModel):
     start_time: time
     end_time: time
+
+
+class BookingCalendar(BaseModel):
+    dates: list[date]
+    slots: list[BookingTime]
 
 
 def minute_of(value: time) -> int:
@@ -173,3 +180,61 @@ def available_starts(
         BookingTime(start_time=time(*divmod(start, 60)), end_time=time(*divmod(start + duration, 60)))
         for start in available_start_minutes(working, occupied, duration, earliest)
     ]
+
+
+def available_booking_calendar(
+    session: Session, service: BookingService, now: datetime, window_end: date,
+    preferred_date: date | None,
+) -> BookingCalendar:
+    today = now.date()
+    service_id = service.id
+    duration = service.duration_minutes
+    week = weekly_working_intervals(
+        working_intervals(get_active_time_slots(session)),
+        session.get(ServiceSchedule, service_id),
+        weekday_schedules_by_service(session, [service_id]).get(service_id, {}),
+    )
+    closed_days = set(session.exec(
+        select(ClosedDate.closed_on).where(ClosedDate.closed_on.between(today, window_end))
+    ))
+    closed_days.update(session.exec(
+        select(ServiceClosedDate.closed_on).where(
+            ServiceClosedDate.service_id == service_id,
+            ServiceClosedDate.closed_on.between(today, window_end),
+        )
+    ))
+
+    unavailable: dict[date, list[Interval]] = defaultdict(list)
+    for day, starts_at, minutes in session.exec(
+        select(Appointment.preferred_date, Appointment.preferred_time, Appointment.duration_minutes)
+        .where(
+            Appointment.preferred_date.between(today, window_end),
+            Appointment.preferred_time.is_not(None),
+            Appointment.status != AppointmentStatus.canceled,
+        )
+    ):
+        unavailable[day].append(occupied_interval(starts_at, minutes))
+    for day, start, end in session.exec(
+        select(BookingBlock.day, BookingBlock.start_minute, BookingBlock.end_minute).where(
+            BookingBlock.service_id == service_id, BookingBlock.day.between(today, window_end),
+        )
+    ):
+        unavailable[day].append((start, end))
+
+    dates = []
+    slots = []
+    for offset in range((window_end - today).days + 1):
+        day = today + timedelta(days=offset)
+        if day in closed_days or not service.is_available_on(day):
+            continue
+        working = week[day.weekday()]
+        earliest = first_future_minute(day, now)
+        blocked = unavailable.get(day, [])
+        if day == preferred_date:
+            slots = available_starts(working, blocked, duration, earliest)
+            has_time = bool(slots)
+        else:
+            has_time = next(available_start_minutes(working, blocked, duration, earliest), None) is not None
+        if has_time:
+            dates.append(day)
+    return BookingCalendar(dates=dates, slots=slots)

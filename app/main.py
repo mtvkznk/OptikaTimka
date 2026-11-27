@@ -32,8 +32,10 @@ from app.admin_changes import (
     service_schedule_version,
 )
 from app.booking import (
+    BookingCalendar,
     BookingTime,
     Interval,
+    available_booking_calendar,
     available_start_minutes,
     available_starts,
     blocked_intervals,
@@ -220,7 +222,7 @@ STATUS_LABELS = {option["value"]: option["label"] for option in STATUS_OPTIONS}
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
-ASSET_VERSION = "20261118-booking-refresh"
+ASSET_VERSION = "20261127-booking-available-dates"
 ADMIN_ASSET_VERSION = "20261127-notebook-inline-contact"
 LANDING_ASSET_VERSION = "20261127-brand-three-lines"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
@@ -332,15 +334,8 @@ def next_month(value: date) -> date:
 
 
 def build_booking_calendar(
-    session: Session, today: date, window_end: date,
+    today: date, window_end: date,
 ) -> list[dict[str, Any]]:
-    closed_dates = set(
-        session.exec(
-            select(ClosedDate.closed_on)
-            .where(ClosedDate.closed_on >= today)
-            .where(ClosedDate.closed_on <= window_end)
-        ).all()
-    )
     months: list[dict[str, Any]] = []
     month_start = date(today.year, today.month, 1)
 
@@ -355,8 +350,7 @@ def build_booking_calendar(
                     "value": cursor.isoformat(),
                     "label": format_date(cursor),
                     "day": str(cursor.day),
-                    "weekday_bit": 1 << cursor.weekday(),
-                    "is_available": today <= cursor <= window_end and cursor not in closed_dates,
+                    "is_in_window": today <= cursor <= window_end,
                     "is_today": cursor == today,
                 }
             )
@@ -860,21 +854,6 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
     today, window_end = booking_window()
     services = get_active_services(session)
     doctor = diary_service(services)
-    closed_by_service: dict[int, list[str]] = {}
-    for service_id, day in session.exec(
-        select(ServiceClosedDate.service_id, ServiceClosedDate.closed_on)
-        .where(ServiceClosedDate.closed_on.between(today, window_end))
-    ):
-        closed_by_service.setdefault(service_id, []).append(day.isoformat())
-    default_intervals = working_intervals(get_active_time_slots(session))
-    schedules = {row.service_id: row for row in session.exec(select(ServiceSchedule))}
-    weekday_schedules = weekday_schedules_by_service(session, [service.id for service in services])
-    service_weekdays = {
-        service.id: bookable_weekdays(service, weekly_working_intervals(
-            default_intervals, schedules.get(service.id), weekday_schedules.get(service.id, {}),
-        ))
-        for service in services
-    }
 
     return templates.TemplateResponse(
         request,
@@ -884,9 +863,7 @@ def booking_page(request: Request, session: SessionDep) -> HTMLResponse:
             "asset_version": ASSET_VERSION,
             "services": services,
             "confirmation_service_id": doctor.id if doctor is not None else None,
-            "closed_by_service": closed_by_service,
-            "service_weekdays": service_weekdays,
-            "booking_months": build_booking_calendar(session, today, window_end),
+            "booking_months": build_booking_calendar(today, window_end),
             "weekday_labels": WEEKDAY_LABELS,
             "offer_google_sign_in": (
                 google_auth_enabled() and get_customer_by_session(request, session) is None
@@ -1264,6 +1241,22 @@ def available_time_slots(
         if (start := minute_of(slot.start_time)) >= earliest
         and not any(booked_start <= start < booked_end for booked_start, booked_end in booked)
     ]
+
+
+@app.get("/api/availability/calendar")
+def booking_calendar_availability(
+    session: SessionDep,
+    response: Response,
+    service: Annotated[str, Query(min_length=1, max_length=160)],
+    preferred_date: date | None = None,
+) -> BookingCalendar:
+    now = kyiv_now()
+    _, window_end = booking_window(now)
+    ensure_seed_data(session)
+    response.headers["Cache-Control"] = "no-store"
+    return available_booking_calendar(
+        session, get_booking_service(session, service), now, window_end, preferred_date,
+    )
 
 
 @app.get("/api/closed-dates", response_model=list[ClosedDateRead])
