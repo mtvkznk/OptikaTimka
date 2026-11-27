@@ -30,8 +30,10 @@ the user's current instructions. Do not silently change a business rule.
   credentials locally; importing the app can start its refresh worker.
 - Use `rg` for search. Keep scratch files outside tracked source; avoid committing
   local caches, database files, screenshots, logs and release ZIPs.
-- Follow the user's current authorization for commits, pushing and deployment.
-  Deployment is a separate operation from a Git push; CI does not deploy.
+- After each project commit, push it to GitHub and deploy the revision to the
+  server before handing off, subject to the user's current instructions. Follow
+  [docs/OPERATIONS.md](docs/OPERATIONS.md) for deployment and verification.
+  GitHub Actions checks the revision. Deployment is a separate operation.
 
 ## Invariants to preserve
 
@@ -76,8 +78,9 @@ the user's current instructions. Do not silently change a business rule.
 - Select checks appropriate to the change; see DEVELOPMENT for exact commands.
   Booking/auth/database changes require relevant tests and PostgreSQL CI, not
   just SQLite. UI changes require relevant browser scenarios.
-- Documentation-only changes need link/path/command review and secret checks;
-  they do not require a production redeploy.
+- Documentation-only changes need link/path/command review, secret checks and
+  publication of the committed source to the server. Use the runtime rollout
+  procedure when application or infrastructure inputs change.
 - Explain what changed, what was verified and any remaining limitation.
 - Update BUSINESS_RULES/DECISIONS when behavior changes; update ARCHITECTURE when
   ownership changes; update OPERATIONS when infrastructure changes. Record dated
