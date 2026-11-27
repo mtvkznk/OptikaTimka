@@ -72,13 +72,10 @@ def record_update(session: Session, update: dict) -> None:
     ):
         return
     state = session.get(TelegramState, telegram_id)
+    pending = bool(state and unexpired(state.expires_at) and state.payload.get("mode") in INPUT_MODES)
     text = str(message.get("text") or "").strip()
     if not callback and (
-        not text
-        or (
-            text.partition(" ")[0] not in COMMANDS
-            and not (state and state.payload.get("mode") in INPUT_MODES)
-        )
+        not text or (text.partition(" ")[0] not in COMMANDS and not pending)
     ):
         return
     created_at = None
@@ -87,7 +84,6 @@ def record_update(session: Session, update: dict) -> None:
             created_at = datetime.fromtimestamp(message["date"], UTC)
         except (ValueError, OverflowError, OSError):
             pass
-    pending = bool(state and state.payload.get("mode") in INPUT_MODES)
     remember(
         session,
         telegram_id,

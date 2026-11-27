@@ -36,18 +36,21 @@ def run_preview() -> None:
         from app.security import hash_session_token
 
         main.kyiv_now = lambda: datetime(2026, 11, 18, 8, tzinfo=main.KYIV_TZ)
-        with Session(engine) as session:
-            main.ensure_seed_data(session)
-            owner = Customer(email="owner@example.com", email_verified=True, google_sub="browser-owner")
-            session.add(owner)
-            session.flush()
-            session.add(CustomerSession(
-                customer_id=owner.id,
-                token_hash=hash_session_token("g.browser-test"),
-                expires_at=utc_now() + timedelta(hours=1),
-            ))
-            session.commit()
-        uvicorn.run(main.app, host="127.0.0.1", port=8017, log_level="warning")
+        try:
+            with Session(engine) as session:
+                main.ensure_seed_data(session)
+                owner = Customer(email="owner@example.com", email_verified=True, google_sub="browser-owner")
+                session.add(owner)
+                session.flush()
+                session.add(CustomerSession(
+                    customer_id=owner.id,
+                    token_hash=hash_session_token("g.browser-test"),
+                    expires_at=utc_now() + timedelta(hours=1),
+                ))
+                session.commit()
+            uvicorn.run(main.app, host="127.0.0.1", port=8017, log_level="warning")
+        finally:
+            engine.dispose()
 
 
 if __name__ == "__main__":

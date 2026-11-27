@@ -113,6 +113,7 @@ def refresh_chat(session: Session, telegram_id: int) -> None:
             move=context.get("move"),
             version=context.get("version", ""),
             notice=context.get("notice", ""),
+            time_page=context.get("time_page", 0),
         )
     except HTTPException:
         # Another admin can cancel/move the selected visit while this screen is open.
@@ -120,6 +121,7 @@ def refresh_chat(session: Session, telegram_id: int) -> None:
             bot.day(
                 date.fromisoformat(context["day"]),
                 notice="Запис або графік змінився. Перевірте розклад перед наступною дією.",
+                time_page=context.get("time_page", 0),
             )
         except HTTPException:
             bot.show(

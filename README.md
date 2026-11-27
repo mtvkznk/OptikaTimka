@@ -71,8 +71,9 @@ hour, service-only hour closures, reopening, and all appointments with search an
 pagination. Future removals require confirmation; past removals do not. Its
 commands reuse the website's transaction lock and appointment validation. Future
 manual bookings start as new; today's start confirmed. The timetable uses the
-service's duration and weekday schedule and skips closed days. Schedule/catalog
-editing remains in the website dashboard.
+service's duration and weekday schedule and skips closed days. Dense timetables
+use time sections in the same message when the hours do not fit on one screen.
+Schedule/catalog editing remains in the website dashboard.
 
 The current day timetable refreshes automatically, including changes from the
 website and other administrators. The app checks the database every five seconds
@@ -141,14 +142,15 @@ Set `ADMIN_GOOGLE_EMAILS` to a comma-separated list of additional verified Googl
 emails to grant access on their first Google sign-in.
 To grant access to another account that has already signed in through Google, add
 its stored `customer.google_sub` to `ADMIN_GOOGLE_SUBJECTS` as a comma-separated list
-of Google account IDs. Both settings require Google OAuth credentials and disable
-HTTP Basic for all administrator routes and product creation. Authorized users
-see the administrator dashboard button in their Google-authenticated cabinet.
+of Google account IDs. All three settings require Google OAuth credentials.
+Configuring any of them disables HTTP Basic for all administrator routes and
+product creation. Authorized users see the administrator dashboard button in
+their Google-authenticated cabinet.
 
 ## Security behavior
 
 - All `/admin` routes and `POST /api/products` require an authorized Google account,
-  or HTTP Basic when neither Google administrator setting is configured. Use HTTPS.
+  or HTTP Basic when no Google administrator grants are configured. Use HTTPS.
 - State-changing requests require a signed, session-bound CSRF token. HTML forms
   carry `csrf_token`; JavaScript reads the `csrf-token` meta tag and sends the
   `X-CSRF-Token` header. Cross-origin mutations are rejected as well.

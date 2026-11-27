@@ -239,6 +239,70 @@ def test_bot_manual_future_new_duplicate_safe_and_customer_availability(tg, engi
     assert all(row["start_time"] != "20:30:00" for row in available)
 
 
+@pytest.fixture
+def dense_timetable(tg, engine, monkeypatch):
+    client, sent, service_id = tg
+    google_customer(client, engine, monkeypatch)
+    with Session(engine) as session:
+        session.get(BookingService, service_id).duration_minutes = 5
+        session.add(ServiceSchedule(service_id=service_id, intervals=[(6 * 60, 22 * 60)]))
+        session.commit()
+    return client, sent
+
+
+def test_long_past_timetable_fits_telegram_messages(dense_timetable):
+    client, sent = dense_timetable
+    send(client, message("/start"), 1)
+    send(client, callback(button(sent, "Дата")), 2)
+    day = NOW.date() - timedelta(days=7)
+    send(client, message(day.strftime("%d.%m.%Y")), 3)
+
+    first_page = sent[-1][1]["text"]
+    assert len(first_page) <= 4096
+    assert "06:00 — час недоступний" in first_page
+    send(client, callback(button(sent, "Години →")), 4)
+    last_page = sent[-1][1]["text"]
+    assert len(last_page) <= 4096
+    assert "21:55 — час недоступний" in last_page
+    send(client, callback(button(sent, "← Години")), 5)
+    assert sent[-1][1]["text"] == first_page
+
+
+def test_dense_timetable_keeps_all_actions_and_refreshes_selected_section(dense_timetable, engine):
+    client, sent = dense_timetable
+    send(client, message("/start"), 1)
+    send(client, callback(button(sent, "День →")), 2)
+    starts = []
+    for update_id in range(3, 9):
+        keyboard = sent[-1][1]["reply_markup"]["inline_keyboard"]
+        buttons = [entry for row in keyboard for entry in row]
+        assert len(buttons) <= 100
+        starts.extend(entry["text"][:5] for entry in buttons if "＋ Записати" in entry["text"])
+        next_page = next((entry for entry in buttons if entry["text"] == "Години →"), None)
+        if next_page is None:
+            break
+        assert send(client, callback(next_page["callback_data"]), update_id).status_code == 200
+
+    assert starts == [f"{hour:02}:{minute:02}" for hour in range(6, 22) for minute in range(0, 60, 5)]
+    assert send(client, callback(button(sent[-1:], "21:55 ＋")), 10).status_code == 200
+    assert send(client, callback(button(sent[-1:], "Скасувати")), 11).status_code == 200
+    button(sent[-1:], "21:55 ＋")
+
+    response = client.post("/admin/appointments/manual", data={
+        "preferred_date": (NOW.date() + timedelta(days=1)).isoformat(),
+        "preferred_time": "21:55",
+        "expected_duration_minutes": "5",
+        "phone": "Test contact",
+    }, follow_redirects=False)
+    assert response.status_code == 303
+
+    sent.clear()
+    refresh_cycle(engine)
+    assert len(sent) == 1 and sent[0][0] == "editMessageText"
+    assert sent[0][1]["message_id"] == 42
+    button(sent, "21:55 🟠 Test contact")
+
+
 def test_same_day_name_only_and_admin_access_revocation(tg, engine, monkeypatch):
     client, sent, _ = tg
     google_customer(client, engine, monkeypatch)
@@ -320,6 +384,25 @@ def test_reschedule_preserves_patient_duration_and_status(tg, engine, monkeypatc
         assert visit.preferred_date == NOW.date() + timedelta(days=1)
         assert visit.preferred_time == time(11) and visit.phone == "123"
         assert visit.status == AppointmentStatus.new and visit.duration_minutes == 30
+
+
+def test_reschedule_to_overlapping_start_after_schedule_change(tg, engine, monkeypatch):
+    client, sent, service_id = tg
+    google_customer(client, engine, monkeypatch)
+    web_manual(client)
+    with Session(engine) as session:
+        session.add(ServiceSchedule(service_id=service_id, intervals=[(10 * 60 + 15, 12 * 60 + 15)]))
+        session.commit()
+
+    send(client, message("/start"), 1)
+    send(client, callback(button(sent, "10:00 🟢")), 2)
+    send(client, callback(button(sent, "Перенести")), 3)
+    assert send(client, callback(button(sent, "10:15 ✓")), 4).status_code == 200
+
+    with Session(engine) as session:
+        visit = session.exec(select(Appointment)).one()
+        assert visit.preferred_time == time(10, 15)
+        assert visit.duration_minutes == 30
 
 
 def test_future_deletion_confirmation_and_stale_status_protection(tg, engine, monkeypatch):
@@ -991,6 +1074,25 @@ def test_unknown_text_and_media_are_not_auto_deleted(tidy_bot, engine):
     assert {10002, 10003}.isdisjoint(deleted_ids(calls))
     with Session(engine) as session:
         assert session.get(TelegramMessage, (TG_ID, 10002)) is None
+        assert session.get(TelegramMessage, (TG_ID, 10003)) is None
+
+
+def test_chat_cleanup_keeps_text_sent_after_form_expiry(tidy_bot, engine):
+    client, calls, _ = tidy_bot
+    send(client, message("/start"), 1)
+    send(client, callback(button(calls, "10:00 ＋"), message_id=screen_id(engine)), 2)
+    with Session(engine) as session:
+        state = session.get(TelegramState, TG_ID)
+        state.expires_at = utc_now() - timedelta(seconds=1)
+        session.commit()
+
+    send(client, message("Особиста нотатка"), 3)
+    send(client, message("/start"), 4)
+    refresh_cycle(engine)
+
+    assert 10004 in deleted_ids(calls)
+    assert 10003 not in deleted_ids(calls)
+    with Session(engine) as session:
         assert session.get(TelegramMessage, (TG_ID, 10003)) is None
 
 

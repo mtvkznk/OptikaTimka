@@ -54,6 +54,31 @@ router = APIRouter()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 STATUS = {"new": "🟠 Новий", "confirmed": "🟢 Підтверджено", "canceled": "⚪ Скасовано"}
 
+# At most 24 text characters per slot line, with room for the day header and notices.
+TIMETABLE_ROWS_PER_SCREEN = 140
+# Leave room for the day, section, and booking controls in the same keyboard.
+TIMETABLE_SLOT_BUTTONS_PER_SCREEN = 90
+
+
+def timetable_sections(rows: list[dict]) -> list[list[dict]]:
+    sections = [[]]
+    button_count = 0
+    for row in rows:
+        slot_buttons = len(row["visits"]) or (
+            2 if row["can_book"] else int(row["can_move"] or row["can_reopen"])
+        )
+        section = sections[-1]
+        if section and (
+            len(section) == TIMETABLE_ROWS_PER_SCREEN
+            or button_count + slot_buttons > TIMETABLE_SLOT_BUTTONS_PER_SCREEN
+        ):
+            section = []
+            sections.append(section)
+            button_count = 0
+        section.append(row)
+        button_count += slot_buttons
+    return sections
+
 
 def deliver_outbox(session: Session, *, telegram_id: int | None = None) -> bool:
     statement = select(TelegramOutbox).order_by(TelegramOutbox.id)
@@ -279,6 +304,7 @@ class Bot:
         move: int | None = None,
         version: str = "",
         notice: str = "",
+        time_page: int = 0,
     ) -> None:
         from app.main import appointment_diary, booking_window, kyiv_now
 
@@ -323,11 +349,15 @@ class Bot:
             return
         day = diary["date"]
         navdata = {"move": move, "version": version}
+        sections = timetable_sections(diary["rows"])
+        time_page = min(time_page, len(sections) - 1)
+        slots = sections[time_page]
+        page_data = {"time_page": time_page} if time_page else {}
         rows = []
         nav = []
         if diary["previous"]:
             nav.append(self.button("← День", "day", day=diary["previous"].isoformat(), **navdata))
-        nav.append(self.button("Дата", "date", day=day.isoformat(), **navdata))
+        nav.append(self.button("Дата", "date", day=day.isoformat(), **navdata, **page_data))
         if diary["next"]:
             nav.append(self.button("День →", "day", day=diary["next"].isoformat(), **navdata))
         rows.append(nav)
@@ -338,13 +368,26 @@ class Bot:
             text += f"\n\n<b>Перенесення прийому №{moving.id}</b>\nОберіть вільну годину нижче."
         if notice:
             text += "\n\n" + html.escape(notice)
-        for row in diary["rows"]:
+        if len(sections) > 1:
+            text += f"\n\nГодини {slots[0]['start']}–{slots[-1]['start']}"
+            section_nav = []
+            if time_page:
+                section_nav.append(self.button(
+                    "← Години", "day", day=day.isoformat(), time_page=time_page - 1, **navdata,
+                ))
+            if time_page + 1 < len(sections):
+                section_nav.append(self.button(
+                    "Години →", "day", day=day.isoformat(), time_page=time_page + 1, **navdata,
+                ))
+            rows.append(section_nav)
+        for row in slots:
             starts = row["start"]
             data = {
                 "day": day.isoformat(),
                 "time": starts,
                 "duration": service.duration_minutes,
                 "service_id": service.id,
+                **page_data,
             }
             if row["visits"]:
                 for visitrow in row["visits"]:
@@ -358,15 +401,10 @@ class Bot:
                                 "visit",
                                 id=visit.id,
                                 version=visit.updated_at.isoformat(),
+                                **page_data,
                             )
                         ]
                     )
-            elif row["other_occupied"] or row["doctor_occupied"]:
-                text += f"\n{starts} — зайнято"
-            elif row["can_reopen"]:
-                rows.append(
-                    [self.button(f"{starts} 🔴 Відкрити", "block", **data, block_action="open")]
-                )
             elif row["can_move"]:
                 rows.append(
                     [
@@ -378,6 +416,12 @@ class Bot:
                             version=version,
                         )
                     ]
+                )
+            elif row["other_occupied"] or row["doctor_occupied"]:
+                text += f"\n{starts} — зайнято"
+            elif row["can_reopen"]:
+                rows.append(
+                    [self.button(f"{starts} 🔴 Відкрити", "block", **data, block_action="open")]
                 )
             elif row["can_book"]:
                 rows.append(
@@ -395,20 +439,26 @@ class Bot:
             ]
         )
         if move:
-            rows.append([self.button("Скасувати перенесення", "day", day=day.isoformat())])
+            rows.append([
+                self.button("Скасувати перенесення", "day", day=day.isoformat(), **page_data)
+            ])
         self.show(
             text,
             rows,
-            view={"day": day.isoformat(), "move": move, "version": version, "notice": notice},
+            view={
+                "day": day.isoformat(), "move": move, "version": version, "notice": notice,
+                **page_data,
+            },
         )
 
-    def visit(self, visit_id: int, version: str | None = None) -> None:
+    def visit(self, visit_id: int, version: str | None = None, *, time_page: int = 0) -> None:
         visit = self.session.get(Appointment, visit_id)
         if visit is None:
             raise HTTPException(404, "Запис видалений. Оновіть розклад.")
         if version and version != visit.updated_at.isoformat():
             raise HTTPException(409, "Запис змінився. Оновіть розклад.")
-        data = {"id": visit.id, "version": visit.updated_at.isoformat()}
+        page_data = {"time_page": time_page} if time_page else {}
+        data = {"id": visit.id, "version": visit.updated_at.isoformat(), **page_data}
         text = (
             f"<b>Прийом №{visit.id}</b> · {commands.format_date(visit.preferred_date)} {commands.format_time(visit.preferred_time)}\n"
             f"{html.escape(visit.service)} · {visit.duration_minutes} хв\n\n"
@@ -436,6 +486,7 @@ class Bot:
                         day=(visit.preferred_date or utc_now().date()).isoformat(),
                         move=visit.id,
                         version=data["version"],
+                        **page_data,
                     )
                 ]
             )
@@ -446,6 +497,7 @@ class Bot:
                     "← До розкладу",
                     "day",
                     day=(visit.preferred_date or utc_now().date()).isoformat(),
+                    **page_data,
                 )
             ]
         )
@@ -554,15 +606,18 @@ class Bot:
         self.clear_state()
         now = kyiv_now()
         day = date.fromisoformat(data["day"]) if data.get("day") else now.date()
+        time_page = data.get("time_page", 0)
+        page_data = {"time_page": time_page} if time_page else {}
         common = {"now": now, "actor": self.actor, "locked": True}
         if op == "day":
             self.day(
                 day,
                 move=data.get("move"),
                 version=data.get("version", ""),
+                time_page=time_page,
             )
         elif op == "visit":
-            self.visit(data["id"], data.get("version"))
+            self.visit(data["id"], data.get("version"), time_page=time_page)
         elif op == "list":
             self.listing(data.get("page", 0), data.get("q", ""), data.get("status", ""))
         elif op in {"search", "date"}:
@@ -571,7 +626,7 @@ class Bot:
                 "Введіть ім’я або телефон для пошуку."
                 if op == "search"
                 else "Введіть дату у форматі ДД.ММ.РРРР (наприклад, 30.11.2026).",
-                [[self.button("Скасувати", "day", day=day.isoformat())]],
+                [[self.button("Скасувати", "day", day=day.isoformat(), **page_data)]],
             )
         elif op == "add":
             flow = secrets.token_urlsafe(12)
@@ -581,7 +636,7 @@ class Bot:
                 [
                     [
                         self.button("Без телефону", "skip_phone", flow=flow),
-                        self.button("Скасувати", "day", day=day.isoformat()),
+                        self.button("Скасувати", "day", day=day.isoformat(), **page_data),
                     ]
                 ],
             )
@@ -597,7 +652,7 @@ class Bot:
                 },
                 **common,
             )
-            self.day(day)
+            self.day(day, time_page=time_page)
         elif op == "move":
             commands.move_appointment(
                 self.session,
@@ -609,7 +664,7 @@ class Bot:
                 },
                 **common,
             )
-            self.day(day)
+            self.day(day, time_page=time_page)
         elif op == "status":
             commands.set_status(
                 self.session,
@@ -617,7 +672,7 @@ class Bot:
                 {"status": data["status"], "version": data["version"]},
                 **common,
             )
-            self.visit(data["id"])
+            self.visit(data["id"], time_page=time_page)
         elif op in {"delete", "delete_confirm"}:
             try:
                 commands.remove_appointment(
@@ -641,7 +696,7 @@ class Bot:
                                     id=data["id"],
                                     version=data["version"],
                                 ),
-                                self.button("Залишити", "visit", id=data["id"]),
+                                self.button("Залишити", "visit", id=data["id"], **page_data),
                             ]
                         ],
                     )
@@ -653,6 +708,8 @@ class Bot:
         from app.main import kyiv_now
 
         data = state.payload.copy()
+        time_page = data.get("time_page", 0)
+        page_data = {"time_page": time_page} if time_page else {}
         if data["mode"] == "search":
             self.clear_state()
             self.listing(q=text.strip()[:160])
@@ -672,7 +729,7 @@ class Bot:
                 [
                     [
                         self.button("Без імені", "skip_name", flow=data["flow"]),
-                        self.button("Скасувати", "day", day=data["day"]),
+                        self.button("Скасувати", "day", day=data["day"], **page_data),
                     ]
                 ],
             )
@@ -689,7 +746,7 @@ class Bot:
                 self.session, form, now=kyiv_now(), actor=self.actor, locked=True
             )
             self.clear_state()
-            self.day(date.fromisoformat(data["day"]))
+            self.day(date.fromisoformat(data["day"]), time_page=time_page)
 
 
 def process_update(session: Session, update: dict) -> None:
