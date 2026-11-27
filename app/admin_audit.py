@@ -4,6 +4,7 @@ from app.models import AdminAuditEvent
 
 AUDIT_LABELS = {
     "appointment_created": "Додано прийом",
+    "appointment_contact_updated": "Змінено дані пацієнта в записі",
     "appointment_status": "Змінено статус прийому",
     "telegram_linked": "Прив’язано Telegram",
     "telegram_unlinked": "Від’єднано Telegram",

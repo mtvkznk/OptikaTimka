@@ -221,7 +221,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOOKING_MAX_DAYS_AHEAD = 30
 BOOKING_DAILY_RELEASE_TIME = time(11, 0)
 ASSET_VERSION = "20261118-booking-refresh"
-ADMIN_ASSET_VERSION = "20261118-notebook-move"
+ADMIN_ASSET_VERSION = "20261127-notebook-contact"
 LANDING_ASSET_VERSION = "20261122-ukrainian-brand"
 OAUTH_STATE_COOKIE_NAME = "optika_oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "optika_oauth_verifier"
@@ -1146,6 +1146,18 @@ def create_manual_appointment(
     diary_commands.create_manual(session, form_data, now=kyiv_now(), actor=request.state.admin_actor)
     session.commit()
     return diary_action_response(request, form_date(form_data, "preferred_date"), status_code=201)
+
+@admin_router.post("/appointments/{appointment_id}/contact", response_model=None)
+def update_diary_contact(
+    appointment_id: int, request: Request, session: SessionDep, form_data: FormDataDep,
+) -> Response:
+    visit = diary_commands.update_contact(session, appointment_id, form_data, actor=request.state.admin_actor)
+    day = visit.preferred_date or current_date()
+    starts_at = visit.preferred_time
+    anchor = f"notebook-slot-{starts_at:%H%M}" if starts_at is not None else "appointment-diary"
+    version = visit.updated_at.isoformat()
+    session.commit()
+    return diary_action_response(request, day, anchor=anchor, version=version)
 
 @admin_router.post("/appointments/slot-block", response_model=None)
 def change_booking_block(

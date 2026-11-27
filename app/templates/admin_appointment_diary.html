@@ -27,6 +27,10 @@
       </select>
     </form>
     {% if not diary.moving %}
+    <button class="admin-button admin-button-small" type="button" aria-haspopup="dialog"
+            aria-controls="notebook-contact" data-notebook-edit="{{ visit.id }}"
+            data-name="{{ visit.name }}" data-phone="{{ visit.phone }}"
+            data-version="{{ visit.updated_at.isoformat() }}">Редагувати</button>
     <a class="admin-button admin-button-small" href="/admin?day={{ diary.date.isoformat() }}&amp;move={{ visit.id }}#appointment-diary">Перенести</a>
     {% endif %}
     </div>
@@ -156,6 +160,26 @@
     </label>
     <p class="admin-notebook-note" data-manual-feedback role="status"></p>
   </form>
+  <dialog class="admin-review-dialog admin-contact-dialog" id="notebook-contact" aria-labelledby="notebook-contact-title">
+    <h2 id="notebook-contact-title">Редагувати запис</h2>
+    <form method="post">
+      {% include "csrf_field.html" %}
+      <input type="hidden" name="version" />
+      <fieldset>
+        <label class="admin-field">Ім’я та прізвище
+          <input name="name" autocomplete="off" autofocus />
+        </label>
+        <label class="admin-field">Телефон або контакт
+          <input type="tel" name="phone" autocomplete="off" />
+        </label>
+        <p class="admin-appointment-error" data-contact-feedback role="alert"></p>
+        <div class="admin-review-actions">
+          <button class="admin-button" type="button" data-contact-cancel>Скасувати</button>
+          <button class="admin-button admin-primary" type="submit">Зберегти</button>
+        </div>
+      </fieldset>
+    </form>
+  </dialog>
   {% elif diary.service %}
   <p class="admin-notebook-note">Для огляду лікаря немає робочих днів. Перевірте розділ «Послуги й графік».</p>
   {% else %}

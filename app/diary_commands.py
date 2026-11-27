@@ -191,15 +191,19 @@ def check_diary_day(
         raise HTTPException(409, "Цей день закритий для запису на огляд лікаря.")
 
 
-def create_manual(
-    session: Session, form_data: dict[str, str], *, now: datetime, actor: str, locked: bool = False
-) -> Appointment:
-    name = form_data.get("name", "").strip()
-    phone = form_data.get("phone", "").strip()
+def appointment_contact(name: str, phone: str) -> tuple[str, str]:
+    name, phone = name.strip(), phone.strip()
     if not name and not phone:
         raise HTTPException(422, "Введіть ім’я або контакт.")
     if "\0" in name or "\0" in phone:
         raise HTTPException(422, "Перевірте символи в імені та контакті.")
+    return name, phone
+
+
+def create_manual(
+    session: Session, form_data: dict[str, str], *, now: datetime, actor: str, locked: bool = False
+) -> Appointment:
+    name, phone = appointment_contact(form_data.get("name", ""), form_data.get("phone", ""))
     day, start_time = diary_slot_from_form(form_data)
     start = minute_of(start_time)
     if not locked:
@@ -243,6 +247,40 @@ def create_manual(
         "appointment_created",
         f"Прийом №{visit.id} · {visit.service} · {format_date(day)} {format_time(start_time)}",
     )
+    return visit
+
+
+def update_contact(
+    session: Session, appointment_id: int, form_data: dict[str, str], *, actor: str,
+) -> Appointment:
+    lock_booking_writes(session)
+    service = require_diary_service(session)
+    visit = session.get(Appointment, appointment_id)
+    if visit is None or not appointment_belongs_to_service(visit, service):
+        raise HTTPException(404, "Запис у зошиті не знайдено.")
+    if form_data.get("version") != visit.updated_at.isoformat():
+        raise HTTPException(409, "Запис змінився. Оновіть зошит і повторіть дію.")
+
+    name, phone = appointment_contact(
+        form_data.get("name", visit.name), form_data.get("phone", visit.phone),
+    )
+    if "name" not in form_data:
+        name = visit.name
+    if "phone" not in form_data:
+        phone = visit.phone
+    if (name, phone) == (visit.name, visit.phone):
+        return visit
+    visit.name = name
+    if phone != visit.phone:
+        visit.phone = phone
+        visit.phone_normalized = normalize_phone(phone)
+    visit.updated_at = utc_now()
+    add_admin_audit(
+        session, actor, "appointment_contact_updated",
+        f"Прийом №{visit.id} · {visit.service} · {format_date(visit.preferred_date)} {format_time(visit.preferred_time)}",
+    )
+    session.flush()
+    session.refresh(visit)
     return visit
 
 

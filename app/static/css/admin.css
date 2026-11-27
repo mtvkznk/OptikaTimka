@@ -1074,6 +1074,20 @@
 .admin-review-dialog ul { padding-left: 1.3rem; }
 .admin-review-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
+.admin-contact-dialog {
+  border-color: var(--admin-line);
+  background: #fff;
+}
+.admin-contact-dialog fieldset {
+  display: grid;
+  gap: 0.8rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.admin-contact-dialog [role="alert"]:empty { display: none; }
+
 .admin-audit-list { list-style: none; padding: 0; margin: 0; }
 .admin-audit-list li {
   display: grid;

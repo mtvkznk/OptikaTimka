@@ -22,6 +22,7 @@ from app.models import (
     BookingService,
     CatalogCategory,
     ClosedDate,
+    Customer,
     ServiceClosedDate,
     ServiceSchedule,
     ServiceWeekdaySchedule,
@@ -133,6 +134,59 @@ def test_phone_only_notebook_appointment_uses_doctor_service_duration(
         assert appointment.phone_normalized == "+380671234567"
         assert appointment.status == expected_status and appointment.customer_id is None
         assert appointment.duration_minutes == 35 and appointment.service_id == service["id"]
+
+
+def test_notebook_contact_edit_preserves_the_appointment_and_rejects_stale_versions(
+    client: TestClient, anonymous_client: TestClient, app_db: Engine,
+) -> None:
+    doctor, other = client.get("/api/booking-services").json()[:2]
+    day = date(2026, 12, 1)
+    with Session(app_db) as session:
+        customer = Customer(google_sub="appointment-owner")
+        session.add(customer)
+        session.flush()
+        owner_id = customer.id
+        visit = Appointment(
+            name="Old test name", phone="067 000 00 01", phone_normalized="+380670000001",
+            service=doctor["name"], service_id=doctor["id"],
+            customer_id=owner_id, preferred_date=day, preferred_time=time(10),
+            status=AppointmentStatus.confirmed, duration_minutes=45, message="Test comment",
+        )
+        other_visit = Appointment(name="Other service", phone="", service=other["name"], service_id=other["id"])
+        session.add_all([visit, other_visit])
+        session.commit()
+        appointment_id, version = visit.id, visit.updated_at.isoformat()
+        other_id, other_version = other_visit.id, other_visit.updated_at.isoformat()
+
+    endpoint = f"/admin/appointments/{appointment_id}/contact"
+    form = {"name": " Updated test name ", "phone": " 067 000 00 02 ", "version": version}
+    assert anonymous_client.post(endpoint, data=form).status_code == 401
+    assert client.post(endpoint, data={**form, "name": "", "phone": " "}).status_code == 422
+    assert client.post(f"/admin/appointments/{other_id}/contact", data={
+        **form, "version": other_version,
+    }).status_code == 404
+    saved = client.post(endpoint, data=form, headers={"Accept": "application/json"})
+    assert saved.status_code == 200
+    assert saved.json()["version"] != version
+    assert saved.json()["redirect"] == f"/admin?day={day}#notebook-slot-1000"
+    assert client.post(endpoint, data={**form, "phone": "067 000 00 03"}).status_code == 409
+
+    assert 'href="tel:+380670000002"' in client.get(saved.json()["redirect"]).text
+    assert client.post(endpoint, data={**form, "version": saved.json()["version"]}, headers={
+        "Accept": "application/json",
+    }).json()["version"] == saved.json()["version"]
+    with Session(app_db) as session:
+        visit = session.get(Appointment, appointment_id)
+        assert (visit.name, visit.phone, visit.phone_normalized) == (
+            "Updated test name", "067 000 00 02", "+380670000002",
+        )
+        assert (visit.customer_id, visit.service_id) == (owner_id, doctor["id"])
+        assert (visit.preferred_date, visit.preferred_time, visit.duration_minutes) == (day, time(10), 45)
+        assert (visit.status, visit.message) == (AppointmentStatus.confirmed, "Test comment")
+        event = session.exec(select(AdminAuditEvent)).one()
+        assert event.action == "appointment_contact_updated"
+        assert event.detail.startswith(f"Прийом №{appointment_id} · ")
+        assert "Updated test name" not in event.detail and "067 000 00 02" not in event.detail
 
 
 def test_notebook_closes_and_reopens_free_time_without_overlapping_bookings(

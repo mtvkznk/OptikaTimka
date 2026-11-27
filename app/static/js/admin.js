@@ -74,9 +74,8 @@ if (manualAppointment) {
   let selectedSlot = null;
   let savingAppointment = false;
 
-  async function submitDiaryForm(form, feedbackNode, fallback) {
+  async function submitDiaryForm(form, feedbackNode, fallback, fields = new URLSearchParams(new FormData(form))) {
     feedbackNode.textContent = "";
-    const fields = new URLSearchParams(new FormData(form));
     try {
       const response = await fetch(form.action, {
         method: "POST",
@@ -85,7 +84,8 @@ if (manualAppointment) {
       });
       const body = await response.json().catch(() => null);
       if (response.ok && body?.redirect) {
-        const edit = draft.edits["appointments:" + form.dataset.notebookMove];
+        const appointmentId = form.dataset.notebookMove ?? form.dataset.notebookEdit;
+        const edit = draft.edits["appointments:" + appointmentId];
         if (edit && body.version && edit.identity.version === fields.get("version")) {
           edit.identity.version = body.version;
           persistDraft();
@@ -100,6 +100,42 @@ if (manualAppointment) {
     }
     return false;
   }
+
+  const contactDialog = document.getElementById("notebook-contact");
+  const contactForm = contactDialog.querySelector("form");
+  const contactFields = contactForm.querySelector("fieldset");
+  const contactFeedback = contactForm.querySelector("[data-contact-feedback]");
+  let originalContact = {};
+  document.querySelectorAll("[data-notebook-edit]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (saving || savingAppointment) return;
+      const { notebookEdit, name, phone, version } = button.dataset;
+      contactForm.action = "/admin/appointments/" + notebookEdit + "/contact";
+      contactForm.dataset.notebookEdit = notebookEdit;
+      fillFields(contactForm, { name, phone });
+      originalContact = valuesOf(contactForm);
+      contactForm.elements.namedItem("version").value = version;
+      contactFeedback.textContent = "";
+      contactDialog.showModal();
+    });
+  });
+  contactForm.querySelector("[data-contact-cancel]").addEventListener("click", () => contactDialog.close());
+  contactDialog.addEventListener("cancel", (event) => {
+    if (savingAppointment) event.preventDefault();
+  });
+  contactForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (savingAppointment) return;
+    const fields = new URLSearchParams(new FormData(contactForm));
+    for (const [field, value] of Object.entries(originalContact)) {
+      if (fields.get(field) === value) fields.delete(field);
+    }
+    savingAppointment = true;
+    const request = submitDiaryForm(contactForm, contactFeedback, "Не вдалося зберегти дані запису.", fields);
+    contactFields.disabled = true;
+    if (await request) return;
+    contactFields.disabled = savingAppointment = false;
+  });
 
   const setExpanded = (slot, expanded) => {
     slot.setAttribute("aria-expanded", String(expanded));
