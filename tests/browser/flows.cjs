@@ -351,8 +351,10 @@ test("a full date becomes selectable again when its only slot reopens", async t 
   await hours.locator('[name="start_time"]').fill("09:00");
   await hours.locator('[name="end_time"]').fill("09:30");
   const saved = diary.waitForResponse(response => response.url().endsWith("/admin/changes"));
+  const reloaded = diary.waitForEvent("load");
   await diary.locator("[data-admin-save]").click();
   assert.equal((await saved).status(), 200);
+  await reloaded;
   await diary.goto(root + "/admin?day=" + day);
   const close = diary.getByRole("button", { name: "Закрити час 09:00", exact: true });
   const reopen = diary.getByRole("button", { name: "Відкрити час 09:00", exact: true });
