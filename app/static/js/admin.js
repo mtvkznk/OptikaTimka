@@ -101,40 +101,66 @@ if (manualAppointment) {
     return false;
   }
 
-  const contactDialog = document.getElementById("notebook-contact");
-  const contactForm = contactDialog.querySelector("form");
+  const contactForm = document.getElementById("notebook-contact");
   const contactFields = contactForm.querySelector("fieldset");
   const contactFeedback = contactForm.querySelector("[data-contact-feedback]");
+  const contactName = contactForm.elements.namedItem("name");
+  let contactSelect = null;
   let originalContact = {};
-  document.querySelectorAll("[data-notebook-edit]").forEach((button) => {
-    button.addEventListener("click", () => {
+  document.querySelectorAll("[data-edit-contact]").forEach((select) => {
+    select.addEventListener("input", (event) => {
+      if (select.value !== "edit-contact") return;
+      event.stopPropagation();
+      const { id, version } = select.form.dataset;
+      select.value = draft.edits["appointments:" + id]?.values.status
+        ?? [...select.options].find((option) => option.defaultSelected).value;
       if (saving || savingAppointment) return;
-      const { notebookEdit, name, phone, version } = button.dataset;
-      contactForm.action = "/admin/appointments/" + notebookEdit + "/contact";
-      contactForm.dataset.notebookEdit = notebookEdit;
-      fillFields(contactForm, { name, phone });
+      if (contactSelect) {
+        contactName.focus();
+        return;
+      }
+      contactSelect = select;
+      const visit = select.closest(".admin-notebook-visit");
+      contactForm.action = "/admin/appointments/" + id + "/contact";
+      contactForm.dataset.notebookEdit = id;
+      fillFields(contactForm, select.dataset);
       originalContact = valuesOf(contactForm);
       contactForm.elements.namedItem("version").value = version;
       contactFeedback.textContent = "";
-      contactDialog.showModal();
+      visit.append(contactForm);
+      visit.setAttribute("data-editing-contact", "");
+      contactForm.hidden = false;
+      contactName.focus();
     });
   });
-  contactForm.querySelector("[data-contact-cancel]").addEventListener("click", () => contactDialog.close());
-  contactDialog.addEventListener("cancel", (event) => {
-    if (savingAppointment) event.preventDefault();
+
+  function closeContactEditor() {
+    contactForm.hidden = true;
+    contactForm.parentElement.removeAttribute("data-editing-contact");
+    contactSelect.focus();
+    contactSelect = null;
+  }
+
+  contactForm.querySelector("[data-contact-cancel]").addEventListener("click", closeContactEditor);
+  contactForm.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.isComposing || savingAppointment) return;
+    event.preventDefault();
+    closeContactEditor();
   });
   contactForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (savingAppointment) return;
+    if (saving || savingAppointment || !contactSelect) return;
     const fields = new URLSearchParams(new FormData(contactForm));
     for (const [field, value] of Object.entries(originalContact)) {
       if (fields.get(field) === value) fields.delete(field);
     }
-    savingAppointment = true;
+    saving = savingAppointment = true;
+    showSaveState();
     const request = submitDiaryForm(contactForm, contactFeedback, "Не вдалося зберегти дані запису.", fields);
     contactFields.disabled = true;
     if (await request) return;
-    contactFields.disabled = savingAppointment = false;
+    contactFields.disabled = savingAppointment = saving = false;
+    showSaveState();
   });
 
   const setExpanded = (slot, expanded) => {

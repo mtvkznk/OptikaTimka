@@ -1074,19 +1074,21 @@
 .admin-review-dialog ul { padding-left: 1.3rem; }
 .admin-review-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
-.admin-contact-dialog {
-  border-color: var(--admin-line);
-  background: #fff;
-}
-.admin-contact-dialog fieldset {
+.admin-notebook-contact-form fieldset {
   display: grid;
-  gap: 0.8rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
   min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
-.admin-contact-dialog [role="alert"]:empty { display: none; }
+
+@media (max-width: 42rem) {
+  .admin-notebook-contact-form fieldset { grid-template-columns: minmax(0, 1fr); }
+  .admin-notebook-contact-form .admin-notebook-visit-actions { justify-content: flex-end; }
+}
 
 .admin-audit-list { list-style: none; padding: 0; margin: 0; }
 .admin-audit-list li {
@@ -1113,6 +1115,10 @@
   gap: 0.45rem 0.8rem;
   padding-block: 0.15rem;
 }
+
+.admin-notebook-visit[data-editing-contact] { grid-template-columns: minmax(0, 1fr); }
+.admin-notebook-visit[data-editing-contact] > .admin-notebook-client,
+.admin-notebook-visit[data-editing-contact] > .admin-notebook-visit-actions { display: none; }
 
 .admin-notebook-client {
   display: flex;
